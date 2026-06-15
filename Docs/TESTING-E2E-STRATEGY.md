@@ -178,21 +178,25 @@ user-facing error.
    ffmpeg transcode to all 7 formats, cache + checksum, pytest fixtures
    (`sample_pl`, `sample_en`, `samples_all_formats`, `corrupted_audio`,
    `silence_audio`).
-2. [ ] Markers: add `e2e` and `ui` to `pyproject.toml`; `requires_whisper`,
+2. [x] Markers: add `e2e` and `ui` to `pyproject.toml`; `requires_whisper`,
    `requires_claude` as skip-if-missing.
-3. [ ] **L2** `tests/e2e/test_pipeline_real_whisper.py` — real whisper on each
+3. [x] **L2** `tests/e2e/test_pipeline_real_whisper.py` — real whisper on each
    format, assert WER < threshold + language detected + Markdown valid.
-4. [ ] **L3** `tests/e2e/test_summary_quality.py` — real Claude (skip without
-   `ANTHROPIC_API_KEY`): B1 structural + B2 judge ≥ 4/5; `{}` escape test
-   (alpha.18 regression).
-5. [ ] **L3** multilang: PL/EN/ES/DE/FR — language detection + frontmatter
-   `language` correct.
-6. [ ] Edge cases: 0-byte, corrupted header, silence, sample-rate ≠ 16k,
+4. [x] **L3** `tests/e2e/test_summary_quality.py` — real Claude (skip without
+   `ANTHROPIC_API_KEY` *and* on billing/quota/auth errors, so a dev box with no
+   credits stays green): B1 structural + B2 judge ≥ 4/5; `{}` escape test
+   (alpha.18 regression, runs without a key). **Note:** the live B1/B2 quality
+   assertions are unverified until the account has API credits — the structure,
+   skip path, and `{}` guard are verified; the thresholds activate on first
+   funded run.
+5. [~] **L3** multilang: PL covered (Polish-summary judge); EN structural.
+   ES/DE/FR still to add.
+6. [x] Edge cases: 0-byte, corrupted header, silence, sample-rate ≠ 16k,
    filename with `{}` and PL chars.
 7. [ ] **L4** split menu bar logic into pure functions (extend
    `test_ui_dialogs`); fix `test_menu_bar_icons.py` (add Pillow to
    `requirements-dev.txt`).
-8. [ ] `Makefile`: `make test` (L1, default), `make test-pipeline` (L2),
+8. [x] `Makefile`: `make test` (L1, default), `make test-pipeline` (L2),
    `make test-e2e` (L3, needs key), `make test-ui` (L4).
 9. [ ] CI: split workflow — L1 on GitHub-hosted; L2/L3 on self-hosted mac
    (nightly) or documented as a local pre-release gate.
