@@ -900,7 +900,13 @@ def test_run_macwhisper_retries_on_metal_error(transcriber, tmp_path, monkeypatc
     audio_file = tmp_path / "sample.mp3"
     audio_file.touch()
 
-    def run_side_effect(_, use_coreml=True):
+    # The pipeline now converts to WAV before whisper; stub that out so the
+    # test stays focused on the Core ML retry logic (no real ffmpeg).
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_coreml=True, source_audio=None):
         if use_coreml:
             return subprocess.CompletedProcess(
                 args=["whisper"],

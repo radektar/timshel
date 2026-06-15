@@ -33,14 +33,13 @@ The application code is open source (MIT). AI features run locally via BYOK. The
 
 ## v2.0.0 FREE — remaining work
 
-- [ ] **Audio pre-conversion to WAV before whisper** (bug, found by L2 tests 2026-06-15)
-  - `AUDIO_EXTENSIONS` advertises `m4a, wma, aac` but whisper-cli cannot decode
-    them — it reads only wav/mp3/flac/ogg natively. m4a/aac (iPhone Voice Memos,
-    many recorders) silently fail today.
-  - Fix: transcode any non-native format to 16 kHz mono WAV via ffmpeg in
-    `_run_whisper_transcription` before invoking whisper-cli.
-  - Regression guard already exists: `tests/e2e/test_pipeline_real_whisper.py`
-    (xfail flips to xpass once fixed). See `Docs/TESTING-E2E-STRATEGY.md` §F1.
+- [x] **Audio pre-conversion to WAV before whisper** (bug F1, found + fixed 2026-06-15)
+  - `AUDIO_EXTENSIONS` advertised `m4a, wma, aac` but whisper-cli could not
+    decode them (only wav/mp3/flac/ogg natively); m4a/aac (iPhone Voice Memos,
+    many recorders) silently failed.
+  - Fixed: `Transcriber._convert_to_wav` normalises every input to 16 kHz mono
+    WAV via ffmpeg before whisper. Guarded by
+    `tests/e2e/test_pipeline_real_whisper.py`. See `Docs/TESTING-E2E-STRATEGY.md` §F1.
 - [ ] **Code signing & notarization** (requires $99 Apple Developer Program)
 - [ ] **py2app bundle size optimization** (currently 43 MB, target <20 MB excluding models)
   - Audit largest dependencies (`du -sh dist/Malinche.app/Contents/Resources/*`)

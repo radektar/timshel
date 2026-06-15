@@ -716,28 +716,37 @@ class Transcriber:
             return None
     
     def _run_whisper_transcription(
-        self, audio_file: Path, use_coreml: bool = True
+        self,
+        audio_file: Path,
+        use_coreml: bool = True,
+        source_audio: Optional[Path] = None,
     ) -> subprocess.CompletedProcess:
         """Run whisper.cpp transcription.
-        
+
         Args:
-            audio_file: Path to the audio file to transcribe
+            audio_file: Original recording; its stem names the output TXT.
             use_coreml: Whether to allow Core ML acceleration (disable for fallback)
-            
+            source_audio: Actual audio fed to whisper-cli. Defaults to
+                ``audio_file``; callers pass a converted 16 kHz WAV here so
+                whisper always receives a format it can decode (see
+                ``_convert_to_wav``).
+
         Returns:
             CompletedProcess from subprocess.run
         """
         if use_coreml and self._coreml_disabled_in_session:
             use_coreml = False
 
+        whisper_input = source_audio if source_audio is not None else audio_file
+
         # Build whisper.cpp command
         model_path = self.config.WHISPER_CPP_MODELS_DIR / f"ggml-{self.config.WHISPER_MODEL}.bin"
         output_base = self.config.TRANSCRIBE_DIR / audio_file.stem
-        
+
         whisper_cmd = [
             str(self.config.WHISPER_CPP_PATH),
             "-m", str(model_path),
-            "-f", str(audio_file),
+            "-f", str(whisper_input),
             "-otxt",
             "-of", str(output_base),
         ]
@@ -782,6 +791,61 @@ class Transcriber:
             errors="replace",
             env=env,
         )
+
+    def _convert_to_wav(self, audio_file: Path) -> Optional[Path]:
+        """Transcode *audio_file* to a 16 kHz mono PCM WAV for whisper-cli.
+
+        whisper-cli only reliably decodes 16 kHz WAV; its bundled decoder
+        rejects common recorder formats (m4a/aac from iPhone Voice Memos, wma),
+        which previously failed silently with "failed to read audio data as
+        wav". Normalising every input through ffmpeg first makes all formats in
+        ``AUDIO_EXTENSIONS`` work uniformly and also fixes non-16 kHz / stereo
+        sources.
+
+        Returns the path to a temporary WAV (the caller must delete it), or
+        ``None`` when conversion fails (corrupted/unreadable input) — which the
+        caller treats as a permanent transcription failure.
+        """
+        ffmpeg_path = self.config.FFMPEG_PATH
+        if not ffmpeg_path or not Path(ffmpeg_path).exists():
+            system_ffmpeg = shutil.which("ffmpeg")
+            if not system_ffmpeg:
+                logger.error("ffmpeg not available — cannot convert audio to WAV")
+                return None
+            ffmpeg_path = Path(system_ffmpeg)
+
+        # Hidden sibling in the output dir; cleaned up by the caller.
+        wav_path = self.config.TRANSCRIBE_DIR / f".{audio_file.stem}.whisper16k.wav"
+        cmd = [
+            str(ffmpeg_path),
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(audio_file),
+            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+            str(wav_path),
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=self.config.TRANSCRIPTION_TIMEOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("ffmpeg conversion timed out for %s", audio_file.name)
+            wav_path.unlink(missing_ok=True)
+            return None
+        if result.returncode != 0 or not wav_path.exists():
+            logger.error(
+                "ffmpeg conversion failed for %s (rc=%s): %s",
+                audio_file.name,
+                result.returncode,
+                (result.stderr or "").strip()[:300],
+            )
+            wav_path.unlink(missing_ok=True)
+            return None
+        return wav_path
 
     def _should_retry_without_coreml(
         self, stderr: Optional[str], use_coreml_attempted: bool
@@ -912,14 +976,29 @@ class Transcriber:
         logger.info(f"🎙️  Starting transcription: {audio_file.name}")
         self.transcription_in_progress[file_id] = True
         self._update_state(AppStatus.TRANSCRIBING, audio_file.name)
-        
+
+        wav_for_whisper: Optional[Path] = None
         try:
             # Ensure output directory exists
             self.config.TRANSCRIBE_DIR.mkdir(parents=True, exist_ok=True)
-            
+
+            # Normalise to 16 kHz mono WAV first. whisper-cli cannot decode
+            # m4a/aac/wma directly; converting up front makes every supported
+            # format work and fixes non-16 kHz / stereo inputs.
+            wav_for_whisper = self._convert_to_wav(audio_file)
+            if wav_for_whisper is None:
+                error_msg = "Konwersja audio nieudana (uszkodzony/nieobsługiwany plik)"
+                logger.error(
+                    "✗ Could not convert %s to WAV — skipping", audio_file.name
+                )
+                self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
+                return None
+
             # Try with Core ML acceleration first (if available)
             logger.info("🔄 Attempting transcription with Core ML acceleration")
-            result = self._run_whisper_transcription(audio_file, use_coreml=True)
+            result = self._run_whisper_transcription(
+                audio_file, use_coreml=True, source_audio=wav_for_whisper
+            )
             
             logger.debug(
                 f"Transcription attempt completed - "
@@ -943,7 +1022,9 @@ class Transcriber:
                     )
 
                 logger.info("🔄 Retrying transcription with CPU only")
-                result = self._run_whisper_transcription(audio_file, use_coreml=False)
+                result = self._run_whisper_transcription(
+                    audio_file, use_coreml=False, source_audio=wav_for_whisper
+                )
                 logger.debug(f"CPU retry completed - returncode: {result.returncode}")
             
             # Check for errors
@@ -1045,6 +1126,9 @@ class Transcriber:
             return None
         
         finally:
+            # Drop the temporary converted WAV (best-effort).
+            if wav_for_whisper is not None:
+                wav_for_whisper.unlink(missing_ok=True)
             # Remove from in-progress tracking
             self.transcription_in_progress.pop(file_id, None)
             # Reset state if no more files in progress

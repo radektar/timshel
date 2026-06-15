@@ -155,22 +155,24 @@ temp dir, not git).
 
 Bugs the layers surfaced as they were built — the point of the exercise.
 
-### F1 — m4a / wma / aac silently fail at the whisper boundary (L2, 2026-06-15)
+### F1 — m4a / wma / aac silently fail at the whisper boundary — FIXED (2026-06-15)
 
-`AUDIO_EXTENSIONS` advertises 7 formats, but L2 (`test_real_whisper_transcribes_each_format`)
-shows whisper-cli reads only **wav, mp3, flac, ogg** natively. **m4a, wma, aac**
-fail with `failed to read audio data as wav`. Root cause: the pipeline feeds the
-raw recording straight to whisper-cli (`_run_whisper_transcription`, `-f <file>`)
-and never transcodes to 16 kHz WAV first — `FFMPEG_PATH` is checked for
-availability but never used to convert. m4a/aac are exactly what iPhone Voice
-Memos and many recorders produce, so those recordings fail today with no clear
-user-facing error.
+`AUDIO_EXTENSIONS` advertised 7 formats, but L2 (`test_real_whisper_transcribes_each_format`)
+showed whisper-cli read only **wav, mp3, flac, ogg** natively; **m4a, wma, aac**
+failed with `failed to read audio data as wav`. Root cause: the pipeline fed the
+raw recording straight to whisper-cli (`-f <file>`) and never transcoded to
+16 kHz WAV — `FFMPEG_PATH` was checked for availability but never used. m4a/aac
+are exactly what iPhone Voice Memos and many recorders produce, so those
+recordings failed with no clear user-facing error.
 
-- **Test state:** the three formats are `xfail(strict=True)`; when a
-  ffmpeg→WAV pre-conversion step lands they will xpass and force the xfail to be
-  removed.
-- **Fix (recommended, separate change):** add an ffmpeg transcode-to-WAV step in
-  front of whisper for any non-native format. Tracked in BACKLOG.
+- **Fix:** `Transcriber._convert_to_wav` normalises every input to 16 kHz mono
+  PCM WAV via ffmpeg before whisper (`_run_macwhisper`), then deletes the temp
+  WAV. This also fixes non-16 kHz / stereo sources. A conversion failure
+  (corrupted/unreadable input) is treated as a permanent transcription failure.
+- **Verified:** all 7 formats now pass `test_real_whisper_transcribes_each_format`
+  (the xfail guards were removed — the self-correcting design did its job), and
+  `test_corrupted_audio_fails_without_crash` still passes via the conversion
+  failure path.
 
 ## Action items
 

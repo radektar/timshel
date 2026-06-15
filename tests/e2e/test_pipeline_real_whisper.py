@@ -32,31 +32,15 @@ pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 #: that fails to decode collapses to ~1.0, which this catches with wide margin.
 MAX_WER = 0.35
 
-#: Formats whisper-cli's bundled decoder reads natively (verified by L2).
-WHISPER_NATIVE_FORMATS = [".wav", ".mp3", ".flac", ".ogg"]
+#: Every advertised format must transcribe. The pipeline now normalises each
+#: input to 16 kHz mono WAV via ffmpeg before whisper (``_convert_to_wav``), so
+#: whisper-cli's decoder limitations no longer matter. This list was the
+#: regression guard for finding F1 (m4a/wma/aac silently failed); the fix
+#: landed, so all 7 formats are required to pass. See
+#: ``Docs/TESTING-E2E-STRATEGY.md`` §F1.
+SUPPORTED_FORMATS = [".wav", ".mp3", ".m4a", ".wma", ".flac", ".aac", ".ogg"]
 
-#: PRODUCT GAP surfaced by L2 (2026-06-15): these are advertised in
-#: ``AUDIO_EXTENSIONS`` but whisper-cli fails to read them ("failed to read
-#: audio data as wav"), because the pipeline feeds the raw file to whisper and
-#: never transcodes to WAV first. m4a/aac in particular are what iPhone Voice
-#: Memos and many recorders produce — so those recordings silently fail today.
-#: Marked xfail(strict) so that when a ffmpeg→WAV pre-conversion step lands,
-#: these flip to xpass and force this list to be cleared. See
-#: ``Docs/TESTING-E2E-STRATEGY.md`` (Findings) and BACKLOG.
-WHISPER_UNSUPPORTED_FORMATS = [".m4a", ".wma", ".aac"]
-
-_FORMAT_PARAMS = [pytest.param(ext, id=ext) for ext in WHISPER_NATIVE_FORMATS] + [
-    pytest.param(
-        ext,
-        id=ext,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="whisper-cli cannot decode this format; pipeline lacks a "
-            "ffmpeg->WAV pre-conversion step (product gap, see BACKLOG)",
-        ),
-    )
-    for ext in WHISPER_UNSUPPORTED_FORMATS
-]
+_FORMAT_PARAMS = [pytest.param(ext, id=ext) for ext in SUPPORTED_FORMATS]
 
 requires_runtime = pytest.mark.skipif(
     wr.find_whisper_install() is None
@@ -112,10 +96,11 @@ def _whisper_text(
 @requires_runtime
 @pytest.mark.parametrize("ext", _FORMAT_PARAMS)
 def test_real_whisper_transcribes_each_format(factory, ext, tmp_path):
-    """Every supported format decodes and transcribes to the expected text.
+    """Every supported format transcribes to the expected text.
 
-    The xfail-marked params (m4a/wma/aac) document a real product gap — see
-    ``WHISPER_UNSUPPORTED_FORMATS`` above — rather than a test defect.
+    Inputs are normalised to 16 kHz mono WAV before whisper, so m4a/wma/aac
+    (which whisper-cli cannot decode directly) work too — this is the guard for
+    finding F1.
     """
     audio = factory.make(lang="en_US", ext=ext)
     text = _whisper_text(factory, audio, "en", tmp_path)

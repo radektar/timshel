@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **m4a / wma / aac recordings silently failed to transcribe.** whisper-cli only decodes 16 kHz WAV (plus mp3/flac/ogg in this build); the pipeline fed it the raw file and never converted, so common recorder formats — notably m4a/aac from iPhone Voice Memos — failed with `failed to read audio data as wav` and no clear error. `Transcriber._convert_to_wav` now normalises every input to 16 kHz mono WAV via ffmpeg before whisper (also fixing non-16 kHz / stereo sources). Surfaced and guarded by the new L2 scenario tests — see `Docs/TESTING-E2E-STRATEGY.md` §F1.
+
+### Added
+- **End-to-end / scenario test layers (L1–L3)** under `tests/e2e/` and `tests/fixtures/`: a deterministic audio sample factory (macOS `say` + ffmpeg, all 7 formats + edge cases), real-whisper pipeline tests (per-format, multilingual, WER-scored), and real-Claude summary-quality tests (structural + LLM-as-judge), with `make test-pipeline` / `make test-e2e` / `make test-ui` targets. See `Docs/TESTING-E2E-STRATEGY.md`.
+
 ### Changed
 - GitHub repository renamed from `radektar/transrec` to `radektar/malinche`. Old URLs auto-redirect; explicit references in `src/setup/checksums.py` and `.github/workflows/build-whisper.yml` updated to the new path.
 - Migration flag `transrec_migrated` renamed to `legacy_migrated` in `src/config/settings.py`. `UserSettings.load()` reads the old key name as a backward-compat alias and rewrites it on next save, so existing alpha users are unaffected.
