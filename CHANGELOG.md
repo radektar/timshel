@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Crash (SIGSEGV) when closing the Settings window.** The native settings `NSWindow` was released by both AppKit (on close) and Python; the deferred close animation (`-[_NSWindowTransformAnimation dealloc]`) then dereferenced freed memory (`EXC_BAD_ACCESS`). Fixed with `setReleasedWhenClosed_(False)`, dismissing via `orderOut_` instead of the animated `close()`, and retaining the window/delegate past the runloop turn that tears them down.
 - **m4a / wma / aac recordings silently failed to transcribe.** whisper-cli only decodes 16 kHz WAV (plus mp3/flac/ogg in this build); the pipeline fed it the raw file and never converted, so common recorder formats — notably m4a/aac from iPhone Voice Memos — failed with `failed to read audio data as wav` and no clear error. `Transcriber._convert_to_wav` now normalises every input to 16 kHz mono WAV via ffmpeg before whisper (also fixing non-16 kHz / stereo sources). Surfaced and guarded by the new L2 scenario tests — see `Docs/TESTING-E2E-STRATEGY.md` §F1.
 
 ### Added

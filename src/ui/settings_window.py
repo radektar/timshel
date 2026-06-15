@@ -29,6 +29,13 @@ _TAB_FRAME = (16, 56, 608, 360)  # x, y, w, h within content view
 _BUTTON_W, _BUTTON_H = 96, 28
 
 
+#: Keeps the most recent settings window + delegate alive past the runloop turn
+#: that tears them down, so the autorelease-pool drain never touches objects
+#: Python has already freed. Bounded to one entry (the prior window's close
+#: animation is long finished by the next open).
+_RETAINED_SETTINGS_WINDOWS: list = []
+
+
 def _truncate_path(path: str, max_length: int = 60) -> str:
     if len(path) <= max_length:
         return path
@@ -74,7 +81,9 @@ try:
                 NSApp.stopModal()
             except Exception:
                 pass
-            self.window.close()
+            # orderOut_ (not close) dismisses the window WITHOUT the transform
+            # close animation, whose deferred dealloc segfaulted under PyObjC.
+            self.window.orderOut_(None)
 
         def cancelClicked_(self, sender):
             self.state["result_save"] = False
@@ -82,7 +91,7 @@ try:
                 NSApp.stopModal()
             except Exception:
                 pass
-            self.window.close()
+            self.window.orderOut_(None)
 
         # Folder picker (custom; opens NSOpenPanel via dialogs.choose_folder_dialog)
         def folderPickClicked_(self, sender):
@@ -442,6 +451,10 @@ def _show_native_settings_window(
     )
     window.setTitle_("Malinche Settings")
     window.center()
+    # Python owns the window's lifetime; without this AppKit also releases it on
+    # close, and the double-release segfaults in the autorelease-pool drain
+    # (-[_NSWindowTransformAnimation dealloc], EXC_BAD_ACCESS).
+    window.setReleasedWhenClosed_(False)
 
     content = window.contentView()
 
@@ -471,6 +484,11 @@ def _show_native_settings_window(
     save_btn.setAction_("saveClicked:")
     cancel_btn.setTarget_(delegate)
     cancel_btn.setAction_("cancelClicked:")
+
+    # Retain window + delegate beyond this function's scope (drop the previous
+    # one, whose teardown has long since completed). See _RETAINED note above.
+    _RETAINED_SETTINGS_WINDOWS.clear()
+    _RETAINED_SETTINGS_WINDOWS.append((window, delegate))
 
     def _new_tab(label: str):
         item = NSTabViewItem.alloc().initWithIdentifier_(label)
