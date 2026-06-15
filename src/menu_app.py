@@ -164,38 +164,40 @@ class MalincheMenuApp(rumps.App):
             rumps.Timer(self._delayed_check_dependencies, 1).start()
 
     def _resolve_icon_paths(self) -> dict[AppStatus, Optional[str]]:
-        """Resolve menu bar status icon paths for dev and bundled app."""
-        candidates = []
-        if getattr(sys, "frozen", False):
-            candidates.append(Path(getattr(sys, "_MEIPASS", "")))
-            candidates.append(Path(sys.executable).resolve().parent.parent / "Resources")
-        candidates.append(Path(__file__).resolve().parent.parent / "assets")
+        """Build menu bar status icons by rendering SF Symbols to template PNGs.
 
-        mapping = {
-            AppStatus.IDLE: "idle.png",
-            AppStatus.SCANNING: "scanning.png",
-            AppStatus.TRANSCRIBING: "transcribing.png",
-            AppStatus.DOWNLOADING: "transcribing.png",
-            AppStatus.MIGRATING: "migrating.png",
-            AppStatus.RECORDER_IDLE: "recorder_idle.png",
-            AppStatus.RECORDER_PENDING: "recorder_pending.png",
-            AppStatus.ERROR: "error.png",
+        Replaces the old shipped-PNG set (which had missing assets and fell back
+        to emoji). SF Symbols are guaranteed on macOS 12+, so every state now has
+        a real, consistent glyph; the emoji fallback in ``_update_icon`` only
+        triggers if symbol rendering is unavailable. See ``src/ui/style.py`` and
+        ``Docs/UI-REDESIGN-L4-PLAN.md`` (phase 2).
+        """
+        import tempfile
+
+        from src.ui import style
+
+        resolved: dict[AppStatus, Optional[str]] = {
+            status: None for status in AppStatus
         }
-        resolved: dict[AppStatus, Optional[str]] = {key: None for key in mapping}
+        if not getattr(style, "_APPKIT_AVAILABLE", False):
+            return resolved
 
-        for base in candidates:
-            icon_dir = base / "menu_bar"
-            for status, filename in mapping.items():
-                if resolved[status]:
+        icon_dir = Path(tempfile.mkdtemp(prefix="malinche-menubar-icons-"))
+        for status in AppStatus:
+            try:
+                png = style.render_symbol_png(
+                    style.symbol_name_for_status(status),
+                    point=15.0,
+                    weight="regular",
+                    pixel_size=36,
+                )
+                if not png:
                     continue
-                icon_path = icon_dir / filename
-                try:
-                    # A PNG header is at least 8 bytes + IHDR; anything smaller is
-                    # a stale/corrupted placeholder we must ignore.
-                    if icon_path.exists() and icon_path.stat().st_size > 64:
-                        resolved[status] = str(icon_path)
-                except OSError:
-                    continue
+                out = icon_dir / f"{status.value}.png"
+                out.write_bytes(png)
+                resolved[status] = str(out)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         return resolved
 
     def _update_icon(self, status: AppStatus) -> None:

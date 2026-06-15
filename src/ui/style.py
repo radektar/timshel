@@ -18,7 +18,7 @@ that builds an AppKit object returns ``None`` when AppKit is unavailable.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from src.app_status import AppStatus
 from src.ui import theme
@@ -196,6 +196,64 @@ def sf_symbol(
 def status_symbol(status: AppStatus, point: float = 15.0, weight: str = "regular"):
     """SF Symbol ``NSImage`` for a status (template), or ``None`` without AppKit."""
     return sf_symbol(symbol_name_for_status(status), point=point, weight=weight)
+
+
+def render_symbol_png(
+    name: str,
+    point: float = 15.0,
+    weight: str = "regular",
+    pixel_size: int = 36,
+) -> Optional[bytes]:
+    """Rasterise an SF Symbol to template PNG bytes (black glyph + alpha).
+
+    The menu-bar status item in ``rumps`` takes a file path, not a live
+    ``NSImage``. Rendering the symbol to a small template PNG lets us keep
+    rumps' whole lifecycle while still showing real SF Symbols (and retiring the
+    emoji fallback). Returns ``None`` if AppKit or the symbol is unavailable.
+
+    The glyph is centred and aspect-fit into a ``pixel_size`` square so menu-bar
+    icons render crisply at Retina without distortion.
+    """
+    if not _APPKIT_AVAILABLE:
+        return None
+    symbol = sf_symbol(name, point=point, weight=weight, template=True)
+    if symbol is None:
+        return None
+    from AppKit import (
+        NSBitmapImageFileTypePNG,
+        NSCompositingOperationSourceOver,
+        NSGraphicsContext,
+    )
+    from Foundation import NSMakeRect, NSMakeSize
+
+    size = symbol.size()
+    scale = (
+        min(pixel_size / size.width, pixel_size / size.height)
+        if (size.width and size.height)
+        else 1.0
+    )
+    draw_w, draw_h = size.width * scale, size.height * scale
+    origin_x = (pixel_size - draw_w) / 2.0
+    origin_y = (pixel_size - draw_h) / 2.0
+
+    canvas = NSImage.alloc().initWithSize_(NSMakeSize(pixel_size, pixel_size))
+    canvas.lockFocus()
+    NSGraphicsContext.currentContext().setShouldAntialias_(True)
+    symbol.drawInRect_fromRect_operation_fraction_(
+        NSMakeRect(origin_x, origin_y, draw_w, draw_h),
+        NSMakeRect(0, 0, 0, 0),
+        NSCompositingOperationSourceOver,
+        1.0,
+    )
+    canvas.unlockFocus()
+
+    from AppKit import NSBitmapImageRep
+
+    rep = NSBitmapImageRep.imageRepWithData_(canvas.TIFFRepresentation())
+    if rep is None:
+        return None
+    png = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
+    return bytes(png) if png is not None else None
 
 
 #: Vibrancy materials by role. Resolved lazily so the module imports without

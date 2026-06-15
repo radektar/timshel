@@ -140,6 +140,20 @@ def test_system_font_and_vibrant_view_build():
     assert style.vibrant_view(material="popover") is not None
 
 
+@requires_appkit
+@pytest.mark.parametrize("status", list(AppStatus))
+def test_render_symbol_png_produces_valid_png(status):
+    """Every status renders to real PNG bytes (used for menu-bar icons)."""
+    data = style.render_symbol_png(style.symbol_name_for_status(status))
+    assert data, f"{status} produced no PNG"
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG header"
+
+
+@requires_appkit
+def test_render_symbol_png_unknown_symbol_returns_none():
+    assert style.render_symbol_png("not.a.real.symbol.xyzzy") is None
+
+
 def test_helpers_are_appkit_optional():
     """Without AppKit the factories return None instead of raising."""
     if style._APPKIT_AVAILABLE:
