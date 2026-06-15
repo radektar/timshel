@@ -154,7 +154,12 @@ class MalincheMenuApp(rumps.App):
         from src.ui.status_panel import build_status_panel
 
         self._status_panel = build_status_panel(
-            {"settings": self._show_settings, "quit": self._quit_app}
+            {
+                "settings": self._show_settings,
+                "logs": self._open_logs,
+                "pro": self._show_pro,
+                "quit": self._quit_app,
+            }
         )
         self._panel_install_tries = 0
         if self._status_panel is not None:
@@ -213,6 +218,41 @@ class MalincheMenuApp(rumps.App):
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         return resolved
 
+    def _build_panel_model(self, status: AppStatus):
+        """Gather current state into a PanelModel for the status panel."""
+        from src.ui.status_panel_model import PanelRow, build_panel_model
+
+        current_file = None
+        recent = []
+        error_message = recorder_name = pending_count = None
+        if self.transcriber is not None:
+            state = self.transcriber.state
+            current_file = getattr(state, "current_file", None)
+            error_message = getattr(state, "error_message", None)
+            recorder_name = getattr(state, "recorder_name", None)
+            pending_count = getattr(state, "pending_count", None)
+            try:
+                for entry in self.transcriber.vault_index.recent_entries(5):
+                    name = entry.markdown_path or entry.source_filename or "Transcript"
+                    name = name.rsplit("/", 1)[-1]
+                    if name.endswith(".md"):
+                        name = name[:-3]
+                    recent.append(PanelRow(symbol="doc.text", title=name))
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+        if self._retranscription_in_progress:
+            current_file = self._retranscription_file or current_file
+        tier = license_manager.get_current_tier()
+        return build_panel_model(
+            status,
+            current_file=current_file,
+            recent=recent,
+            pro_active=(tier != FeatureTier.FREE),
+            error_message=error_message,
+            recorder_name=recorder_name,
+            pending_count=pending_count,
+        )
+
     def _update_icon(self, status: AppStatus) -> None:
         """Update menu bar icon based on app status.
 
@@ -220,14 +260,11 @@ class MalincheMenuApp(rumps.App):
         does not render both the icon and a stray emoji/name fallback next to
         each other in the status bar.
         """
-        # Mirror the status into the popover panel header (if installed). v1
-        # shows the status label + symbol; richer rows come later.
+        # Mirror the full state into the popover panel (rendered on next open).
         panel = getattr(self, "_status_panel", None)
         if panel is not None:
             try:
-                from src.ui.status_panel_model import build_panel_model
-
-                panel.update_(build_panel_model(status))
+                panel.update_(self._build_panel_model(status))
             except Exception:  # pragma: no cover - cosmetic, never fatal
                 pass
 

@@ -96,6 +96,26 @@ class VaultIndex:
         """Return number of fingerprint entries currently loaded."""
         return len(self._data.get("entries", {}))
 
+    def recent_entries(self, limit: int = 5) -> list:
+        """Return up to *limit* entries, most recently transcribed first.
+
+        Ordered by the latest version's ``transcribed_at`` (ISO strings sort
+        chronologically). Used by the menu-bar status panel.
+        """
+        scored = []
+        for fingerprint, row in self._data.get("entries", {}).items():
+            latest = ""
+            for version in row.get("versions", []) or []:
+                ts = version.get("transcribed_at", "") or ""
+                if ts > latest:
+                    latest = ts
+            scored.append((latest, fingerprint, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            self._row_to_entry(fingerprint, row)
+            for _, fingerprint, row in scored[:limit]
+        ]
+
     def add(self, fingerprint: str, entry: IndexEntry) -> None:
         """Add or replace entry in index."""
         with self._locked_reload():

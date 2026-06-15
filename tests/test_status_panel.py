@@ -26,9 +26,15 @@ def test_build_status_panel_returns_controller():
     )
     assert panel is not None
     # The ObjC selectors the status item / buttons target must be registered.
-    assert panel.respondsToSelector_(b"statusButtonClicked:")
-    assert panel.respondsToSelector_(b"settingsClicked:")
-    assert panel.respondsToSelector_(b"installOnStatusItem:button:menu:")
+    for selector in (
+        b"statusButtonClicked:",
+        b"settingsClicked:",
+        b"logsClicked:",
+        b"proClicked:",
+        b"quitClicked:",
+        b"installOnStatusItem:button:menu:",
+    ):
+        assert panel.respondsToSelector_(selector), selector
 
 
 @requires_appkit

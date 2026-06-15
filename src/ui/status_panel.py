@@ -1,17 +1,17 @@
 """AppKit renderer for the menu-bar status panel (L4 phase 2b — render).
 
-A left-click on the status item opens this NSPopover — a small vibrant card with
-the current status and quick actions — instead of the flat native menu. The
-right-click menu is kept for the full action list, so nothing is lost.
+A left-click on the status item opens this NSPopover — a vibrant card showing the
+current status, the file being transcribed, recent transcripts, and the primary
+actions — instead of the flat native menu. Right-click still shows the full
+native menu, so nothing is lost.
 
-The card's *content* is derived from the pure :class:`~src.ui.status_panel_model.PanelModel`
-(tested separately); this module is the thin AppKit layer that draws it. It is
-AppKit-optional: with no AppKit, :func:`build_status_panel` returns ``None`` and
-the caller keeps the native menu.
+The card is rendered from the pure
+:class:`~src.ui.status_panel_model.PanelModel` (tested separately); this module
+is the thin AppKit layer that draws it, fresh on each open so the recent list and
+active row stay current. AppKit-optional: with no AppKit
+:func:`build_status_panel` returns ``None`` and the caller keeps the native menu.
 
-v1 deliberately renders the header + Settings/Quit footer to prove the popover
-plumbing; the recent-list and live progress row (already in the view-model) are
-layered on once the mechanism is confirmed. See ``Docs/UI-REDESIGN-L4-PLAN.md``.
+See ``Docs/UI-REDESIGN-L4-PLAN.md`` (phase 2).
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ try:
     import objc
     from AppKit import (
         NSApp,
+        NSBox,
+        NSBoxSeparator,
         NSButton,
         NSEventMaskLeftMouseDown,
         NSEventMaskRightMouseDown,
@@ -34,6 +36,8 @@ try:
         NSMakeSize,
         NSPopover,
         NSPopoverBehaviorTransient,
+        NSProgressIndicator,
+        NSProgressIndicatorStyleSpinning,
         NSView,
         NSViewController,
     )
@@ -44,103 +48,184 @@ except ImportError:  # pragma: no cover - non-mac
     _APPKIT_AVAILABLE = False
 
 
-_PANEL_WIDTH = 300.0
-_PAD = float(style.SPACE_PADDING)
-_GAP = float(style.SPACE_CONTROL)
+_PANEL_WIDTH = 320.0
+_PAD = 16.0
+_ROW_GAP = float(style.SPACE_TIGHT)
+_BTN_H = 28.0
+_BTN_GAP = 6.0
 
 
 if _APPKIT_AVAILABLE:
 
+    class _FlippedView(NSView):
+        """Top-left origin so we can lay rows out top-to-bottom."""
+
+        def isFlipped(self):
+            return True
+
     class _StatusPanelController(NSObject):
-        """Owns the NSPopover and routes button clicks to Python callbacks."""
+        """Owns the NSPopover and renders the PanelModel on each open."""
 
         def initWithCallbacks_(self, callbacks):
             self = objc.super(_StatusPanelController, self).init()
             if self is None:
                 return None
             self._callbacks: Dict[str, Callable] = callbacks or {}
-            self._popover = None
-            self._status_label = None
-            self._symbol_view = None
+            self._model = None
             self._status_item = None
             self._menu = None
-            self._build_popover()
+            self._popover = NSPopover.alloc().init()
+            self._popover.setBehavior_(NSPopoverBehaviorTransient)
+            self._popover.setContentViewController_(NSViewController.alloc().init())
             return self
 
-        # -- construction -------------------------------------------------- #
+        # -- rendering ----------------------------------------------------- #
 
         @objc.python_method
-        def _build_popover(self):
-            # Vertical, full-width action rows under the header.
-            header_h = 44.0
-            btn_h = 30.0
-            btn_gap = float(style.SPACE_TIGHT)
-            footer_h = 2 * btn_h + btn_gap
-            total_h = _PAD + header_h + _GAP + footer_h + _PAD
-
-            root = style.vibrant_view(
-                NSMakeRect(0, 0, _PANEL_WIDTH, total_h), material="popover"
-            ) or NSView.alloc().initWithFrame_(NSMakeRect(0, 0, _PANEL_WIDTH, total_h))
-
-            # Header: SF status symbol + title, with the status line below.
-            symbol = NSButton.alloc().initWithFrame_(
-                NSMakeRect(_PAD, total_h - _PAD - 24, 24, 24)
+        def _footer_spec(self, model):
+            pro_label = (
+                "Malinche PRO" if (model and model.pro_active) else "Activate PRO…"
             )
-            symbol.setBordered_(False)
-            symbol.setImagePosition_(2)  # NSImageOnly
-            symbol.setEnabled_(False)
-            self._symbol_view = symbol
-            root.addSubview_(symbol)
+            return [
+                ("Open logs", "doc.plaintext", "logsClicked:"),
+                ("Settings", "gearshape", "settingsClicked:"),
+                (pro_label, "sparkles", "proClicked:"),
+                ("Quit", "power", "quitClicked:"),
+            ]
 
+        @objc.python_method
+        def _render(self, model):
+            """Build the content view for *model*; return (view, height)."""
+            width = _PANEL_WIDTH
+            inner = width - 2 * _PAD
+            elements = []  # (subview,) added after we know total height
+            cy = _PAD
+
+            # Header: status symbol + title.
+            sym_name = model.status_symbol if model else "waveform"
+            header_symbol = self._icon_button(
+                sym_name, NSMakeRect(_PAD, cy, 20, 20), point=16.0
+            )
+            elements.append(header_symbol)
             title = style.make_label("Malinche", style="title")
             if title is not None:
-                title.setFrame_(NSMakeRect(_PAD + 32, total_h - _PAD - 24, 200, 22))
-                root.addSubview_(title)
+                title.setFrame_(NSMakeRect(_PAD + 28, cy - 1, inner - 28, 20))
+                elements.append(title)
+            cy += 22
 
-            status = style.make_label("Status: …", style="caption", secondary=True)
-            if status is not None:
-                status.setFrame_(
-                    NSMakeRect(_PAD, total_h - _PAD - 44, _PANEL_WIDTH - 2 * _PAD, 18)
+            status_text = model.status_text if model else "…"
+            status_label = style.make_label(
+                status_text, style="caption", secondary=True
+            )
+            if status_label is not None:
+                status_label.setFrame_(NSMakeRect(_PAD, cy, inner, 16))
+                elements.append(status_label)
+            cy += 16
+
+            # Active row: file + indeterminate spinner.
+            if model and model.active_row is not None:
+                cy += 4
+                elements.append(self._divider(cy, inner))
+                cy += _ROW_GAP
+                elements.append(
+                    self._icon_button(
+                        model.active_row.symbol,
+                        NSMakeRect(_PAD, cy, 16, 16),
+                        point=12.0,
+                    )
                 )
-                self._status_label = status
-                root.addSubview_(status)
+                file_label = style.make_label(model.active_row.title, style="caption")
+                if file_label is not None:
+                    file_label.setFrame_(NSMakeRect(_PAD + 22, cy, inner - 22 - 22, 16))
+                    elements.append(file_label)
+                spinner = NSProgressIndicator.alloc().initWithFrame_(
+                    NSMakeRect(width - _PAD - 16, cy, 16, 16)
+                )
+                spinner.setStyle_(NSProgressIndicatorStyleSpinning)
+                spinner.setIndeterminate_(True)
+                spinner.startAnimation_(None)
+                elements.append(spinner)
+                cy += 22
 
-            # Footer: full-width rows, stacked vertically (Settings on top).
-            btn_w = _PANEL_WIDTH - 2 * _PAD
-            settings_btn = self._make_action_button(
-                "Settings",
-                "gearshape",
-                NSMakeRect(_PAD, _PAD + btn_h + btn_gap, btn_w, btn_h),
-                "settingsClicked:",
+            # Recent transcripts.
+            recent = list(model.recent_rows) if model else []
+            if recent:
+                cy += 4
+                elements.append(self._divider(cy, inner))
+                cy += _ROW_GAP
+                cap = style.make_label("Recent", style="caption", secondary=True)
+                if cap is not None:
+                    cap.setFrame_(NSMakeRect(_PAD, cy, inner, 14))
+                    elements.append(cap)
+                cy += 18
+                for row in recent:
+                    elements.append(
+                        self._icon_button(
+                            row.symbol or "doc.text",
+                            NSMakeRect(_PAD, cy, 14, 14),
+                            point=11.0,
+                        )
+                    )
+                    lbl = style.make_label(row.title, style="caption")
+                    if lbl is not None:
+                        lbl.setFrame_(NSMakeRect(_PAD + 20, cy, inner - 20, 15))
+                        elements.append(lbl)
+                    cy += 20
+
+            # Footer actions (full-width vertical rows).
+            cy += 4
+            elements.append(self._divider(cy, inner))
+            cy += _ROW_GAP
+            for label, symbol_name, action in self._footer_spec(model):
+                btn = self._make_action_button(
+                    label,
+                    symbol_name,
+                    NSMakeRect(_PAD, cy, inner, _BTN_H),
+                    action,
+                )
+                elements.append(btn)
+                cy += _BTN_H + _BTN_GAP
+            cy = cy - _BTN_GAP + _PAD  # trim trailing gap, add bottom padding
+
+            total_h = cy
+            root = _FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, total_h))
+            bg = style.vibrant_view(
+                NSMakeRect(0, 0, width, total_h), material="popover"
             )
-            root.addSubview_(settings_btn)
-            quit_btn = self._make_action_button(
-                "Quit",
-                "power",
-                NSMakeRect(_PAD, _PAD, btn_w, btn_h),
-                "quitClicked:",
-            )
-            root.addSubview_(quit_btn)
+            if bg is not None:
+                bg.setAutoresizingMask_(18)  # width + height sizable
+                root.addSubview_(bg)
+            for view in elements:
+                root.addSubview_(view)
+            return root, total_h
 
-            controller = NSViewController.alloc().init()
-            controller.setView_(root)
+        @objc.python_method
+        def _icon_button(self, symbol_name, frame, point=14.0):
+            btn = NSButton.alloc().initWithFrame_(frame)
+            btn.setBordered_(False)
+            btn.setImagePosition_(2)  # image only
+            btn.setEnabled_(False)
+            img = style.sf_symbol(symbol_name, point=point)
+            if img is not None:
+                btn.setImage_(img)
+            return btn
 
-            popover = NSPopover.alloc().init()
-            popover.setContentViewController_(controller)
-            popover.setContentSize_(NSMakeSize(_PANEL_WIDTH, total_h))
-            popover.setBehavior_(NSPopoverBehaviorTransient)
-            self._popover = popover
+        @objc.python_method
+        def _divider(self, y, width):
+            box = NSBox.alloc().initWithFrame_(NSMakeRect(_PAD, y, width, 1))
+            box.setBoxType_(NSBoxSeparator)
+            return box
 
         @objc.python_method
         def _make_action_button(self, label, symbol_name, frame, action):
             button = NSButton.alloc().initWithFrame_(frame)
             button.setTitle_(label)
             button.setBezelStyle_(1)  # rounded
-            button.setAlignment_(0)  # NSTextAlignmentLeft — left-aligned content
+            button.setAlignment_(0)  # left-aligned content
             img = style.sf_symbol(symbol_name, point=12.0)
             if img is not None:
                 button.setImage_(img)
-                button.setImagePosition_(3)  # NSImageLeft
+                button.setImagePosition_(3)  # image on the leading edge
             button.setTarget_(self)
             button.setAction_(action)
             return button
@@ -163,16 +248,17 @@ if _APPKIT_AVAILABLE:
         def quitClicked_(self, sender):
             self._invoke("quit")
 
-        # -- public API ---------------------------------------------------- #
+        def logsClicked_(self, sender):
+            self._invoke("logs")
+
+        def proClicked_(self, sender):
+            self._invoke("pro")
+
+        # -- status-item wiring -------------------------------------------- #
 
         def installOnStatusItem_button_menu_(self, status_item, button, ns_menu):
-            """Wire the status-item button: left-click → popover, right → menu.
-
-            The native menu is detached so the button's action fires on click;
-            it is re-attached only for the duration of a right-click so the full
-            menu still works. All guarded by the caller — on any failure the menu
-            stays attached and behaviour is unchanged.
-            """
+            """Left-click → popover, right-click → the native menu (re-attached
+            only for the duration of the right-click). Caller-guarded."""
             self._status_item = status_item
             self._menu = ns_menu
             status_item.setMenu_(None)
@@ -187,44 +273,43 @@ if _APPKIT_AVAILABLE:
                 or bool(event.modifierFlags() & NSEventModifierFlagControl)
             )
             if is_right and self._status_item is not None and self._menu is not None:
-                # Temporarily re-attach the menu so a right-click pops it.
                 self._status_item.setMenu_(self._menu)
                 sender.performClick_(None)
                 self._status_item.setMenu_(None)
             else:
                 self.toggleRelativeTo_(sender)
 
+        # -- public API ---------------------------------------------------- #
+
         def toggleRelativeTo_(self, button):
             if self._popover is None or button is None:
                 return
             if self._popover.isShown():
                 self._popover.close()
-            else:
-                self._popover.showRelativeToRect_ofView_preferredEdge_(
-                    button.bounds(), button, 1  # NSRectEdgeMinY (below)
-                )
+                return
+            view, height = self._render(self._model)
+            self._popover.contentViewController().setView_(view)
+            self._popover.setContentSize_(NSMakeSize(_PANEL_WIDTH, height))
+            self._popover.showRelativeToRect_ofView_preferredEdge_(
+                button.bounds(), button, 1  # below
+            )
 
         def close(self):
             if self._popover is not None and self._popover.isShown():
                 self._popover.close()
 
         def update_(self, model):
-            if model is None:
-                return
-            if self._status_label is not None:
-                self._status_label.setStringValue_(model.status_text)
-            if self._symbol_view is not None:
-                img = style.sf_symbol(model.status_symbol, point=16.0)
-                if img is not None:
-                    self._symbol_view.setImage_(img)
+            # Stored and rendered on next open (keeps the card fresh, no flicker).
+            self._model = model
 
 
 def build_status_panel(callbacks: Optional[Dict[str, Callable]] = None):
     """Create the panel controller, or ``None`` without AppKit.
 
-    ``callbacks`` maps action keys (``settings``, ``quit``) to the menu-app
-    handlers. The returned object exposes ``toggleRelativeTo_(button)``,
-    ``update_(model)`` and ``close()``.
+    ``callbacks`` maps action keys (``settings``, ``logs``, ``pro``, ``quit``)
+    to the menu-app handlers. Returned object exposes
+    ``installOnStatusItem_button_menu_``, ``toggleRelativeTo_``, ``update_`` and
+    ``close``.
     """
     if not _APPKIT_AVAILABLE:
         return None
