@@ -71,9 +71,11 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_popover(self):
-            # Footer has two buttons; height = header + divider + buttons + pads.
+            # Vertical, full-width action rows under the header.
             header_h = 44.0
-            footer_h = 32.0
+            btn_h = 30.0
+            btn_gap = float(style.SPACE_TIGHT)
+            footer_h = 2 * btn_h + btn_gap
             total_h = _PAD + header_h + _GAP + footer_h + _PAD
 
             root = style.vibrant_view(
@@ -103,20 +105,19 @@ if _APPKIT_AVAILABLE:
                 self._status_label = status
                 root.addSubview_(status)
 
-            # Footer buttons.
-            btn_y = _PAD
-            btn_w = (_PANEL_WIDTH - 2 * _PAD - _GAP) / 2.0
+            # Footer: full-width rows, stacked vertically (Settings on top).
+            btn_w = _PANEL_WIDTH - 2 * _PAD
             settings_btn = self._make_action_button(
                 "Settings",
                 "gearshape",
-                NSMakeRect(_PAD, btn_y, btn_w, footer_h),
+                NSMakeRect(_PAD, _PAD + btn_h + btn_gap, btn_w, btn_h),
                 "settingsClicked:",
             )
             root.addSubview_(settings_btn)
             quit_btn = self._make_action_button(
                 "Quit",
                 "power",
-                NSMakeRect(_PAD + btn_w + _GAP, btn_y, btn_w, footer_h),
+                NSMakeRect(_PAD, _PAD, btn_w, btn_h),
                 "quitClicked:",
             )
             root.addSubview_(quit_btn)
@@ -135,6 +136,7 @@ if _APPKIT_AVAILABLE:
             button = NSButton.alloc().initWithFrame_(frame)
             button.setTitle_(label)
             button.setBezelStyle_(1)  # rounded
+            button.setAlignment_(0)  # NSTextAlignmentLeft — left-aligned content
             img = style.sf_symbol(symbol_name, point=12.0)
             if img is not None:
                 button.setImage_(img)
