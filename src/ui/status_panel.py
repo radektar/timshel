@@ -131,7 +131,7 @@ if _APPKIT_AVAILABLE:
                     self._icon_button(
                         model.active_row.symbol,
                         NSMakeRect(_PAD, cy, 16, 16),
-                        point=12.0,
+                        point=14.0,
                     )
                 )
                 file_label = style.make_label(model.active_row.title, style="caption")
@@ -162,13 +162,13 @@ if _APPKIT_AVAILABLE:
                     elements.append(
                         self._icon_button(
                             row.symbol or "doc.text",
-                            NSMakeRect(_PAD, cy, 14, 14),
-                            point=11.0,
+                            NSMakeRect(_PAD, cy, 16, 16),
+                            point=14.0,
                         )
                     )
                     lbl = style.make_label(row.title, style="caption")
                     if lbl is not None:
-                        lbl.setFrame_(NSMakeRect(_PAD + 20, cy, inner - 20, 15))
+                        lbl.setFrame_(NSMakeRect(_PAD + 24, cy, inner - 24, 15))
                         elements.append(lbl)
                     cy += 20
 
@@ -218,15 +218,18 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _make_action_button(self, label, symbol_name, frame, action):
-            # Borderless menu-style row: leading SF Symbol, label tight beside it.
-            button = NSButton.alloc().initWithFrame_(frame)
+            # Borderless menu-style row with hover highlight: leading SF Symbol,
+            # label tight beside it.
+            from src.ui.hover import make_hover_button
+
+            button = make_hover_button(frame) or NSButton.alloc().initWithFrame_(frame)
             button.setTitle_("  " + label)
             button.setBordered_(False)
             button.setAlignment_(0)  # left-aligned content
             font = style.system_font("body")
             if font is not None:
                 button.setFont_(font)
-            img = style.sf_symbol(symbol_name, point=13.0)
+            img = style.sf_symbol(symbol_name, point=14.0)
             if img is not None:
                 button.setImage_(img)
                 button.setImagePosition_(2)  # NSImageLeft — icon on the leading edge
