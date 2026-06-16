@@ -147,6 +147,24 @@ class MalincheMenuApp(rumps.App):
         )
         self.menu.add(self.quit_item)
 
+        # Menu-bar status panel (NSPopover): left-click shows the card, right-
+        # click falls back to this native menu. Installed once the status-item
+        # button exists (after the run loop starts). On any failure the native
+        # menu stays fully functional — no regression.
+        from src.ui.status_panel import build_status_panel
+
+        self._status_panel = build_status_panel(
+            {
+                "settings": self._show_settings,
+                "logs": self._open_logs,
+                "pro": self._show_pro,
+                "quit": self._quit_app,
+            }
+        )
+        self._panel_install_tries = 0
+        if self._status_panel is not None:
+            rumps.Timer(self._install_status_panel, 0.4).start()
+
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
         
@@ -200,6 +218,41 @@ class MalincheMenuApp(rumps.App):
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         return resolved
 
+    def _build_panel_model(self, status: AppStatus):
+        """Gather current state into a PanelModel for the status panel."""
+        from src.ui.status_panel_model import PanelRow, build_panel_model
+
+        current_file = None
+        recent = []
+        error_message = recorder_name = pending_count = None
+        if self.transcriber is not None:
+            state = self.transcriber.state
+            current_file = getattr(state, "current_file", None)
+            error_message = getattr(state, "error_message", None)
+            recorder_name = getattr(state, "recorder_name", None)
+            pending_count = getattr(state, "pending_count", None)
+            try:
+                for entry in self.transcriber.vault_index.recent_entries(5):
+                    name = entry.markdown_path or entry.source_filename or "Transcript"
+                    name = name.rsplit("/", 1)[-1]
+                    if name.endswith(".md"):
+                        name = name[:-3]
+                    recent.append(PanelRow(symbol="doc.text", title=name))
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+        if self._retranscription_in_progress:
+            current_file = self._retranscription_file or current_file
+        tier = license_manager.get_current_tier()
+        return build_panel_model(
+            status,
+            current_file=current_file,
+            recent=recent,
+            pro_active=(tier != FeatureTier.FREE),
+            error_message=error_message,
+            recorder_name=recorder_name,
+            pending_count=pending_count,
+        )
+
     def _update_icon(self, status: AppStatus) -> None:
         """Update menu bar icon based on app status.
 
@@ -207,6 +260,14 @@ class MalincheMenuApp(rumps.App):
         does not render both the icon and a stray emoji/name fallback next to
         each other in the status bar.
         """
+        # Mirror the full state into the popover panel (rendered on next open).
+        panel = getattr(self, "_status_panel", None)
+        if panel is not None:
+            try:
+                panel.update_(self._build_panel_model(status))
+            except Exception:  # pragma: no cover - cosmetic, never fatal
+                pass
+
         icon_path = self._icon_paths.get(status)
         if icon_path:
             self.title = None
@@ -702,6 +763,33 @@ class MalincheMenuApp(rumps.App):
         )
         return decision
 
+    def _install_status_panel(self, timer):
+        """Wire the NSPopover panel onto the status-item button (one-shot).
+
+        Runs on a short timer because the status item only exists once the run
+        loop has started. Stops itself on success, or after a few attempts.
+        Fully guarded: any failure leaves the native menu intact.
+        """
+        self._panel_install_tries += 1
+        try:
+            nsapp = getattr(self, "_nsapp", None)
+            status_item = getattr(nsapp, "nsstatusitem", None)
+            button = status_item.button() if status_item is not None else None
+            ns_menu = getattr(self.menu, "_menu", None)
+            if button is not None and ns_menu is not None and self._status_panel is not None:
+                self._status_panel.installOnStatusItem_button_menu_(
+                    status_item, button, ns_menu
+                )
+                timer.stop()
+                logger.info("Status panel installed on the menu-bar item")
+                return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Status panel install failed (keeping native menu): %s", exc)
+            timer.stop()
+            self._status_panel = None
+            return
+        if self._panel_install_tries >= 10:
+            timer.stop()  # give up; native menu stays
 
     def _update_status(self, _):
         """Update status menu item based on current state."""
