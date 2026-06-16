@@ -117,6 +117,22 @@ def pytest_sessionfinish(session, exitstatus):
     shutil.rmtree(_FAKE_HOME, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def _no_onboarding_modal(monkeypatch):
+    """Never open the real onboarding modal in tests (it would block).
+
+    Forcing it to return ``None`` makes the wizard fall back to its
+    ``rumps.alert`` path, which the wizard tests already mock.
+    """
+    try:
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen",
+            lambda **_kwargs: None,
+        )
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # Audio sample fixtures (L2/L3 scenario tests).
 #

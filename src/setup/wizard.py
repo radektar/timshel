@@ -176,19 +176,34 @@ class SetupWizard:
             )
 
     def _show_welcome(self) -> str:
-        """Welcome screen."""
-        response = rumps.alert(
-            title="🎙️ Welcome to Malinche!",
-            message=(
-                "Malinche automatically transcribes recordings from your "
-                "voice recorder or SD card.\n\n"
-                "We'll walk you through a quick setup.\n\n"
-                "It takes about 3-5 minutes."
+        """Welcome screen (styled onboarding window, alert fallback)."""
+        from src.setup.onboarding_window import show_onboarding_screen
+
+        result = show_onboarding_screen(
+            title="Welcome to Malinche",
+            body=(
+                "Malinche automatically transcribes recordings from your voice "
+                "recorder or SD card.\n\nWe'll walk you through a quick setup — "
+                "about 3–5 minutes."
             ),
-            ok="Get started →",
-            cancel="Cancel",
+            primary="Get started",
+            secondary="Cancel",
+            step_index=0,
+            step_count=len(self.STEPS_ORDER),
         )
-        return "next" if response == 1 else "cancel"
+        if result is None:
+            result = rumps.alert(
+                title="🎙️ Welcome to Malinche!",
+                message=(
+                    "Malinche automatically transcribes recordings from your "
+                    "voice recorder or SD card.\n\n"
+                    "We'll walk you through a quick setup.\n\n"
+                    "It takes about 3-5 minutes."
+                ),
+                ok="Get started →",
+                cancel="Cancel",
+            )
+        return "next" if result == 1 else "cancel"
 
     def _show_download(self) -> str:
         """Download dependencies for the selected model."""
@@ -655,16 +670,30 @@ class SetupWizard:
         return "next"
 
     def _show_finish(self) -> str:
-        """Finish screen."""
-        rumps.alert(
-            title="✅ Malinche is ready!",
-            message=(
-                "Setup complete.\n\n"
-                "Connect your voice recorder or SD card and Malinche "
-                "will process your recordings automatically.\n\n"
-                "The 🎙️ icon appears in the menu bar (top of the screen).\n\n"
-                "Happy transcribing!"
+        """Finish screen (styled onboarding window, alert fallback)."""
+        from src.setup.onboarding_window import show_onboarding_screen
+
+        result = show_onboarding_screen(
+            title="Malinche is ready",
+            body=(
+                "Setup complete. Connect your voice recorder or SD card and "
+                "Malinche transcribes automatically.\n\nThe icon lives in the "
+                "menu bar at the top of the screen. Happy transcribing!"
             ),
-            ok="🎉 Get started!",
+            primary="Get started",
+            step_index=len(self.STEPS_ORDER) - 1,
+            step_count=len(self.STEPS_ORDER),
         )
+        if result is None:
+            rumps.alert(
+                title="✅ Malinche is ready!",
+                message=(
+                    "Setup complete.\n\n"
+                    "Connect your voice recorder or SD card and Malinche "
+                    "will process your recordings automatically.\n\n"
+                    "The 🎙️ icon appears in the menu bar (top of the screen).\n\n"
+                    "Happy transcribing!"
+                ),
+                ok="🎉 Get started!",
+            )
         return "next"
