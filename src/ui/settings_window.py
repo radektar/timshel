@@ -24,9 +24,89 @@ from src.vault_index import is_icloud_synced
 
 # UI constants
 _API_KEY_PLACEHOLDER = "—"
-_WINDOW_SIZE = (640, 440)
-_TAB_FRAME = (16, 56, 608, 360)  # x, y, w, h within content view
+_WINDOW_SIZE = (760, 520)
+_SIDEBAR_W = 190
+_PANE_PAD = 20
+_CARD_INSET = 14
+_ROW_H = 44
 _BUTTON_W, _BUTTON_H = 96, 28
+
+
+def _content_width() -> int:
+    """Usable width of the content pane (right of the sidebar)."""
+    return _WINDOW_SIZE[0] - _SIDEBAR_W - 2 * _PANE_PAD
+
+
+try:
+    from AppKit import NSView as _NSViewBase
+
+    class _SettingsFlippedView(_NSViewBase):
+        """Top-left origin so cards/rows lay out top-to-bottom."""
+
+        def isFlipped(self):
+            return True
+
+    _FLIPPED_AVAILABLE = True
+except Exception:  # pragma: no cover - non-mac
+    _SettingsFlippedView = None  # type: ignore[assignment]
+    _FLIPPED_AVAILABLE = False
+
+
+def _rounded_card(width, height):
+    """A layer-backed rounded 'card' container (flipped), macOS-settings style."""
+    from AppKit import NSColor
+    from Foundation import NSMakeRect
+
+    card = _SettingsFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+    card.setWantsLayer_(True)
+    layer = card.layer()
+    layer.setCornerRadius_(10.0)
+    layer.setBackgroundColor_(
+        NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.6).CGColor()
+    )
+    layer.setBorderWidth_(1.0)
+    layer.setBorderColor_(NSColor.separatorColor().CGColor())
+    return card
+
+
+def _field_label(text):
+    """A right-aligned secondary field label (leading column of a card row)."""
+    from src.ui import style
+
+    label = style.make_label(text, style="body", secondary=True)
+    if label is not None:
+        label.setAlignment_(2)  # NSTextAlignmentRight
+    return label
+
+
+def _card_separator(width, y):
+    from AppKit import NSColor
+    from Foundation import NSMakeRect
+
+    line = _SettingsFlippedView.alloc().initWithFrame_(NSMakeRect(0, y, width, 1))
+    line.setWantsLayer_(True)
+    line.layer().setBackgroundColor_(NSColor.separatorColor().CGColor())
+    return line
+
+
+def _build_card(rows):
+    """Assemble a card from *rows* and return ``(card_view, height)``.
+
+    Each row is a dict with ``height`` and a ``place(card, width, y)`` callback
+    that adds the row's subviews at vertical offset *y*. Rows are separated by a
+    hairline. The card is sized to fit.
+    """
+    width = _content_width()
+    total = sum(r["height"] for r in rows) + (len(rows) - 1)
+    card = _rounded_card(width, total)
+    y = 0.0
+    for index, row in enumerate(rows):
+        row["place"](card, width, y)
+        y += row["height"]
+        if index < len(rows) - 1:
+            card.addSubview_(_card_separator(width, y))
+            y += 1
+    return card, total
 
 
 #: Keeps the most recent settings window + delegate alive past the runloop turn
@@ -39,7 +119,7 @@ _RETAINED_SETTINGS_WINDOWS: list = []
 def _truncate_path(path: str, max_length: int = 60) -> str:
     if len(path) <= max_length:
         return path
-    return "..." + path[-(max_length - 3):]
+    return "..." + path[-(max_length - 3) :]
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -62,7 +142,6 @@ def _format_volume_row(v: TrustedVolume) -> str:
 try:
     import objc
     from AppKit import NSApp, NSObject
-    from Foundation import NSMakeRect
 
     class _SettingsDelegate(NSObject):
         def init(self):
@@ -72,7 +151,27 @@ try:
             self.window = None
             self.state = None
             self.callbacks = None
+            self.sections = None
+            self.sidebar_buttons = None
             return self
+
+        # Sidebar section switching
+        def selectSection_(self, sender):
+            self.highlightSection_(sender.tag())
+
+        def highlightSection_(self, index):
+            from AppKit import NSColor
+
+            if self.sections:
+                for i, view in enumerate(self.sections):
+                    view.setHidden_(i != index)
+            if self.sidebar_buttons:
+                selected = NSColor.selectedContentBackgroundColor()
+                clear = NSColor.clearColor()
+                for i, button in enumerate(self.sidebar_buttons):
+                    button.layer().setBackgroundColor_(
+                        (selected if i == index else clear).CGColor()
+                    )
 
         # Save / Cancel
         def saveClicked_(self, sender):
@@ -159,130 +258,192 @@ except ImportError:
 # Tab content builders
 # ---------------------------------------------------------------------------
 
-def _build_general_tab(view, state, delegate) -> None:
-    from AppKit import NSButton, NSTextField
+
+def _note(text, height=44):
+    """A wrapping, secondary-coloured note label spanning the content width."""
+    from AppKit import NSColor, NSTextField
     from Foundation import NSMakeRect
 
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 256, 160, 20))
-    label.setStringValue_("Output folder:")
+    from src.ui import style
+
+    label = NSTextField.alloc().initWithFrame_(
+        NSMakeRect(0, 0, _content_width(), height)
+    )
+    label.setStringValue_(text)
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
-    view.addSubview_(label)
+    label.setTextColor_(NSColor.secondaryLabelColor())
+    label.cell().setWraps_(True)
+    font = style.system_font("caption")
+    if font is not None:
+        label.setFont_(font)
+    return label, height
 
-    value = NSTextField.alloc().initWithFrame_(NSMakeRect(180, 256, 400, 20))
+
+def _field_row(label_text, control, control_w, control_h, height=_ROW_H):
+    """Card row: leading right-aligned label + a trailing control."""
+    from Foundation import NSMakeRect
+
+    def place(card, width, y):
+        lbl = _field_label(label_text)
+        if lbl is not None:
+            lbl.setFrame_(NSMakeRect(_CARD_INSET, y + (height - 20) / 2, 150, 20))
+            card.addSubview_(lbl)
+        if control is not None:
+            cx = width - _CARD_INSET - control_w
+            control.setFrame_(
+                NSMakeRect(cx, y + (height - control_h) / 2, control_w, control_h)
+            )
+            card.addSubview_(control)
+
+    return {"height": height, "place": place}
+
+
+def _action_row(button, button_w, button_h, hint_label, height=_ROW_H):
+    """Card row: a leading action button + a trailing secondary hint."""
+    from Foundation import NSMakeRect
+
+    def place(card, width, y):
+        button.setFrame_(
+            NSMakeRect(_CARD_INSET, y + (height - button_h) / 2, button_w, button_h)
+        )
+        card.addSubview_(button)
+        if hint_label is not None:
+            hx = _CARD_INSET + button_w + 12
+            hint_label.setFrame_(
+                NSMakeRect(hx, y + (height - 18) / 2, width - hx - _CARD_INSET, 18)
+            )
+            card.addSubview_(hint_label)
+
+    return {"height": height, "place": place}
+
+
+def _full_row(view, view_h, height=None):
+    """Card row holding a single full-width control (scroll list, etc.)."""
+    from Foundation import NSMakeRect
+
+    h = height if height is not None else view_h + 2 * 10
+
+    def place(card, width, y):
+        view.setFrame_(
+            NSMakeRect(
+                _CARD_INSET, y + (h - view_h) / 2, width - 2 * _CARD_INSET, view_h
+            )
+        )
+        card.addSubview_(view)
+
+    return {"height": h, "place": place}
+
+
+def _section(blocks):
+    """Stack cards/notes (each ``(view, height)``) top-down with a gap."""
+    from Foundation import NSMakePoint, NSMakeRect
+
+    width = _content_width()
+    gap = 16
+    total = sum(h for _, h in blocks) + gap * max(len(blocks) - 1, 0)
+    section = _SettingsFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, total))
+    y = 0.0
+    for view, height in blocks:
+        view.setFrameOrigin_(NSMakePoint(0, y))
+        section.addSubview_(view)
+        y += height + gap
+    return section, total
+
+
+def _secondary_hint(text):
+    from src.ui import style
+
+    return style.make_label(text, style="caption", secondary=True)
+
+
+def _build_general_section(state, delegate):
+    from AppKit import NSButton, NSTextField
+    from Foundation import NSMakeRect
+
+    value = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 20))
     value.setStringValue_(_truncate_path(state["selected_folder"]))
     value.setBezeled_(False)
     value.setDrawsBackground_(False)
     value.setEditable_(False)
     value.setSelectable_(True)
-    view.addSubview_(value)
+    value.setAlignment_(2)  # right
     state["folder_value_field"] = value
 
-    pick_btn = NSButton.alloc().initWithFrame_(NSMakeRect(180, 216, 200, 28))
+    pick_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 160, 28))
     pick_btn.setTitle_("Choose folder…")
     pick_btn.setBezelStyle_(1)
     pick_btn.setTarget_(delegate)
     pick_btn.setAction_("folderPickClicked:")
-    view.addSubview_(pick_btn)
 
-    login_checkbox = NSButton.alloc().initWithFrame_(NSMakeRect(20, 170, 560, 22))
-    login_checkbox.setButtonType_(3)  # NSSwitchButton
-    login_checkbox.setTitle_("Launch Malinche automatically at login")
-    login_checkbox.setState_(1 if state.get("start_at_login") else 0)
-    view.addSubview_(login_checkbox)
-    state["start_at_login_checkbox"] = login_checkbox
+    login_switch = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 40, 22))
+    login_switch.setButtonType_(3)  # switch
+    login_switch.setTitle_("")
+    login_switch.setState_(1 if state.get("start_at_login") else 0)
+    state["start_at_login_checkbox"] = login_switch
 
-    note = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 60, 560, 60))
-    note.setStringValue_(
-        "UI language: English. Output transcripts and AI summaries are produced "
-        "in the language configured under the Transcription tab."
+    location_card, lh = _build_card(
+        [
+            _field_row("Output folder", value, 300, 20),
+            _action_row(pick_btn, 160, 28, None),
+        ]
     )
-    note.setBezeled_(False)
-    note.setDrawsBackground_(False)
-    note.setEditable_(False)
-    note.setSelectable_(False)
-    view.addSubview_(note)
+    startup_card, sh = _build_card(
+        [
+            _field_row("Launch at login", login_switch, 40, 22),
+        ]
+    )
+    note = _note(
+        "UI language: English. Transcripts and AI summaries are produced in the "
+        "language set under Transcription."
+    )
+    return _section([(location_card, lh), (startup_card, sh), note])
 
 
-def _build_transcription_tab(view, state) -> None:
-    from AppKit import NSPopUpButton, NSSecureTextField, NSTextField
+def _build_transcription_section(state):
+    from AppKit import NSPopUpButton, NSSecureTextField
     from Foundation import NSMakeRect
 
     language_codes = state["language_codes"]
     model_codes = state["model_codes"]
 
-    lang_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 260, 160, 20))
-    lang_label.setStringValue_("Audio language:")
-    lang_label.setBezeled_(False)
-    lang_label.setDrawsBackground_(False)
-    lang_label.setEditable_(False)
-    lang_label.setSelectable_(False)
-    view.addSubview_(lang_label)
-
-    lang_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(180, 256, 400, 26))
+    lang_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 26))
     for code, name in SUPPORTED_LANGUAGES.items():
         lang_popup.addItemWithTitle_(f"{name} ({code})")
     lang_popup.selectItemAtIndex_(language_codes.index(state["selected_language"]))
-    view.addSubview_(lang_popup)
     state["language_popup"] = lang_popup
 
-    model_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 216, 160, 20))
-    model_label.setStringValue_("Whisper model:")
-    model_label.setBezeled_(False)
-    model_label.setDrawsBackground_(False)
-    model_label.setEditable_(False)
-    model_label.setSelectable_(False)
-    view.addSubview_(model_label)
-
-    model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(180, 212, 400, 26))
+    model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 26))
     for code, name in SUPPORTED_MODELS.items():
         model_popup.addItemWithTitle_(f"{code.upper()}: {name}")
     model_popup.selectItemAtIndex_(model_codes.index(state["selected_model"]))
-    view.addSubview_(model_popup)
     state["model_popup"] = model_popup
 
-    key_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 170, 160, 20))
-    key_label.setStringValue_("Claude API key:")
-    key_label.setBezeled_(False)
-    key_label.setDrawsBackground_(False)
-    key_label.setEditable_(False)
-    key_label.setSelectable_(False)
-    view.addSubview_(key_label)
-
-    key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(180, 166, 400, 26))
+    key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
     key_field.setStringValue_(_mask_api_key(state["original_api_key"]))
-    key_field.setPlaceholderString_(
-        "sk-ant-… (leave unchanged to keep current; clear to remove)"
-    )
-    view.addSubview_(key_field)
+    key_field.setPlaceholderString_("sk-ant-… (leave to keep; clear to remove)")
     state["api_key_field"] = key_field
 
-    hint = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 100, 560, 56))
-    hint.setStringValue_(
-        "Get a key at console.anthropic.com → Settings → API keys.\n"
-        "Without a key, Malinche falls back to filename-based titles and skips "
-        "AI summaries."
+    card, ch = _build_card(
+        [
+            _field_row("Audio language", lang_popup, 300, 26),
+            _field_row("Whisper model", model_popup, 300, 26),
+            _field_row("Claude API key", key_field, 300, 24),
+        ]
     )
-    hint.setBezeled_(False)
-    hint.setDrawsBackground_(False)
-    hint.setEditable_(False)
-    hint.setSelectable_(False)
-    view.addSubview_(hint)
+    note = _note(
+        "Get a key at console.anthropic.com → Settings → API keys. Without a "
+        "key, Malinche uses filename-based titles and skips AI summaries.",
+        height=44,
+    )
+    return _section([(card, ch), note])
 
 
-def _build_disks_tab(view, settings, state, callbacks, delegate) -> None:
-    from AppKit import NSButton, NSScrollView, NSTextField, NSTextView
+def _build_disks_section(settings, state, callbacks, delegate):
+    from AppKit import NSButton, NSScrollView, NSTextView
     from Foundation import NSMakeRect
-
-    header = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 268, 560, 20))
-    header.setStringValue_("Trusted disks (from previous prompts):")
-    header.setBezeled_(False)
-    header.setDrawsBackground_(False)
-    header.setEditable_(False)
-    header.setSelectable_(False)
-    view.addSubview_(header)
 
     volumes = list(settings.trusted_volumes or [])
     body_lines = (
@@ -291,19 +452,17 @@ def _build_disks_tab(view, settings, state, callbacks, delegate) -> None:
         else "  (no remembered disks yet — connect a recorder to be prompted)"
     )
 
-    scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 96, 560, 164))
+    scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 100, 150))
     scroll.setHasVerticalScroller_(True)
-    scroll.setBorderType_(2)
-
-    body = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, 544, 164))
+    scroll.setBorderType_(0)
+    body = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, 100, 150))
     body.setEditable_(False)
     body.setRichText_(False)
     body.setString_(body_lines)
     scroll.setDocumentView_(body)
-    view.addSubview_(scroll)
     state["disks_textview"] = body
 
-    review_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, 52, 200, _BUTTON_H))
+    review_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 200, _BUTTON_H))
     review_btn.setTitle_("Review mounted disks…")
     review_btn.setBezelStyle_(1)
     if "review_volumes" in callbacks:
@@ -311,97 +470,72 @@ def _build_disks_tab(view, settings, state, callbacks, delegate) -> None:
         review_btn.setAction_("reviewVolumesClicked:")
     else:
         review_btn.setEnabled_(False)
-    view.addSubview_(review_btn)
 
-    forget_btn = NSButton.alloc().initWithFrame_(NSMakeRect(232, 52, 160, _BUTTON_H))
-    forget_btn.setTitle_("Forget all")
-    forget_btn.setBezelStyle_(1)
-    if "forget_all_volumes" in callbacks:
-        forget_btn.setTarget_(delegate)
-        forget_btn.setAction_("forgetAllVolumesClicked:")
-    else:
-        forget_btn.setEnabled_(False)
-    view.addSubview_(forget_btn)
-
-    note = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 14, 560, 32))
-    note.setStringValue_(
+    list_card, lh = _build_card([_full_row(scroll, 150)])
+    action_card, ah = _build_card([_action_row(review_btn, 200, _BUTTON_H, None)])
+    note = _note(
         "Forgetting a disk will prompt you again the next time it is connected."
     )
-    note.setBezeled_(False)
-    note.setDrawsBackground_(False)
-    note.setEditable_(False)
-    note.setSelectable_(False)
-    view.addSubview_(note)
+    return _section([(list_card, lh), (action_card, ah), note])
 
 
-def _build_maintenance_tab(view, state, callbacks, delegate) -> None:
-    from AppKit import NSButton, NSTextField
+def _build_maintenance_section(state, callbacks, delegate):
+    from AppKit import NSButton
     from Foundation import NSMakeRect
 
-    rows = [
-        ("Reset memory…",       "reset_memory",   "Re-process recordings from a chosen date."),
-        ("Repair whisper-cli…", "repair_whisper", "Re-download and verify the whisper.cpp binary."),
-        ("Open logs",           "open_logs",      "Open the in-app log viewer (newest entries first)."),
-        ("About Malinche",      "show_about",     "Version, credits, links."),
+    rows_spec = [
+        (
+            "Reset memory…",
+            "reset_memory",
+            "resetMemoryClicked:",
+            "Re-process recordings from a chosen date.",
+        ),
+        (
+            "Repair whisper-cli…",
+            "repair_whisper",
+            "repairWhisperClicked:",
+            "Re-download and verify the whisper.cpp binary.",
+        ),
+        ("Open logs", "open_logs", "openLogsClicked:", "Open the in-app log viewer."),
+        (
+            "About Malinche",
+            "show_about",
+            "showAboutClicked:",
+            "Version, credits, links.",
+        ),
     ]
-    actions = {
-        "reset_memory":   "resetMemoryClicked:",
-        "repair_whisper": "repairWhisperClicked:",
-        "open_logs":      "openLogsClicked:",
-        "show_about":     "showAboutClicked:",
-    }
-
-    # NSTabView reserves ~30px at the top for the tab strip. Start the first
-    # button safely below that, then space rows by 44px so all 4 rows + the
-    # warning footer fit comfortably inside the tab content area.
-    y = 256
-    for title, key, hint_text in rows:
-        btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y, 220, _BUTTON_H))
+    rows = []
+    for title, key, action, hint_text in rows_spec:
+        btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 190, _BUTTON_H))
         btn.setTitle_(title)
         btn.setBezelStyle_(1)
         if key in callbacks:
             btn.setTarget_(delegate)
-            btn.setAction_(actions[key])
+            btn.setAction_(action)
         else:
             btn.setEnabled_(False)
-        view.addSubview_(btn)
+        rows.append(_action_row(btn, 190, _BUTTON_H, _secondary_hint(hint_text)))
 
-        hint = NSTextField.alloc().initWithFrame_(NSMakeRect(250, y + 4, 340, 20))
-        hint.setStringValue_(hint_text)
-        hint.setBezeled_(False)
-        hint.setDrawsBackground_(False)
-        hint.setEditable_(False)
-        hint.setSelectable_(False)
-        view.addSubview_(hint)
+    card, ch = _build_card(rows)
 
-        y -= 44
-
+    warning, wh = _note(
+        "Reset memory is destructive: previously processed recordings will be "
+        "transcribed again.",
+        height=36,
+    )
     try:
         from src.ui import theme
-        warning_color = theme.terracotta()
-    except Exception:
-        warning_color = None
 
-    warning = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 24, 560, 36))
-    warning.setStringValue_(
-        "Reset memory is destructive: previously processed recordings will be "
-        "transcribed again."
-    )
-    warning.setBezeled_(False)
-    warning.setDrawsBackground_(False)
-    warning.setEditable_(False)
-    warning.setSelectable_(False)
-    if warning_color is not None:
-        try:
-            warning.setTextColor_(warning_color)
-        except Exception:
-            pass
-    view.addSubview_(warning)
+        warning.setTextColor_(theme.terracotta())
+    except Exception:
+        pass
+    return _section([(card, ch), (warning, wh)])
 
 
 # ---------------------------------------------------------------------------
 # Modal window
 # ---------------------------------------------------------------------------
+
 
 def _show_native_settings_window(
     settings: UserSettings,
@@ -412,15 +546,14 @@ def _show_native_settings_window(
         NSApp,
         NSBackingStoreBuffered,
         NSButton,
-        NSTabView,
-        NSTabViewItem,
         NSView,
         NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskTitled,
     )
-    from Foundation import NSMakeRect
+    from Foundation import NSMakePoint, NSMakeRect
 
+    from src.ui import style as ui_style
     from src.ui.folder_picker import apply_basic_settings
 
     state: dict = {
@@ -457,58 +590,93 @@ def _show_native_settings_window(
     window.setReleasedWhenClosed_(False)
 
     content = window.contentView()
+    win_w, win_h = _WINDOW_SIZE
 
-    cancel_btn = NSButton.alloc().initWithFrame_(NSMakeRect(420, 16, 96, 32))
-    cancel_btn.setTitle_("Cancel")
-    cancel_btn.setBezelStyle_(1)
-    cancel_btn.setKeyEquivalent_("\x1b")  # Escape
-    content.addSubview_(cancel_btn)
-
-    save_btn = NSButton.alloc().initWithFrame_(NSMakeRect(524, 16, 96, 32))
+    # Bottom button bar (right-aligned).
+    save_btn = NSButton.alloc().initWithFrame_(NSMakeRect(win_w - 20 - 96, 16, 96, 32))
     save_btn.setTitle_("Save")
     save_btn.setBezelStyle_(1)
     save_btn.setKeyEquivalent_("\r")
     content.addSubview_(save_btn)
 
-    tab_view = NSTabView.alloc().initWithFrame_(
-        NSMakeRect(_TAB_FRAME[0], _TAB_FRAME[1], _TAB_FRAME[2], _TAB_FRAME[3])
+    cancel_btn = NSButton.alloc().initWithFrame_(
+        NSMakeRect(win_w - 20 - 96 - 12 - 96, 16, 96, 32)
     )
-    content.addSubview_(tab_view)
+    cancel_btn.setTitle_("Cancel")
+    cancel_btn.setBezelStyle_(1)
+    cancel_btn.setKeyEquivalent_("\x1b")  # Escape
+    content.addSubview_(cancel_btn)
 
     delegate = _SettingsDelegate.alloc().init()
     delegate.window = window
     delegate.state = state
     delegate.callbacks = callbacks
-
     save_btn.setTarget_(delegate)
     save_btn.setAction_("saveClicked:")
     cancel_btn.setTarget_(delegate)
     cancel_btn.setAction_("cancelClicked:")
 
-    # Retain window + delegate beyond this function's scope (drop the previous
-    # one, whose teardown has long since completed). See _RETAINED note above.
     _RETAINED_SETTINGS_WINDOWS.clear()
     _RETAINED_SETTINGS_WINDOWS.append((window, delegate))
 
-    def _new_tab(label: str):
-        item = NSTabViewItem.alloc().initWithIdentifier_(label)
-        item.setLabel_(label)
-        tv = NSView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, _TAB_FRAME[2], _TAB_FRAME[3] - 30)
+    # Sidebar (left, vibrant) with selectable section rows + content pane.
+    sidebar = ui_style.vibrant_view(
+        NSMakeRect(0, 0, _SIDEBAR_W, win_h), material="sidebar"
+    ) or NSView.alloc().initWithFrame_(NSMakeRect(0, 0, _SIDEBAR_W, win_h))
+    content.addSubview_(sidebar)
+
+    sections_def = [
+        ("General", "gearshape", lambda: _build_general_section(state, delegate)),
+        ("Transcription", "waveform", lambda: _build_transcription_section(state)),
+        (
+            "Disks",
+            "externaldrive",
+            lambda: _build_disks_section(settings, state, callbacks, delegate),
+        ),
+        (
+            "Maintenance",
+            "wrench.and.screwdriver",
+            lambda: _build_maintenance_section(state, callbacks, delegate),
+        ),
+    ]
+
+    pane_x = _SIDEBAR_W + _PANE_PAD
+    pane_top = win_h - _PANE_PAD
+    section_views = []
+    sidebar_buttons = []
+    row_y = win_h - 52
+    for index, (label, symbol, builder) in enumerate(sections_def):
+        section, sec_h = builder()
+        section.setFrameOrigin_(NSMakePoint(pane_x, pane_top - sec_h))
+        section.setHidden_(index != 0)
+        content.addSubview_(section)
+        section_views.append(section)
+
+        row = NSButton.alloc().initWithFrame_(
+            NSMakeRect(10, row_y, _SIDEBAR_W - 20, 34)
         )
-        item.setView_(tv)
-        tab_view.addTabViewItem_(item)
-        return tv
+        row.setTitle_("  " + label)
+        row.setBordered_(False)
+        row.setAlignment_(0)
+        font = ui_style.system_font("body")
+        if font is not None:
+            row.setFont_(font)
+        img = ui_style.sf_symbol(symbol, point=14.0)
+        if img is not None:
+            row.setImage_(img)
+            row.setImagePosition_(2)  # leading
+        row.setWantsLayer_(True)
+        row.layer().setCornerRadius_(6.0)
+        row.setTag_(index)
+        row.setTarget_(delegate)
+        row.setAction_("selectSection:")
+        sidebar.addSubview_(row)
+        sidebar_buttons.append(row)
+        row_y -= 38
 
-    general_view = _new_tab("General")
-    transcription_view = _new_tab("Transcription")
-    disks_view = _new_tab("Disks")
-    maintenance_view = _new_tab("Maintenance")
-
-    _build_general_tab(general_view, state, delegate)
-    _build_transcription_tab(transcription_view, state)
-    _build_disks_tab(disks_view, settings, state, callbacks, delegate)
-    _build_maintenance_tab(maintenance_view, state, callbacks, delegate)
+    delegate.sections = section_views
+    delegate.sidebar_buttons = sidebar_buttons
+    delegate.highlightSection_(0)
 
     window.makeKeyAndOrderFront_(None)
     try:
@@ -519,7 +687,9 @@ def _show_native_settings_window(
     if not state["result_save"]:
         return False
 
-    selected_language = state["language_codes"][state["language_popup"].indexOfSelectedItem()]
+    selected_language = state["language_codes"][
+        state["language_popup"].indexOfSelectedItem()
+    ]
     selected_model = state["model_codes"][state["model_popup"].indexOfSelectedItem()]
 
     api_key_input = str(state["api_key_field"].stringValue() or "").strip()
@@ -568,6 +738,7 @@ def _show_native_settings_window(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def show_settings_window(callbacks: Optional[Dict[str, Callable]] = None) -> bool:
     """Show settings window. Returns True if any setting was saved."""
