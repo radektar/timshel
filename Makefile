@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs build-app build-dmg release
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release
 
 help:
 	@echo "Malinche - Development Commands"
@@ -116,6 +116,10 @@ dev-setup:
 	python3 -m venv venv
 	@echo "Virtual environment created!"
 	@echo "Now run: source venv/bin/activate && make install"
+
+icon:
+	@echo "Regenerating app icon (assets/icon.icns + iconset)..."
+	python3 assets/gen_icon.py
 
 build-app:
 	@echo "Building macOS application bundle..."
