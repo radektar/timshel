@@ -580,13 +580,58 @@ class TestScanUnknownVolumes:
 
     def test_skips_session_once_volumes(self, volumes_root, manual_settings):
         """A disk already approved 'Once' this session is not re-prompted."""
+        from src import volume_session
+
         handler = Mock(return_value=DECISION_ONCE)
         monitor = FileMonitor(Mock(), on_unknown_volume=handler)
-        monitor._session_once.add("UUID-SD")
+        volume_session.approve_once("UUID-SD")
 
         self._run(monitor, volumes_root, manual_settings)
 
         handler.assert_not_called()
+
+    def test_once_decision_registers_session_approval(
+        self, volumes_root, manual_settings
+    ):
+        """Choosing 'Once' records a session approval (not a persisted decision)."""
+        from src import volume_session
+
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        with patch.object(FileMonitor, "_persist_decision") as mock_persist:
+            self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_called_once()
+        mock_persist.assert_not_called()  # 'Once' is never persisted
+        assert volume_session.is_approved_once("UUID-SD") is True
+
+    def test_ejected_once_disk_is_forgotten(self, tmp_path, manual_settings):
+        """A 'Once' disk that is no longer mounted is forgotten (re-ask later)."""
+        from src import volume_session
+
+        # SD approved Once, but /Volumes now only has the system + trusted disks.
+        volume_session.approve_once("UUID-SD")
+        root = tmp_path / "Volumes"
+        root.mkdir()
+        (root / "Macintosh HD").mkdir()
+        (root / "LS-P1").mkdir()  # trusted, still mounted; SD_CARD is gone
+
+        monitor = FileMonitor(Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE))
+        self._run(monitor, root, manual_settings)
+
+        assert volume_session.is_approved_once("UUID-SD") is False
+
+    def test_still_mounted_once_disk_is_kept(self, volumes_root, manual_settings):
+        """A 'Once' disk that is still mounted stays approved."""
+        from src import volume_session
+
+        volume_session.approve_once("UUID-SD")  # SD_CARD is present in volumes_root
+        monitor = FileMonitor(Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE))
+
+        self._run(monitor, volumes_root, manual_settings)
+
+        assert volume_session.is_approved_once("UUID-SD") is True
 
     def test_missing_volumes_root_is_noop(self, tmp_path, manual_settings):
         """A non-existent /Volumes is handled gracefully."""

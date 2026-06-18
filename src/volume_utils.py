@@ -12,6 +12,7 @@ from src.config.defaults import defaults
 from src.config.settings import UserSettings
 from src.logger import logger
 from src.volume_identity import get_volume_uuid
+from src import volume_session
 
 
 def has_audio_files(
@@ -105,6 +106,14 @@ def should_process_volume(
             "treating as untrusted"
         )
         return False
+
+    # "Once": zatwierdzony na czas tej sesji podłączenia (nie persystowany).
+    # Sprawdzane *po* persisted trusted/blocked, by trwała decyzja miała
+    # pierwszeństwo. Dzięki temu zarówno gate (FileMonitor) jak i worker
+    # (find_recorders) traktują dysk jednakowo — i "Once" faktycznie
+    # transkrybuje, zamiast przejść bramkę i zostać odrzucony przy skanie.
+    if volume_session.is_approved_once(uuid):
+        return True
 
     match settings.watch_mode:
         case "manual":

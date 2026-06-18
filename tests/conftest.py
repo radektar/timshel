@@ -133,6 +133,21 @@ def _no_onboarding_modal(monkeypatch):
         pass
 
 
+@pytest.fixture(autouse=True)
+def _clear_volume_session():
+    """Reset the process-wide 'Once' registry around every test.
+
+    ``src.volume_session`` is module-global state shared by FileMonitor and
+    volume_utils; without this an 'Once' approval in one test would leak into
+    the next (e.g. silently making an 'unknown' disk look trusted).
+    """
+    from src import volume_session
+
+    volume_session.clear()
+    yield
+    volume_session.clear()
+
+
 # --------------------------------------------------------------------------- #
 # Audio sample fixtures (L2/L3 scenario tests).
 #

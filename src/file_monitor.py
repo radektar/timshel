@@ -20,6 +20,7 @@ from src.volume_utils import (
     has_audio_files,
     should_process_volume,
 )
+from src import volume_session
 
 
 # Decyzja zwracana przez ``on_unknown_volume`` callback do file monitora.
@@ -74,9 +75,6 @@ class FileMonitor:
         self.is_monitoring = False
         self._last_trigger_time = 0.0
         self._debounce_seconds = 2.0  # Prevent multiple rapid triggers
-        # Zapamiętane UUID dysków zatwierdzonych "Raz" — ważne do końca sesji,
-        # żeby kolejne FSEvents na tym samym mount-poincie nie pokazywały dialogu.
-        self._session_once: set[str] = set()
     
     def start(self) -> None:
         """Start monitoring /Volumes for mount events."""
@@ -233,9 +231,8 @@ class FileMonitor:
 
         uuid = get_volume_uuid(volume_path)
 
-        # Już zatwierdzony "Raz" w tej sesji?
-        if uuid in self._session_once:
-            return True
+        # "Raz" zatwierdzony w tej sesji obsługuje już should_process_volume
+        # wyżej; tu pozostaje tylko ścieżka decyzji użytkownika.
 
         # Dla pewności — może w międzyczasie ktoś inny dopisał decyzję.
         existing = settings.find_trusted_volume(uuid)
@@ -258,39 +255,44 @@ class FileMonitor:
             self._persist_decision(uuid, volume_path.name, "blocked")
             return False
         if decision == DECISION_ONCE:
-            self._session_once.add(uuid)
+            # Mount-session trust: not persisted. Both the gate and
+            # find_recorders read this via should_process_volume, so the disk
+            # is actually transcribed; prune_to forgets it once ejected.
+            volume_session.approve_once(uuid)
+            logger.info(
+                "Volume '%s' approved for this session only (uuid=%s)",
+                volume_path.name,
+                uuid,
+            )
             return True
         logger.warning(f"Unknown decision from on_unknown_volume: {decision!r}")
         return False
 
     def scan_unknown_volumes(self, volumes_root: Path = Path("/Volumes")) -> None:
-        """Polling fallback: surface unknown mounted volumes FSEvents missed.
+        """Polling fallback for unknown disks + "Once" eject lifecycle.
 
-        A mount event can be coalesced, or reported against the ``/Volumes``
-        parent rather than the mountpoint, so an unknown disk can stay invisible
-        until the next remount. The periodic checker calls this so every
-        unknown, non-system volume still triggers the Tak/Nie/Raz prompt within
-        one poll interval instead of never.
+        Runs on every periodic tick and does two things in a single ``/Volumes``
+        walk:
 
-        Only active in ``manual`` watch mode with an ``on_unknown_volume``
-        handler wired; otherwise a no-op. Volumes already decided
-        (trusted/blocked) or already prompted this session ("Once") are skipped,
-        so this never re-prompts. Newly trusted disks are picked up by the
-        periodic ``process_recorder`` call that follows this scan.
+        1. **Forget ejected "Once" disks.** A disk approved "Once" is trusted
+           only while mounted; once it disappears from ``/Volumes`` it is
+           dropped (``volume_session.prune_to``) so a remount re-prompts.
+        2. **Surface unknown disks FSEvents missed.** A mount event can be
+           coalesced, or reported against the ``/Volumes`` parent rather than
+           the mountpoint, so an unknown disk can stay invisible until remount.
+           In ``manual`` mode (with a handler) every unknown, non-system volume
+           triggers the Tak/Nie/Raz prompt here. Newly trusted/Once disks are
+           picked up by the ``process_recorder`` call that follows this scan.
         """
-        if self.on_unknown_volume is None:
-            return
-
         try:
             settings = UserSettings.load()
         except Exception as error:  # noqa: BLE001
             logger.debug(f"scan_unknown_volumes: could not load settings: {error}")
             return
 
-        if settings.watch_mode != "manual":
-            return
-
         if not volumes_root.exists():
+            # Nothing is mounted — every "Once" disk is gone.
+            volume_session.prune_to(set())
             return
 
         try:
@@ -300,6 +302,11 @@ class FileMonitor:
                 f"scan_unknown_volumes: could not list {volumes_root}: {error}"
             )
             return
+
+        can_prompt = (
+            self.on_unknown_volume is not None and settings.watch_mode == "manual"
+        )
+        mounted_uuids: set[str] = set()
 
         for candidate in candidates:
             try:
@@ -311,7 +318,11 @@ class FileMonitor:
                 continue
 
             uuid = get_volume_uuid(candidate)
-            if uuid in self._session_once:
+            mounted_uuids.add(uuid)
+
+            if not can_prompt:
+                continue
+            if volume_session.is_approved_once(uuid):
                 continue
             if settings.find_trusted_volume(uuid) is not None:
                 continue
@@ -321,6 +332,15 @@ class FileMonitor:
                 candidate.name,
             )
             self._authorize_volume(candidate, settings)
+
+        # Forget "Once" approvals for disks no longer mounted (re-ask on remount).
+        forgotten = volume_session.prune_to(mounted_uuids)
+        if forgotten:
+            logger.info(
+                "Forgot %d ejected 'Once' volume(s): %s",
+                len(forgotten),
+                ", ".join(sorted(forgotten)),
+            )
 
     @staticmethod
     def _persist_decision(uuid: str, name: str, decision: str) -> None:

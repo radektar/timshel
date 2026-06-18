@@ -98,6 +98,41 @@ def test_should_process_volume_uuid_blocked_rejected(tmp_path):
         assert should_process_volume(volume, settings) is False
 
 
+def test_should_process_volume_once_approved_accepted(tmp_path):
+    """A disk approved 'Once' is processed (the gate AND the worker agree)."""
+    from src import volume_session
+
+    volume = _make_volume(tmp_path, "SD_CARD")
+    settings = UserSettings(watch_mode="manual", watched_volumes=[])
+    volume_session.approve_once("UUID-SD")
+    with _stub_uuid("UUID-SD"):
+        assert should_process_volume(volume, settings) is True
+
+
+def test_should_process_volume_blocked_overrides_once(tmp_path):
+    """A persisted 'blocked' decision wins over a stale 'Once' approval."""
+    from src import volume_session
+
+    volume = _make_volume(tmp_path, "SD_CARD")
+    settings = UserSettings(watch_mode="manual", watched_volumes=[])
+    settings.add_trusted_volume("UUID-SD", "SD_CARD", "blocked")
+    volume_session.approve_once("UUID-SD")
+    with _stub_uuid("UUID-SD"):
+        assert should_process_volume(volume, settings) is False
+
+
+def test_find_matching_volumes_includes_once_approved(tmp_path):
+    """find_recorders (via find_matching_volumes) picks up an 'Once' disk."""
+    from src import volume_session
+
+    _make_volume(tmp_path, "SD_CARD")
+    settings = UserSettings(watch_mode="manual", watched_volumes=[])
+    volume_session.approve_once("UUID-SD")
+    with patch("src.volume_utils.get_volume_uuid", return_value="UUID-SD"):
+        result = find_matching_volumes(settings, volumes_root=tmp_path)
+    assert [p.name for p in result] == ["SD_CARD"]
+
+
 def test_should_process_volume_specific_mode_by_name(tmp_path):
     """Specific mode legacy: akceptuje po nazwie z watched_volumes."""
     volume_ok = _make_volume(tmp_path, "LS-P1")
