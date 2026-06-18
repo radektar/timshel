@@ -3,9 +3,23 @@
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-from src.file_monitor import FileMonitor
+from src.file_monitor import (
+    FileMonitor,
+    DECISION_BLOCKED,
+    DECISION_ONCE,
+    DECISION_TRUSTED,
+)
 from src.config.settings import UserSettings
 from src.config.defaults import defaults
+
+
+def _uuid_for(path) -> str:
+    """Deterministic per-name UUID map for volume-polling tests."""
+    return {
+        "Macintosh HD": "UUID-SYS",
+        "LS-P1": "UUID-LS",
+        "SD_CARD": "UUID-SD",
+    }.get(Path(path).name, f"UUID-{Path(path).name}")
 
 
 @pytest.fixture
@@ -486,13 +500,112 @@ class TestFileMonitorAudioDetection:
     def test_has_audio_files_only_directories(self, tmp_path):
         """Test that directories without files return False."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "subfolder").mkdir()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is False
+
+
+class TestScanUnknownVolumes:
+    """Polling fallback: surface unknown disks the FSEvents stream missed.
+
+    FSEvents can coalesce a mount event, or report it against the ``/Volumes``
+    parent rather than the mountpoint, so an unknown SD card can stay invisible
+    until remount. ``scan_unknown_volumes`` (driven by the periodic checker)
+    closes that gap by prompting for any unknown, non-system volume.
+    """
+
+    @pytest.fixture
+    def volumes_root(self, tmp_path):
+        """A fake /Volumes with a system, a trusted, and an unknown disk."""
+        root = tmp_path / "Volumes"
+        root.mkdir()
+        (root / "Macintosh HD").mkdir()  # system
+        (root / "LS-P1").mkdir()         # already trusted
+        (root / "SD_CARD").mkdir()       # unknown → should prompt
+        return root
+
+    @pytest.fixture
+    def manual_settings(self):
+        settings = UserSettings()
+        settings.watch_mode = "manual"
+        settings.add_trusted_volume("UUID-LS", "LS-P1", "trusted")
+        return settings
+
+    def _run(self, monitor, volumes_root, settings):
+        with patch("src.file_monitor.UserSettings.load", return_value=settings), \
+             patch("src.file_monitor.get_volume_uuid", side_effect=_uuid_for), \
+             patch("src.volume_utils.get_volume_uuid", side_effect=_uuid_for):
+            monitor.scan_unknown_volumes(volumes_root=volumes_root)
+
+    def test_prompts_only_for_unknown_volume(self, volumes_root, manual_settings):
+        """Only the unknown, non-system, non-trusted disk triggers the prompt."""
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_called_once()
+        prompted_path = handler.call_args.args[0]
+        assert Path(prompted_path).name == "SD_CARD"
+
+    def test_persists_trusted_decision(self, volumes_root, manual_settings):
+        """A 'Yes' for an unknown disk is persisted as trusted."""
+        handler = Mock(return_value=DECISION_TRUSTED)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        with patch.object(FileMonitor, "_persist_decision") as mock_persist:
+            self._run(monitor, volumes_root, manual_settings)
+
+        mock_persist.assert_called_once_with("UUID-SD", "SD_CARD", "trusted")
+
+    def test_no_handler_is_noop(self, volumes_root, manual_settings):
+        """Without an on_unknown_volume handler the scan does nothing."""
+        monitor = FileMonitor(Mock())  # no handler
+        # Should not raise; nothing to assert beyond a clean return.
+        self._run(monitor, volumes_root, manual_settings)
+
+    def test_skips_in_non_manual_mode(self, volumes_root, manual_settings):
+        """In specific/legacy mode the prompt path is not used."""
+        manual_settings.watch_mode = "specific"
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_not_called()
+
+    def test_skips_session_once_volumes(self, volumes_root, manual_settings):
+        """A disk already approved 'Once' this session is not re-prompted."""
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+        monitor._session_once.add("UUID-SD")
+
+        self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_not_called()
+
+    def test_missing_volumes_root_is_noop(self, tmp_path, manual_settings):
+        """A non-existent /Volumes is handled gracefully."""
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        self._run(monitor, tmp_path / "nope", manual_settings)
+
+        handler.assert_not_called()
+
+    def test_blocked_volume_not_reprompted(self, volumes_root, manual_settings):
+        """A previously blocked disk is skipped, not prompted again."""
+        manual_settings.add_trusted_volume("UUID-SD", "SD_CARD", "blocked")
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_not_called()
 
 
 class TestFileMonitorInitialScan:

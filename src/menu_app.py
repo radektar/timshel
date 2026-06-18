@@ -120,6 +120,13 @@ class MalincheMenuApp(rumps.App):
         )
         self.menu.add(self.open_logs_item)
 
+        # Manual import — fallback when auto-detection misses a disk/file.
+        self.import_item = rumps.MenuItem(
+            "Import audio…",
+            callback=self._import_audio_clicked,
+        )
+        self.menu.add(self.import_item)
+
         # Retranscribe submenu (lazy populated by refresh timer)
         self.retranscribe_menu = rumps.MenuItem("Retranscribe file…")
         self.menu.add(self.retranscribe_menu)
@@ -356,6 +363,115 @@ class MalincheMenuApp(rumps.App):
 
         # Reuse manualnej ścieżki — ta sama logika.
         self._review_mounted_volumes(settings)
+
+    def _import_audio_clicked(self, _) -> None:
+        """Menu: manually pick an audio file and run the full pipeline on it.
+
+        Fallback for when automatic recorder/SD detection misses a file. The
+        file picker runs on the main thread; the actual stage+transcribe runs
+        in a background thread so the menu stays responsive.
+        """
+        if self.transcriber is None:
+            rumps.alert(
+                title="Not ready",
+                message="Malinche is still starting up. Try again in a moment.",
+                ok="OK",
+            )
+            return
+
+        path = self._choose_audio_file()
+        if not path:
+            return
+
+        threading.Thread(
+            target=self._run_import,
+            args=(Path(path),),
+            daemon=True,
+            name="ManualImport",
+        ).start()
+
+    def _choose_audio_file(self) -> Optional[str]:
+        """Show an NSOpenPanel filtered to supported audio types.
+
+        Returns the selected path, or None if cancelled / unavailable.
+        """
+        try:
+            from AppKit import NSOpenPanel
+        except ImportError:
+            rumps.alert(
+                title="Unavailable",
+                message="The file picker is not available in this environment.",
+                ok="OK",
+            )
+            return None
+
+        result = {"path": None}
+
+        def _panel() -> None:
+            panel = NSOpenPanel.openPanel()
+            panel.setCanChooseFiles_(True)
+            panel.setCanChooseDirectories_(False)
+            panel.setAllowsMultipleSelection_(False)
+            panel.setMessage_("Choose an audio file to transcribe")
+            allowed = [ext.lstrip(".") for ext in sorted(config.AUDIO_EXTENSIONS)]
+            panel.setAllowedFileTypes_(allowed)
+            # NSModalResponseOK == 1
+            if panel.runModal() == 1:
+                urls = panel.URLs()
+                if urls and len(urls) > 0:
+                    result["path"] = str(urls[0].path())
+
+        _run_on_main_thread(_panel)
+        return result["path"]
+
+    def _run_import(self, audio_path: Path) -> None:
+        """Stage + transcribe a manually imported file (background thread)."""
+        name = audio_path.name
+        try:
+            send_notification("Malinche", "Importing", f"Transcribing {name}…")
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            ok = self.transcriber.import_audio_file(audio_path)
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("Manual import rejected %s: %s", audio_path, exc)
+            # Bind the message now: the ``exc`` name is cleared when the except
+            # block exits, but ``_on_main`` may run later on the main thread.
+            reason = str(exc)
+
+            def _on_main() -> None:
+                rumps.alert(title="Cannot import file", message=reason, ok="OK")
+
+            _run_on_main_thread(_on_main)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Manual import failed for %s: %s", audio_path, exc, exc_info=True
+            )
+            reason = str(exc)
+
+            def _on_main() -> None:
+                rumps.alert(title="Import failed", message=reason, ok="OK")
+
+            _run_on_main_thread(_on_main)
+            return
+
+        if ok:
+            logger.info("✓ Manual import complete: %s", name)
+            try:
+                send_notification("Malinche", "Done", f"Transcribed {name}")
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            def _on_main() -> None:
+                rumps.alert(
+                    title="Transcription failed",
+                    message=f"Could not transcribe {name}. Check the logs.",
+                    ok="OK",
+                )
+
+            _run_on_main_thread(_on_main)
 
     def _manage_volumes_clicked(self, _) -> None:
         """Menu item: manage trusted/blocked disk list."""

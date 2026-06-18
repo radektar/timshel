@@ -263,6 +263,65 @@ class FileMonitor:
         logger.warning(f"Unknown decision from on_unknown_volume: {decision!r}")
         return False
 
+    def scan_unknown_volumes(self, volumes_root: Path = Path("/Volumes")) -> None:
+        """Polling fallback: surface unknown mounted volumes FSEvents missed.
+
+        A mount event can be coalesced, or reported against the ``/Volumes``
+        parent rather than the mountpoint, so an unknown disk can stay invisible
+        until the next remount. The periodic checker calls this so every
+        unknown, non-system volume still triggers the Tak/Nie/Raz prompt within
+        one poll interval instead of never.
+
+        Only active in ``manual`` watch mode with an ``on_unknown_volume``
+        handler wired; otherwise a no-op. Volumes already decided
+        (trusted/blocked) or already prompted this session ("Once") are skipped,
+        so this never re-prompts. Newly trusted disks are picked up by the
+        periodic ``process_recorder`` call that follows this scan.
+        """
+        if self.on_unknown_volume is None:
+            return
+
+        try:
+            settings = UserSettings.load()
+        except Exception as error:  # noqa: BLE001
+            logger.debug(f"scan_unknown_volumes: could not load settings: {error}")
+            return
+
+        if settings.watch_mode != "manual":
+            return
+
+        if not volumes_root.exists():
+            return
+
+        try:
+            candidates = sorted(volumes_root.iterdir(), key=lambda p: p.name)
+        except OSError as error:
+            logger.debug(
+                f"scan_unknown_volumes: could not list {volumes_root}: {error}"
+            )
+            return
+
+        for candidate in candidates:
+            try:
+                if not candidate.is_dir():
+                    continue
+            except OSError:
+                continue
+            if candidate.name in defaults.SYSTEM_VOLUMES:
+                continue
+
+            uuid = get_volume_uuid(candidate)
+            if uuid in self._session_once:
+                continue
+            if settings.find_trusted_volume(uuid) is not None:
+                continue
+
+            logger.info(
+                "🔎 Periodic scan: unknown volume %s — prompting (FSEvents miss?)",
+                candidate.name,
+            )
+            self._authorize_volume(candidate, settings)
+
     @staticmethod
     def _persist_decision(uuid: str, name: str, decision: str) -> None:
         """Zapisz decyzję user-a do UserSettings."""

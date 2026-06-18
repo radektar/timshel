@@ -64,6 +64,16 @@ class MalincheTranscriber:
         if self.monitor is not None:
             self.monitor.on_unknown_volume = callback
 
+    def import_audio_file(self, source) -> bool:
+        """Manually import an audio file into the pipeline (menu fallback).
+
+        Forwards to the underlying :class:`Transcriber`. Raises if the daemon
+        has not finished starting (no transcriber yet).
+        """
+        if self.transcriber is None:
+            raise RuntimeError("Transcriber not started yet")
+        return self.transcriber.import_audio_file(source)
+
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals.
 
@@ -95,6 +105,17 @@ class MalincheTranscriber:
 
                 if self.transcriber:
                     logger.debug("Periodic check triggered processing")
+                    # Fallback for unknown disks the FSEvents stream missed:
+                    # prompt for any new volume, then process (newly trusted
+                    # disks become visible to process_recorder right away).
+                    if self.monitor is not None:
+                        try:
+                            self.monitor.scan_unknown_volumes()
+                        except Exception as scan_error:  # noqa: BLE001
+                            logger.error(
+                                f"Error scanning unknown volumes: {scan_error}",
+                                exc_info=True,
+                            )
                     self.transcriber.process_recorder()
 
             except Exception as e:

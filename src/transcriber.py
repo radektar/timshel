@@ -1738,6 +1738,77 @@ Brak podsumowania AI. Możliwe przyczyny:
 
         return success
 
+    def stage_audio_file(self, source: Path) -> Path:
+        """Copy a manually chosen audio file into the local staging area.
+
+        Fallback path for when automatic recorder/SD detection misses a file:
+        the user points Malinche at an audio file anywhere on disk. The
+        original is never touched — a copy is placed in
+        ``LOCAL_RECORDINGS_DIR`` (collision-safe) and returned for transcription.
+
+        Args:
+            source: Path to an audio file outside the watched volumes.
+
+        Returns:
+            Path to the staged copy inside ``LOCAL_RECORDINGS_DIR``.
+
+        Raises:
+            FileNotFoundError: if *source* does not exist or is not a file.
+            ValueError: if *source* has an unsupported audio extension.
+        """
+        source = Path(source)
+        if not source.is_file():
+            raise FileNotFoundError(f"Not a file: {source}")
+        if source.suffix.lower() not in self.config.AUDIO_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported audio format {source.suffix!r}; expected one of "
+                f"{sorted(self.config.AUDIO_EXTENSIONS)}"
+            )
+
+        staging_dir = self.config.LOCAL_RECORDINGS_DIR
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        destination = self._unique_staging_path(staging_dir, source.name)
+        shutil.copy2(source, destination)
+        logger.info("📥 Imported %s → %s", source.name, destination)
+        return destination
+
+    @staticmethod
+    def _unique_staging_path(staging_dir: Path, filename: str) -> Path:
+        """Return a non-colliding path in *staging_dir* for *filename*.
+
+        If ``recording.mp3`` already exists, returns ``recording (1).mp3``,
+        then ``recording (2).mp3``, etc., so a re-import never overwrites an
+        earlier copy that may still be pending.
+        """
+        candidate = staging_dir / filename
+        if not candidate.exists():
+            return candidate
+        stem = candidate.stem
+        suffix = candidate.suffix
+        index = 1
+        while True:
+            candidate = staging_dir / f"{stem} ({index}){suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def import_audio_file(self, source: Path) -> bool:
+        """Stage *source* and run the full single-file pipeline on the copy.
+
+        Convenience wrapper around :meth:`stage_audio_file` +
+        :meth:`transcribe_file` for the menu-bar "Import audio…" action.
+
+        Returns:
+            True if transcription succeeded, False otherwise.
+
+        Raises:
+            FileNotFoundError / ValueError: propagated from
+            :meth:`stage_audio_file` for invalid input.
+        """
+        staged = self.stage_audio_file(source)
+        return self.transcribe_file(staged)
+
     def _index_completed_transcription(
         self,
         audio_file: Path,
