@@ -139,13 +139,6 @@ class MalincheMenuApp(rumps.App):
         )
         self.menu.add(self.settings_item)
 
-        # PRO Activation / Status (label flips to "💎 Malinche PRO" when active)
-        self.pro_item = rumps.MenuItem(
-            "Activate PRO…",
-            callback=self._show_pro,
-        )
-        self.menu.add(self.pro_item)
-
         self.menu.add(rumps.separator)
 
         self.quit_item = rumps.MenuItem(
@@ -164,7 +157,7 @@ class MalincheMenuApp(rumps.App):
             {
                 "settings": self._show_settings,
                 "logs": self._open_logs,
-                "pro": self._show_pro,
+                "import": self._import_audio_clicked,
                 "quit": self._quit_app,
             }
         )
@@ -909,13 +902,6 @@ class MalincheMenuApp(rumps.App):
 
     def _update_status(self, _):
         """Update status menu item based on current state."""
-        # Update PRO item label based on current tier
-        tier = license_manager.get_current_tier()
-        if tier == FeatureTier.FREE:
-            self.pro_item.title = "Activate PRO…"
-        else:
-            self.pro_item.title = "💎 Malinche PRO"
-
         if not self.transcriber:
             self.status_item.title = "Status: Not running"
             self._update_icon(AppStatus.IDLE)

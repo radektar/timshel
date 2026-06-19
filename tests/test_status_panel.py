@@ -30,7 +30,7 @@ def test_build_status_panel_returns_controller():
         b"statusButtonClicked:",
         b"settingsClicked:",
         b"logsClicked:",
-        b"proClicked:",
+        b"importClicked:",
         b"quitClicked:",
         b"installOnStatusItem:button:menu:",
     ):

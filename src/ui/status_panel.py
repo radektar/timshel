@@ -85,13 +85,10 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _footer_spec(self, model):
-            pro_label = (
-                "Malinche PRO" if (model and model.pro_active) else "Activate PRO…"
-            )
             return [
+                ("Import audio…", "square.and.arrow.down", "importClicked:"),
                 ("Open logs", "doc.plaintext", "logsClicked:"),
                 ("Settings", "gearshape", "settingsClicked:"),
-                (pro_label, "sparkles", "proClicked:"),
                 ("Quit", "power", "quitClicked:"),
             ]
 
@@ -277,8 +274,8 @@ if _APPKIT_AVAILABLE:
         def logsClicked_(self, sender):
             self._invoke("logs")
 
-        def proClicked_(self, sender):
-            self._invoke("pro")
+        def importClicked_(self, sender):
+            self._invoke("import")
 
         # -- status-item wiring -------------------------------------------- #
 
@@ -332,7 +329,7 @@ if _APPKIT_AVAILABLE:
 def build_status_panel(callbacks: Optional[Dict[str, Callable]] = None):
     """Create the panel controller, or ``None`` without AppKit.
 
-    ``callbacks`` maps action keys (``settings``, ``logs``, ``pro``, ``quit``)
+    ``callbacks`` maps action keys (``settings``, ``logs``, ``import``, ``quit``)
     to the menu-app handlers. Returned object exposes
     ``installOnStatusItem_button_menu_``, ``toggleRelativeTo_``, ``update_`` and
     ``close``.
