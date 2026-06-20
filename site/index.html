@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Malinche — mówisz, reszta zostaje</title>
-<meta name="description" content="Podłączasz dyktafon. Każde nagranie ląduje przepisane i poukładane w Twoim Obsidianie, na Twoim Macu. Nic nie ginie." />
+<title>Malinche — z nagrań jeden system</title>
+<meta name="description" content="Masz transkrypty wszystkiego, a nic z nich nie wynika. Malinche czyta nagrania razem — łączy, zestawia, podsuwa powiązania. Lokalnie, na Twoim Macu." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -129,16 +129,34 @@
   .step p{color:var(--ink-soft);font-size:1rem}
   @media(max-width:720px){.ladder{grid-template-columns:1fr;gap:1.6rem}}
 
-  /* trust */
-  .trust{text-align:center}
-  .trust h2{max-width:18ch;margin-inline:auto}
-  .trust .deadpan{font-family:"Fraunces",serif;font-style:italic;font-size:clamp(1.2rem,1rem + 1vw,1.7rem);color:var(--terracotta);margin-top:1.6rem}
-  .trust .src{margin-top:1rem;font-size:.9rem;color:var(--ink-soft);max-width:52ch;margin-inline:auto}
+  /* proof — one trust block: local + your files + open source */
+  .proof-sec{text-align:center}
+  .proof-sec h2{max-width:18ch;margin-inline:auto}
+  .deadpan{font-family:"Fraunces",serif;font-style:italic;font-size:clamp(1.2rem,1rem + 1vw,1.7rem);color:var(--terracotta);margin:1.6rem auto 0}
+  .src{margin:1rem auto 0;font-size:.9rem;color:var(--ink-soft);max-width:52ch}
+  .proofs{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.6rem;text-align:left}
+  .pf{background:var(--cream-hi);border:1px solid var(--line);border-radius:18px;padding:1.3rem 1.4rem}
+  .pf .t{display:flex;align-items:center;gap:.5rem;font-weight:600;font-size:1rem;margin-bottom:.5rem}
+  .pf .t::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--jade);flex:0 0 auto}
+  .pf p{font-size:.92rem;color:var(--ink-soft);max-width:none;margin:0}
+  @media(max-width:720px){.proofs{grid-template-columns:1fr}}
 
-  /* who */
+  /* who — concrete cases, now vs Malinche */
   .who{text-align:center}
-  .who .tags{display:flex;flex-wrap:wrap;gap:.7rem;justify-content:center;margin-top:1.8rem}
-  .tag{border:1px solid var(--line);border-radius:999px;padding:.5rem 1.1rem;font-size:.95rem;color:var(--ink)}
+  .who h2{max-width:20ch;margin-inline:auto}
+  .who .sub{margin:1rem auto 0;color:var(--ink-soft);max-width:46ch}
+  .cases{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.6rem;text-align:left}
+  .case{background:var(--cream-hi);border:1px solid var(--line);border-radius:20px;padding:clamp(1.4rem,2.5vw,2rem)}
+  .case .persona{font-family:"Fraunces",serif;font-weight:600;font-size:1.28rem;letter-spacing:-.01em;margin-bottom:1.1rem}
+  .case .row{display:flex;gap:.9rem;padding-block:.8rem}
+  .case .row + .row{border-top:1px solid var(--line)}
+  .case .lab{flex:0 0 auto;width:4.6rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding-top:.2rem}
+  .case .now .lab{color:var(--ink-soft)}
+  .case .with .lab{color:var(--terracotta)}
+  .case .row p{margin:0;font-size:.96rem;max-width:none}
+  .case .now p{color:var(--ink-soft)}
+  .case .with p{color:var(--ink)}
+  @media(max-width:720px){.cases{grid-template-columns:1fr}}
 
   /* waitlist / cta */
   .signup{text-align:center;background:var(--cream-hi);border:1px solid var(--line);border-radius:28px;padding:clamp(2.4rem,5vw,4rem) clamp(1.5rem,4vw,3rem);margin-block:clamp(2.5rem,5vw,4rem)}
@@ -159,7 +177,7 @@
     .hero h1{max-width:18ch}
     .hero h1 .accent{display:block}
     .lead{font-size:1.08rem}
-    .nav-links a[href="#jak"],.nav-links a[href="#prywatnosc"]{display:none}
+    .nav-links a[href="#jak"],.nav-links a[href="#zaufanie"]{display:none}
   }
   @media(prefers-reduced-motion:reduce){.wave rect{animation:none}}
 </style>
@@ -189,7 +207,8 @@
       </div>
       <div class="nav-links">
         <a href="#jak">Jak działa</a>
-        <a href="#prywatnosc">Prywatność</a>
+        <a href="#zaufanie">Zaufanie</a>
+        <a href="#dlakogo">Dla kogo</a>
         <a href="https://github.com/radektar/malinche">GitHub</a>
       </div>
     </nav>
@@ -199,9 +218,9 @@
 <main>
   <section class="hero">
     <div class="wrap">
-      <span class="eyebrow">Transkrypcja na Twoim Macu</span>
-      <h1>Mówisz. <span class="accent">Reszta zostaje.</span></h1>
-      <p class="lead">Podłączasz dyktafon. Każde nagranie ląduje przepisane i poukładane w Twoim Obsidianie — na Twoim Macu. Nic nie ginie.</p>
+      <span class="eyebrow">Jeden system, nie stos plików</span>
+      <h1>Masz transkrypty wszystkiego. <span class="accent">I nic z nich nie wynika.</span></h1>
+      <p class="lead">Leżą w folderze i udają system. Malinche czyta je razem — łączy, zestawia, podsuwa to, czego sam już nie pamiętasz. Lokalnie, na twoim Macu.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#lista">Zapisz się na listę</a>
         <a class="btn btn-ghost" href="https://github.com/radektar/malinche">Zobacz na GitHubie</a>
@@ -245,17 +264,17 @@
         <div class="step">
           <div class="n">01</div>
           <h3>Zgrywasz i zapominasz</h3>
-          <p>Podłączasz dyktafon albo kartę. Whisper przepisuje lokalnie, notatka ląduje w vaulcie, otagowana. Twoja rola się tu kończy.</p>
+          <p>Podłączasz dyktafon albo kartę. Whisper przepisuje lokalnie, a notatka sama się taguje i ląduje w Twoich plikach. Twoja rola się tu kończy.</p>
         </div>
         <div class="step">
           <div class="n">02</div>
-          <h3>Pytasz w swoim Claude</h3>
-          <p>„Co ustaliliśmy w sprawie X?" Pytasz we własnym kliencie — odpowiedź zawsze tam jest. Bez przekopywania plików.</p>
+          <h3>Pytasz — i nie pudłuje</h3>
+          <p>„Co ustaliliśmy w sprawie X?" Pytasz we własnym Claude nad całym archiwum — odpowiedź zawsze tam jest. Bez przekopywania plików.</p>
         </div>
         <div class="step">
           <div class="n">03</div>
-          <h3>Czasem to ono mówi pierwsze</h3>
-          <p>„Te trzy myśli sprzed miesięcy się łączą. Zrobisz z tym coś?" Podsuwa kierunki — nie każe. Pomyłkę odrzucasz jednym kliknięciem.</p>
+          <h3>Samo się odzywa</h3>
+          <p>„Te trzy myśli sprzed miesięcy się łączą. Zrobisz z tym coś?" Podsuwa kierunki i pomaga rozwinąć je w gotowy tekst — nie każe. Pomyłkę odrzucasz kliknięciem.</p>
         </div>
       </div>
     </div>
@@ -275,25 +294,84 @@
     </div>
   </section>
 
-  <section class="block trust" id="prywatnosc">
+  <section class="block proof-sec" id="zaufanie">
     <div class="wrap">
-      <span class="eyebrow kicker">Prywatność</span>
-      <h2>Nagrania nie idą na niczyj serwer.</h2>
-      <p class="deadpan">Nie zgubimy tego, czego nigdy nie mieliśmy.</p>
-      <p class="src">Pewne narzędzie, które miało pamiętać za Ciebie, w grudniu 2025 skasowało dane użytkownikom w Europie. Twoje zostają tam, gdzie powinny — na Twoim dysku, w Twoim vaulcie.</p>
+      <span class="eyebrow kicker">Dlaczego można zaufać</span>
+      <h2>Nie zgubimy tego, czego nigdy nie mieliśmy.</h2>
+      <p class="deadpan">Twoje myśli zostają tam, gdzie powinny.</p>
+      <p class="src">Pewne narzędzie, które miało pamiętać za Ciebie, w grudniu 2025 skasowało dane użytkownikom w Europie. Malinche nie może zgubić ani skasować Twoich danych — bo nigdy ich nie trzyma.</p>
+      <div class="proofs">
+        <div class="pf">
+          <div class="t">Lokalnie</div>
+          <p>Transkrypcja idzie na Twoim Macu (whisper.cpp). Audio nie wychodzi do żadnej chmury — nawet na sekundę.</p>
+        </div>
+        <div class="pf">
+          <div class="t">Twoje pliki</div>
+          <p>Notatki to czysty Markdown w folderze, który posiadasz — Obsidian, dysk, eksport kiedy chcesz. Żadnego zamknięcia w cudzym systemie.</p>
+        </div>
+        <div class="pf">
+          <div class="t">Otwarty kod</div>
+          <p>Rdzeń jest open source (MIT). Możesz zajrzeć, sprawdzić, uruchomić u siebie. Bez konta, bez kluczy do nas.</p>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="block who">
+  <section class="block who" id="dlakogo">
     <div class="wrap">
       <span class="eyebrow kicker">Dla kogo</span>
       <h2>Dla ludzi, którzy myślą na głos — i mają tego dużo.</h2>
-      <div class="tags">
-        <span class="tag">Dziennikarze</span>
-        <span class="tag">Prawnicy</span>
-        <span class="tag">Researcherzy</span>
-        <span class="tag">Badacze w terenie</span>
-        <span class="tag">Podcasterzy</span>
+      <p class="sub">Masz dyktafon i system notatek? Oto jak wygląda dzień teraz — i z Malinche.</p>
+      <div class="cases">
+
+        <div class="case">
+          <div class="persona">Dziennikarze i reporterzy</div>
+          <div class="row now">
+            <span class="lab">Teraz</span>
+            <p>Wracasz z terenu z sześcioma godzinami wywiadów na dyktafonie. Przepisujesz ręcznie albo wrzucasz źródła do cudzej chmury. Cytat sprzed trzech rozmów po prostu przepada.</p>
+          </div>
+          <div class="row with">
+            <span class="lab">Malinche</span>
+            <p>Każdy wywiad przepisany lokalnie i otagowany. Pytasz „kto mówił o X?" i dostajesz cytat z datą i nagraniem — a źródła nie opuszczają Twojego Maca.</p>
+          </div>
+        </div>
+
+        <div class="case">
+          <div class="persona">Prawnicy i dyktujący</div>
+          <div class="row now">
+            <span class="lab">Teraz</span>
+            <p>Dyktujesz pismo i oddajesz nagranie do przepisania — poufne treści krążą przez sekretariat albo chmurę. Starych dyktand i tak nie da się przeszukać.</p>
+          </div>
+          <div class="row with">
+            <span class="lab">Malinche</span>
+            <p>Dyktando przepisane na Twoim Macu, nic nie wychodzi na zewnątrz. Pytasz „co ustaliłem w sprawie Kowalski?" i masz odpowiedź z własnego, prywatnego archiwum.</p>
+          </div>
+        </div>
+
+        <div class="case">
+          <div class="persona">Badacze w terenie</div>
+          <div class="row now">
+            <span class="lab">Teraz</span>
+            <p>Karta SD pełna godzin rozmów i obserwacji. Ręczne przepisywanie zżera tygodnie, a analiza zaczyna się dopiero, kiedy wszystko jest spisane.</p>
+          </div>
+          <div class="row with">
+            <span class="lab">Malinche</span>
+            <p>Wrzucasz kartę — partia nagrań przepisana i skatalogowana w nocy. Rano pytasz cały korpus o motywy, zamiast przekopywać pliki po kolei.</p>
+          </div>
+        </div>
+
+        <div class="case">
+          <div class="persona">Podcasterzy i twórcy</div>
+          <div class="row now">
+            <span class="lab">Teraz</span>
+            <p>Surowe tracki z rejestratora, transkrypt to ściana tekstu. Tego jednego dobrego fragmentu szukasz ręcznie, przewijając nagranie.</p>
+          </div>
+          <div class="row with">
+            <span class="lab">Malinche</span>
+            <p>Każdy take przepisany i przeszukiwalny. „Gdzie mówiłem o Y?" — znajdujesz w sekundę. Show notes i wątki na kolejny odcinek z własnego materiału.</p>
+          </div>
+        </div>
+
       </div>
     </div>
   </section>
@@ -302,12 +380,12 @@
     <div class="wrap">
       <div class="signup">
         <h2>Bądź pierwszy, gdy ruszy.</h2>
-        <p class="muted" style="margin-inline:auto">Kod jest otwarty. Wersja, która składa to wszystko sama — bez sklejania whisper, embeddingów i MCP — w przygotowaniu.</p>
+        <p class="muted" style="margin-inline:auto">Otwarty rdzeń — lokalna transkrypcja do Twoich plików — działa już dziś. Zapisz się po wersję, która sama odnajduje w archiwum, podsuwa powiązania i pomaga rozwinąć je w gotowy tekst.</p>
         <form class="form" onsubmit="return false">
           <input type="email" placeholder="twój@email.pl" aria-label="Adres e-mail" />
           <button class="btn btn-primary" type="submit">Zapisz mnie</button>
         </form>
-        <span class="badge">PRO w przygotowaniu</span>
+        <span class="badge">Wczesny dostęp</span>
       </div>
     </div>
   </section>
