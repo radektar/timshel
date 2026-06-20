@@ -4,7 +4,7 @@
 > Plug in your recorder; every recording lands transcribed and structured in your Obsidian vault,
 > on your Mac. No cloud. Nothing lost.
 
-*Status: working draft (v0.1, 2026-06-17). Rationale + decision trail in [POSITIONING.md](POSITIONING.md).*
+*Status: working draft (v0.1, 2026-06-17). Live landing (PL): https://malinche-radek-taraszka.vercel.app — Vercel project `malinche`, static `site/`. Rationale + decision trail in [POSITIONING.md](POSITIONING.md).*
 
 ## The problem
 
