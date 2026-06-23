@@ -1,56 +1,63 @@
 # Malinche — One-Pager
 
-> **Your spoken thinking, captured for good — and recallable from your own Claude.**
-> Plug in your recorder; every recording lands transcribed and structured in your Obsidian vault,
-> on your Mac. No cloud. Nothing lost.
+> **From scattered recordings, one system that composes something of its own.**
+> Your recorder's audio lands transcribed in your Obsidian vault, on your Mac — then Malinche reads
+> it all together and surfaces the pattern you'd never connect by hand. No cloud. Nothing lost.
 
-*Status: working draft (v0.1, 2026-06-17). Live landing (PL): https://malinche-radek-taraszka.vercel.app — Vercel project `malinche`, static `site/`. Rationale + decision trail in [POSITIONING.md](POSITIONING.md).*
+*Status: **Locked v0.2 (2026-06-23).** Lead reframed from trust-first to connection-first; trust → proof
++ build-floor. Supersedes the trust-led headline in v0.1. Depth + decision trail: [POSITIONING.md](POSITIONING.md).*
 
-## The problem
+## The wedge — moat, not promise
 
-You think out loud — on a walk, in a meeting, mid-project — and those thoughts vanish. Even when you
-record them, a raw transcript is a wall of text you never reopen. Worse: you forget you ever had the
-thought, re-derive it from scratch, and miss that you already had something usable. And the cloud tools
-that promise to remember for you can't be trusted — Limitless just deleted its EU users' data and folded
-into Meta.
+The only local pipe from a *dedicated audio recorder* (USB dictaphone / SD card) into a *native
+Obsidian vault* — audio never leaves the Mac. No competitor does this; everyone else records meetings
+off the computer mic. This is the qualifier that lets us into the game — **we do not sell on it.**
 
-## What Malinche is
+## The promise — what we lead with
 
-The cleanest, most private pipe from a dedicated audio recorder (USB dictaphone / SD card) into your own
-knowledge base. Transcription runs locally (whisper.cpp); notes are Markdown in your Obsidian vault;
-nothing leaves your Mac. It does the one job no competitor does — everyone else records meetings off your
-computer mic; **Malinche ingests your *hardware* and writes into *your* system.**
+*You have hundreds of recordings and they lie dead.* Malinche reads them together and draws the
+pattern you'd never connect yourself — shared threads, a contradiction from months ago, a hypothesis
+you didn't ask for. **From scattered recordings, one system that composes something of its own.**
 
-## The killer: trust, built as a ladder
+Not the transcript (commodity: Whisper, MacWhisper, NotebookLM). Not recall alone. The ownable value
+is *emergent synthesis across your own private corpus.*
 
-The deepest need isn't a feature — it's the certainty that nothing is lost and your past self comes back
-when you need it. Malinche delivers it as a value ladder, on a foundation of guaranteed completeness:
-
-1. **Recall** — ask in your own Claude "find everything about X" → it never misses (local MCP + a
-   well-tagged vault).
-2. **Resurfacing** — "your thought from three months ago — want to revisit it?"
-3. **Connection** — "several of your thoughts connect into one idea — want to pursue a direction?" It
-   *offers* options, never dictates; a wrong hit is dismissible.
-4. **Synthesis** — turn the surfaced thread into a finished artifact (the blog post written from a list
-   of recordings).
-
-Trust is the floor, synthesis the ceiling — the same value, all the way up.
-
-## Why it wins now
-
-- **Trust is the most ownable position in the market — and Limitless's collapse just proved it.** We
-  can't lose or delete your data because we never hold it: it's on your disk, recallable from your LLM.
-- **Local meeting assistants** (free, on-device) only transcribe; **cloud memory apps** (Plaud, Otter,
-  Limitless†) make you rent access to your own thoughts. Malinche owns the gap between them:
-  hardware-in, Obsidian-native, private, recallable.
-
-## Who it's for
+## Who it's for (ICP)
 
 Prosumers with a recorder and a note system: journalists, dictating lawyers, field researchers,
-podcasters — people with a privacy reason to stay local and an Obsidian home for the output.
+podcasters. They have *hardware*, a *privacy reason* to stay local, and an *Obsidian/Markdown* home
+for the output. **Not** the non-technical "ambient memory" consumer — that market is crowding toward
+free on-device assistants, and the privacy-positioned incumbent (Limitless) just died into Meta.
+
+## What we are NOT (anti-positioning)
+
+- Not a transcriber (Whisper / MacWhisper / NotebookLM — commodity).
+- Not a cloud memory subscription (Plaud, Otter, Limitless †) — renting access to your own thoughts.
+- Not a meeting-mic assistant (BB Recorder, Thoth, Veroi).
+- Not a "second brain" / PKM-jargon product.
+
+## Proof — reason-to-believe, not the hook
+
+Local (whisper.cpp — audio never leaves the Mac) · Your files (plain Markdown you own — Obsidian,
+export anytime) · Open source (MIT). **We can't lose or delete what we never hold** — Limitless deleted
+its EU users' data in December 2025; Malinche structurally can't.
+
+## Why now
+
+Transcription, recall, and "remember for me" are all commoditizing in 2026. What stays ownable is
+*synthesis over your private corpus* — plus the trust position that Limitless's collapse just vacated.
+
+## Build order — a separate axis from the hook
+
+Ship the floor first: completeness + directed recall over a well-tagged vault (the tagger and the local
+MCP → Claude layer already exist — a low-risk trust floor). Connection / comparison — the hardest,
+highest-noise, most ownable layer — is the signature v1.x bet. **The landing's job is to measure which
+layer the market pulls hardest on, and that decides the build order** (see
+[POSITIONING.md](POSITIONING.md) → "landing decides roadmap"). Don't conflate *what we lead with*
+(connection) with *what we build first* (the floor).
 
 ## Shape
 
 Open-source core (MIT) + your own Claude key. **PRO = zero-config packaging** of the local stack
-(whisper + embeddings + vector store + MCP) — you pay to *not* assemble the pipeline yourself.
+(whisper + embeddings + local vector store + MCP) — you pay to *not* assemble the pipeline yourself.
 Monetization model and amount: deferred until the wedge is validated.
