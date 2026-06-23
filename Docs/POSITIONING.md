@@ -4,6 +4,11 @@
 ambient-memory / MCP-first PRO" framing in PUBLIC-DISTRIBUTION-PLAN.md (to be rewritten in Phase C
 only after the wedge is validated — see `~/.claude/plans/poczekaj-zxeby-mialo-sens-*.md`).
 
+**Lead update (locked 2026-06-23):** the *promise* now leads with connection/synthesis, not trust.
+Trust is reframed as *proof* and the *build-floor* — not the marketing hook. See
+[ONE-PAGER.md](ONE-PAGER.md). The wedge, ICP, killer-ladder, PRO definition and kill-condition below
+are unchanged in substance; only the headline emphasis moved.
+
 ## The wedge (one sentence)
 
 **Malinche turns a dedicated audio recorder (USB dictaphone / SD card) into Obsidian-native
@@ -11,6 +16,22 @@ transcripts — fully on your Mac, audio never leaves the machine.**
 
 This is the one job no competitor does. Everyone else records *meetings off your computer's mic*.
 Malinche ingests *physical recording hardware* and writes Markdown straight into your vault.
+
+## The lead (locked 2026-06-23) — promise vs. build order
+
+Two axes were being conflated; separating them dissolves the trust-vs-synthesis tension:
+
+- **Promise (what we lead with / dramatize):** connection & synthesis — *"your recordings lie dead →
+  the system draws the pattern you'd never connect."* In 2026, transcription, recall and "remember for
+  me" all commoditize; the only ownable hook is emergent synthesis over your private corpus. **Trust
+  does not lead** — nobody wakes up wanting "trust"; it is a reason-to-believe.
+- **Proof (reason-to-believe):** trust — local · your files · open source · "we can't lose what we
+  never hold."
+- **Build order (separate axis):** floor first — completeness + directed recall (low-risk, mostly
+  built) — with connection-push as the signature v1.x bet. The killer-ladder below still holds; only
+  the *headline* moved off trust.
+
+The landing measures which layer the market pulls hardest on, and that decides build order.
 
 ## ICP — who this is for
 
@@ -114,5 +135,8 @@ sets, PRO stays a free OSS convenience or is dropped, and we re-examine the wedg
 
 ## Messaging line
 
-> **Malinche — the assistant that knows every conversation you've recorded.**
-> Plug in your recorder; your notes land in Obsidian, transcribed on your Mac. No cloud, no keys.
+> **Malinche — from scattered recordings, one system that composes something of its own.**
+> Your recorder's audio lands transcribed in your Obsidian vault, on your Mac — then Malinche reads it
+> all together and surfaces the pattern you'd never connect by hand. No cloud, no keys.
+>
+> *(Trust is the proof beneath this promise, not the headline — see "The lead", above.)*
