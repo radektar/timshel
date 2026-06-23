@@ -1,0 +1,61 @@
+<!-- @dsCard group="Type" name="Typography" subtitle="Fraunces display + Inter UI, fluid clamp scale" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Typography — Malinche</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--surface-base); color: var(--content-primary); margin: 0; padding: var(--space-12); -webkit-font-smoothing: antialiased; }
+  h1 { font-family: var(--font-serif); font-weight: 500; font-size: 2.6rem; margin: 0 0 var(--space-2); letter-spacing: var(--tracking-tight); }
+  .lead { color: var(--content-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-8); max-width: 52ch; }
+  h2 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--content-accent); margin: var(--space-12) 0 var(--space-4); }
+  .card { background: var(--surface-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-2xl); padding: var(--space-6); margin-bottom: var(--space-3); }
+  .label { font-size: var(--text-xs); font-family: var(--font-mono); color: var(--content-secondary); margin-bottom: var(--space-2); }
+  .row { display: flex; align-items: baseline; gap: var(--space-6); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-base); }
+  .row:last-child { border-bottom: 0; }
+  .tag { flex: 0 0 130px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--content-secondary); }
+  .serif { font-family: var(--font-serif); }
+</style>
+</head>
+<body>
+  <h1>Typography</h1>
+  <p class="lead">Fraunces (serif) carries display + editorial pull-quotes; Inter carries UI and body. Display sizes are fluid (clamp) so headings scale with the viewport.</p>
+
+  <h2>Families</h2>
+  <div class="card">
+    <div class="label">--font-serif · Fraunces · headings, pull-quotes</div>
+    <div class="serif" style="font-size:2rem; font-weight:500; letter-spacing:var(--tracking-tight)">Masz transkrypty wszystkiego.</div>
+  </div>
+  <div class="card">
+    <div class="label">--font-sans · Inter · UI &amp; body</div>
+    <div style="font-size:var(--text-lg)">Łączy, zestawia i podsuwa to, czego sam już nie pamiętasz.</div>
+  </div>
+  <div class="card">
+    <div class="label">--font-mono · code &amp; token values</div>
+    <div style="font-family:var(--font-mono); font-size:var(--text-base)">whisper.cpp · 0O1Il · --content-accent</div>
+  </div>
+
+  <h2>Display scale (fluid)</h2>
+  <div class="card">
+    <div class="row"><span class="tag">--text-h1</span><span class="serif" style="font-size:var(--text-h1); font-weight:500; line-height:var(--leading-tight); letter-spacing:var(--tracking-tight)">Jeden system</span></div>
+    <div class="row"><span class="tag">--text-h2</span><span class="serif" style="font-size:var(--text-h2); font-weight:500; letter-spacing:-0.02em">Z osobnych nagrań</span></div>
+    <div class="row"><span class="tag">--text-lead</span><span style="font-size:var(--text-lead)">Leżą w folderze i udają system.</span></div>
+    <div class="row"><span class="tag">--text-body</span><span style="font-size:var(--text-body)">Surowy transkrypt to ściana tekstu.</span></div>
+    <div class="row"><span class="tag">--text-h3</span><span style="font-size:var(--text-h3); font-weight:600">Zestawia i łączy</span></div>
+    <div class="row"><span class="tag">--text-xs</span><span style="font-size:var(--text-xs); font-weight:600; text-transform:uppercase; letter-spacing:var(--tracking-eyebrow); color:var(--content-accent)">Jak to działa</span></div>
+  </div>
+
+  <h2>Weights · Inter</h2>
+  <div class="card">
+    <div class="row"><span class="tag">400 normal</span><span style="font-size:var(--text-lg); font-weight:400">Malinche transcribes audio</span></div>
+    <div class="row"><span class="tag">500 medium</span><span style="font-size:var(--text-lg); font-weight:500">Malinche transcribes audio</span></div>
+    <div class="row"><span class="tag">600 semibold</span><span style="font-size:var(--text-lg); font-weight:600">Malinche transcribes audio</span></div>
+    <div class="row"><span class="tag">700 bold</span><span style="font-size:var(--text-lg); font-weight:700">Malinche transcribes audio</span></div>
+  </div>
+</body>
+</html>

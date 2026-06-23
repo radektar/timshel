@@ -1,0 +1,95 @@
+<!-- @dsCard group="Components" name="Cards & panels" subtitle="Feature step, proof, case (now/with), dark turn, signup" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cards & panels — Malinche</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--surface-base); color: var(--content-primary); margin: 0; padding: var(--space-12); -webkit-font-smoothing: antialiased; line-height: var(--leading-normal); }
+  h1 { font-family: var(--font-serif); font-weight: 500; font-size: 2.6rem; margin: 0 0 var(--space-8); letter-spacing: var(--tracking-tight); }
+  h2 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--content-accent); margin: var(--space-12) 0 var(--space-4); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-4); }
+
+  /* feature step (core highlighted) */
+  .step.core { background: var(--surface-elevated); border: 1px solid var(--border-base); border-top: 2px solid var(--terracotta); border-radius: var(--radius-2xl); padding: 1.4rem; box-shadow: var(--shadow-card); }
+  .step .tag { display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--content-accent); margin-bottom: 0.4rem; }
+  .step .n { font-family: var(--font-serif); font-size: 1.1rem; color: var(--terracotta); font-weight: 600; }
+  .step h3 { font-size: var(--text-h3); margin: 0.5rem 0; }
+  .step p { color: var(--content-primary); margin: 0; }
+
+  /* proof card with jade dot */
+  .pf { background: var(--surface-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-2xl); padding: 1.3rem 1.4rem; }
+  .pf .t { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+  .pf .t::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--status-local); flex: 0 0 auto; }
+  .pf p { font-size: 0.92rem; color: var(--content-secondary); margin: 0; }
+
+  /* case card now/with */
+  .case { background: var(--surface-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-3xl); padding: 1.6rem; }
+  .case .persona { font-family: var(--font-serif); font-weight: 600; font-size: 1.28rem; letter-spacing: -0.01em; margin-bottom: 0.8rem; }
+  .case .r { display: flex; gap: 0.9rem; padding: 0.8rem 0; }
+  .case .r + .r { border-top: 1px solid var(--border-base); }
+  .case .lab { flex: 0 0 4.6rem; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  .case .now .lab { color: var(--content-secondary); }
+  .case .with .lab { color: var(--content-accent); }
+  .case .now p { color: var(--content-secondary); margin: 0; font-size: 0.96rem; }
+  .case .with p { color: var(--content-primary); margin: 0; font-size: 0.96rem; }
+
+  /* dark "turn" panel */
+  .turn { background: var(--surface-inverse); color: var(--cream); border-radius: var(--radius-4xl); padding: 2.4rem; text-align: center; }
+  .turn .eyebrow { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--status-insight); }
+  .turn h3 { font-family: var(--font-serif); font-weight: 500; font-size: 1.8rem; color: var(--cream); margin: 0.8rem 0; }
+  .turn .punch { font-family: var(--font-serif); font-size: 1.4rem; color: #fff; margin-top: 1rem; }
+
+  /* signup panel */
+  .signup { background: var(--surface-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-4xl); padding: 2.4rem; text-align: center; }
+  .signup h3 { font-family: var(--font-serif); font-weight: 500; font-size: 1.8rem; margin: 0 0 1rem; }
+  .signup .badge { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--status-insight); margin-top: 1rem; }
+  .signup .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--status-insight); }
+</style>
+</head>
+<body>
+  <h1>Cards &amp; panels</h1>
+
+  <h2>Feature step · proof</h2>
+  <div class="grid">
+    <div class="step core">
+      <span class="tag">Sedno</span>
+      <div class="n">02</div>
+      <h3>Zestawia i łączy</h3>
+      <p>Pytasz cały zbiór naraz, nie plik po pliku. Pokazuje wspólne wątki — i sprzeczności.</p>
+    </div>
+    <div class="pf">
+      <div class="t">Lokalnie</div>
+      <p>Transkrypcja idzie na Twoim Macu (whisper.cpp). Audio nie wychodzi do żadnej chmury — nawet na sekundę.</p>
+    </div>
+  </div>
+
+  <h2>Case · now vs Malinche</h2>
+  <div class="grid">
+    <div class="case">
+      <div class="persona">Dziennikarze i reporterzy</div>
+      <div class="r now"><span class="lab">Teraz</span><p>Wracasz z terenu z sześcioma godzinami wywiadów. Cytat sprzed trzech rozmów przepada.</p></div>
+      <div class="r with"><span class="lab">Malinche</span><p>Pytasz „kto mówił o X?" i dostajesz cytat z datą — źródła nie opuszczają Maca.</p></div>
+    </div>
+  </div>
+
+  <h2>Dark turn · signup</h2>
+  <div class="grid">
+    <div class="turn">
+      <span class="eyebrow">To nie magia. To inżynieria.</span>
+      <h3>Przez lata mieli rację.</h3>
+      <div class="punch">Może jednak to magia.</div>
+    </div>
+    <div class="signup">
+      <h3>Bądź pierwszy, gdy ruszy.</h3>
+      <p style="color:var(--content-secondary); margin:0">Otwarty rdzeń działa już dziś.</p>
+      <span class="badge">Wczesny dostęp</span>
+    </div>
+  </div>
+</body>
+</html>

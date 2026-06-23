@@ -1,0 +1,43 @@
+<!-- @dsCard group="Spacing" name="Spacing scale" subtitle="4px base + fluid section rhythm" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spacing — Malinche</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--surface-base); color: var(--content-primary); margin: 0; padding: var(--space-12); -webkit-font-smoothing: antialiased; }
+  h1 { font-family: var(--font-serif); font-weight: 500; font-size: 2.6rem; margin: 0 0 var(--space-2); letter-spacing: var(--tracking-tight); }
+  .lead { color: var(--content-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-8); max-width: 52ch; }
+  h2 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--content-accent); margin: var(--space-12) 0 var(--space-4); }
+  .card { background: var(--surface-elevated); border: 1px solid var(--border-base); border-radius: var(--radius-2xl); padding: var(--space-6); }
+  .row { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) 0; }
+  .tag { flex: 0 0 130px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--content-secondary); }
+  .bar { height: 16px; background: var(--terracotta); border-radius: var(--radius-sm); }
+  .px { font-size: var(--text-xs); color: var(--content-secondary); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+  <h1>Spacing</h1>
+  <p class="lead">Base unit is 4px (<code>--spacing</code>). Fixed steps for components; two fluid tokens (<code>--space-section</code>, <code>--space-gutter</code>) keep page rhythm responsive.</p>
+
+  <h2>Fixed scale</h2>
+  <div class="card">
+    <div class="row"><span class="tag">--space-1</span><div class="bar" style="width:0.25rem"></div><span class="px">4px</span></div>
+    <div class="row"><span class="tag">--space-2</span><div class="bar" style="width:0.5rem"></div><span class="px">8px</span></div>
+    <div class="row"><span class="tag">--space-3</span><div class="bar" style="width:0.75rem"></div><span class="px">12px</span></div>
+    <div class="row"><span class="tag">--space-4</span><div class="bar" style="width:1rem"></div><span class="px">16px</span></div>
+    <div class="row"><span class="tag">--space-6</span><div class="bar" style="width:1.5rem"></div><span class="px">24px</span></div>
+    <div class="row"><span class="tag">--space-8</span><div class="bar" style="width:2rem"></div><span class="px">32px</span></div>
+    <div class="row"><span class="tag">--space-12</span><div class="bar" style="width:3rem"></div><span class="px">48px</span></div>
+    <div class="row"><span class="tag">--space-16</span><div class="bar" style="width:4rem"></div><span class="px">64px</span></div>
+  </div>
+
+  <h2>Fluid rhythm</h2>
+  <div class="card">
+    <div class="row"><span class="tag">--space-section</span><div class="bar" style="width:var(--space-section)"></div><span class="px">clamp(2.5rem, 5vw, 4rem)</span></div>
+    <div class="row"><span class="tag">--space-gutter</span><div class="bar" style="width:var(--space-gutter)"></div><span class="px">clamp(1.25rem, 4vw, 3rem)</span></div>
+  </div>
+</body>
+</html>

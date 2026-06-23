@@ -1,0 +1,48 @@
+<!-- @dsCard group="Components" name="Buttons & inputs" subtitle="Primary / ghost / ghost-on-dark, pill input, tag" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buttons — Malinche</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--surface-base); color: var(--content-primary); margin: 0; padding: var(--space-12); -webkit-font-smoothing: antialiased; }
+  h1 { font-family: var(--font-serif); font-weight: 500; font-size: 2.6rem; margin: 0 0 var(--space-8); letter-spacing: var(--tracking-tight); }
+  h2 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--content-accent); margin: var(--space-8) 0 var(--space-4); }
+  .panel { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-6); border-radius: var(--radius-2xl); }
+  .on-light { background: var(--surface-elevated); border: 1px solid var(--border-base); }
+  .on-dark { background: var(--surface-hero); }
+
+  .btn { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: 0.98rem; padding: 0.85rem 1.4rem; border-radius: var(--radius-pill); text-decoration: none; cursor: pointer; transition: transform 0.15s, background var(--transition), border-color var(--transition); border: 1px solid transparent; }
+  .btn-primary { background: var(--interactive-primary-base); color: #fff; box-shadow: var(--shadow-accent); }
+  .btn-primary:hover { background: var(--interactive-primary-hover); transform: translateY(-1px); }
+  .btn-ghost { border-color: var(--interactive-ghost-border); color: var(--content-primary); background: transparent; }
+  .btn-ghost:hover { border-color: var(--interactive-ghost-hover); }
+  .btn-ghost-dark { border-color: var(--border-on-dark); color: var(--cream); background: transparent; }
+  .btn-ghost-dark:hover { border-color: rgba(244,233,207,0.7); background: rgba(244,233,207,0.06); }
+
+  .input { font: inherit; font-size: 1rem; padding: 0.85rem 1.1rem; border-radius: var(--radius-pill); border: 1px solid var(--border-base); background: #fff; color: var(--content-primary); min-width: 280px; }
+  .input::placeholder { color: #9b8e7f; }
+
+  .tag { display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--content-accent); border: 1px solid var(--border-accent); padding: 0.3rem 0.7rem; border-radius: var(--radius-pill); }
+</style>
+</head>
+<body>
+  <h1>Buttons &amp; inputs</h1>
+
+  <h2>On light</h2>
+  <div class="panel on-light">
+    <a class="btn btn-primary">Zapisz się na listę</a>
+    <a class="btn btn-ghost">Zobacz na GitHubie</a>
+    <input class="input" placeholder="twój@email.pl" />
+    <span class="tag">Sedno</span>
+  </div>
+
+  <h2>On dark (hero)</h2>
+  <div class="panel on-dark">
+    <a class="btn btn-primary">Zapisz się na listę</a>
+    <a class="btn btn-ghost-dark">Zobacz na GitHubie</a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,133 @@
+/* ============================================================
+   Malinche — Design Tokens (canonical)
+
+   Architecture borrowed from handhold.io (semantic token layer:
+   surface / content / border / interactive). VALUES are Malinche's
+   own brand, lifted from the shipped landing (site/index.html):
+   deep terracotta + jade + gold on warm cream, Fraunces + Inter,
+   pill buttons, Mesoamerican greca motif.
+
+   This file is the single source of truth. The landing keeps a
+   site-local copy (site/tokens.css) because it deploys from site/
+   as web root — keep the two in sync.
+   ============================================================ */
+
+:root {
+  /* ─── TYPOGRAPHY ──────────────────────────────────────────
+     Inter = UI/body. Fraunces = display/serif (headings, pull-quotes).
+     Mono = code / token values. */
+  --font-sans:  "Inter", system-ui, sans-serif;
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-mono:  ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* Fluid display scale (clamp) — from the landing */
+  --text-h1:   clamp(2.15rem, 7.4vw, 5.6rem);
+  --text-h2:   clamp(1.9rem, 3.6vw, 3.1rem);
+  --text-lead: clamp(1.12rem, 1rem + 0.7vw, 1.42rem);
+  --text-body: clamp(1rem, 0.95rem + 0.35vw, 1.18rem);
+  --text-h3:   1.06rem;
+
+  /* Static UI scale (rem) */
+  --text-xs:   0.78rem;  /* eyebrow / labels */
+  --text-sm:   0.9rem;
+  --text-base: 1rem;
+  --text-lg:   1.18rem;
+
+  --leading-tight:  1.02;  /* display headings */
+  --leading-snug:   1.34;  /* serif pull-quotes */
+  --leading-normal: 1.6;   /* body */
+
+  --tracking-tight:   -0.018em; /* headings */
+  --tracking-eyebrow:  0.16em;  /* uppercase eyebrows */
+
+  /* ─── RAW PALETTE (Malinche brand) ───────────────────────── */
+  --terracotta:      #C24010;  /* primary accent */
+  --terracotta-deep: #9A3009;  /* primary hover */
+  --terracotta-lit:  #D9542A;  /* accent on dark surfaces */
+  --jade:            #057857;  /* trust / "local" signal */
+  --gold:            #D6B033;  /* insight / highlight */
+
+  --cream:    #F4E9CF;  /* page background */
+  --cream-hi: #FAF3E2;  /* elevated cards */
+  --obsidian: #1A1A1F;  /* dark "turn" sections */
+  --hero-dark:#110F16;  /* hero band base */
+  --ink:      #241E18;  /* primary text */
+  --ink-soft: #5A4E42;  /* secondary text */
+
+  --line: rgba(36, 30, 24, 0.14);
+
+  /* ─── SEMANTIC: SURFACE ──────────────────────────────────── */
+  --surface-base:     var(--cream);
+  --surface-elevated: var(--cream-hi);
+  --surface-inverse:  var(--obsidian);
+  --surface-hero:     var(--hero-dark);
+  --surface-overlay:  rgba(15, 13, 20, 0.72);
+
+  /* ─── SEMANTIC: CONTENT (text / icons) ───────────────────── */
+  --content-primary:   var(--ink);
+  --content-secondary: var(--ink-soft);
+  --content-contrast:  var(--cream-hi); /* on dark surfaces */
+  --content-accent:    var(--terracotta);
+  --content-accent-on-dark: var(--terracotta-lit);
+
+  /* ─── SEMANTIC: BORDER ───────────────────────────────────── */
+  --border-base:      var(--line);
+  --border-strong:    rgba(36, 30, 24, 0.28);
+  --border-accent:    var(--terracotta);
+  --border-on-dark:   rgba(244, 233, 207, 0.28);
+
+  /* ─── SEMANTIC: INTERACTIVE ──────────────────────────────── */
+  --interactive-primary-base:  var(--terracotta);
+  --interactive-primary-hover: var(--terracotta-deep);
+  --interactive-ghost-border:  var(--line);
+  --interactive-ghost-hover:   var(--ink);
+
+  /* ─── SEMANTIC: STATUS ───────────────────────────────────── */
+  --status-local:   var(--jade);   /* runs locally / private */
+  --status-insight: var(--gold);   /* hypothesis / connection */
+
+  /* ─── SPACING (4px base + fluid section rhythm) ──────────── */
+  --spacing: 0.25rem;
+  --space-1: 0.25rem;  --space-2: 0.5rem;  --space-3: 0.75rem;
+  --space-4: 1rem;     --space-6: 1.5rem;  --space-8: 2rem;
+  --space-12: 3rem;    --space-16: 4rem;
+  --space-section: clamp(2.5rem, 5vw, 4rem);   /* .block padding-block */
+  --space-gutter:  clamp(1.25rem, 4vw, 3rem);  /* .wrap padding-inline */
+
+  /* ─── RADIUS ─────────────────────────────────────────────── */
+  --radius-sm:   0.25rem;   /* 4px  */
+  --radius-md:   0.5rem;    /* 8px  */
+  --radius-lg:   0.625rem;  /* 10px — brand chip */
+  --radius-xl:   0.875rem;  /* 14px — small cards */
+  --radius-2xl:  1.125rem;  /* 18px — feature cards */
+  --radius-3xl:  1.25rem;   /* 20px — case cards */
+  --radius-4xl:  1.75rem;   /* 28px — dark panels / signup */
+  --radius-pill: 999px;     /* buttons, inputs, tags */
+
+  /* ─── ELEVATION ──────────────────────────────────────────── */
+  --shadow-accent: 0 6px 20px -8px rgba(194, 64, 16, 0.7);  /* primary button */
+  --shadow-card:   0 16px 40px -28px rgba(120, 52, 20, 0.5);
+  --shadow-float:  0 18px 50px -20px rgba(0, 0, 0, 0.75);   /* hero overlay cards */
+  --shadow-chip:   0 1px 2px rgba(26, 16, 8, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  /* ─── BRAND MOTIFS ───────────────────────────────────────── */
+  /* Greca / step-frieze divider (terracotta) */
+  --motif-greca: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='20' viewBox='0 0 56 20'%3E%3Cpath d='M4 20 V15 H12 V10 H20 V5 H36 V10 H44 V15 H52 V20 Z' fill='%23C24010'/%3E%3C/svg%3E");
+  /* Film grain — warmth/craft overlay */
+  --motif-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* ─── LAYOUT ─────────────────────────────────────────────── */
+  --max-width: 1180px;
+  --measure:   60ch;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ─── BACKWARD-COMPAT ALIASES ─────────────────────────────
+     Match the landing's existing variable names so site/tokens.css
+     is a drop-in replacement for the inline :root in index.html. */
+  --maxw: var(--max-width);
+}

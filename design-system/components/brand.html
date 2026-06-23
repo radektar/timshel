@@ -1,0 +1,64 @@
+<!-- @dsCard group="Brand" name="Brand marks & motifs" subtitle="Logo chip, eyebrow, greca frieze, status signals, grain" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brand — Malinche</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  body { font-family: var(--font-sans); background: var(--surface-base); color: var(--content-primary); margin: 0; padding: var(--space-12); -webkit-font-smoothing: antialiased; }
+  h1 { font-family: var(--font-serif); font-weight: 500; font-size: 2.6rem; margin: 0 0 var(--space-8); letter-spacing: var(--tracking-tight); }
+  h2 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-eyebrow); color: var(--content-accent); margin: var(--space-12) 0 var(--space-4); }
+  .row { display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
+
+  .brand { display: flex; align-items: center; gap: 0.6rem; font-family: var(--font-serif); font-weight: 600; font-size: 1.28rem; letter-spacing: -0.01em; }
+  .chip { width: 34px; height: 34px; border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--cream-hi), var(--cream)); display: grid; place-items: center; box-shadow: var(--shadow-chip); flex: 0 0 auto; }
+
+  .eyebrow { font-size: var(--text-xs); font-weight: 600; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--content-accent); }
+
+  .frieze { height: 20px; width: 100%; background-repeat: repeat-x; background-position: center; background-size: auto 20px; opacity: 0.32; background-image: var(--motif-greca); }
+
+  .signal { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.84rem; font-weight: 600; letter-spacing: 0.02em; }
+  .signal.local { color: var(--status-local); }
+  .signal.local::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--status-local); box-shadow: 0 0 0 4px rgba(5,120,87,0.18); }
+  .signal.insight { color: var(--status-insight); }
+  .signal.insight::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--status-insight); box-shadow: 0 0 0 3px rgba(214,176,51,0.2); }
+
+  .grain { position: relative; width: 220px; height: 120px; border-radius: var(--radius-2xl); background: var(--surface-inverse); overflow: hidden; }
+  .grain::before { content: ""; position: absolute; inset: 0; opacity: 0.12; mix-blend-mode: screen; background-image: var(--motif-grain); }
+  .grain span { position: absolute; inset: 0; display: grid; place-items: center; color: var(--cream); font-size: var(--text-sm); }
+</style>
+</head>
+<body>
+  <h1>Brand marks &amp; motifs</h1>
+
+  <h2>Logo lockup</h2>
+  <div class="row">
+    <div class="brand">
+      <span class="chip" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none"><g fill="#C24010">
+          <rect x="1" y="9" width="1.4" height="4" rx=".2"/><rect x="3" y="6.5" width="1.4" height="9" rx=".2"/><rect x="5" y="8" width="1.4" height="6" rx=".2"/><rect x="7" y="4.5" width="1.4" height="13" rx=".2"/><rect x="9" y="3" width="1.4" height="16" rx=".2"/><rect x="11" y="2.2" width="1.4" height="17.6" rx=".2"/><rect x="13" y="3" width="1.4" height="16" rx=".2"/><rect x="15" y="4.5" width="1.4" height="13" rx=".2"/><rect x="17" y="8" width="1.4" height="6" rx=".2"/><rect x="19" y="6.5" width="1.4" height="9" rx=".2"/>
+        </g></svg>
+      </span>
+      Malinche
+    </div>
+    <span class="eyebrow">Jeden system, nie stos plików</span>
+  </div>
+
+  <h2>Greca frieze · --motif-greca</h2>
+  <div class="frieze" aria-hidden="true"></div>
+
+  <h2>Status signals</h2>
+  <div class="row">
+    <span class="signal local">Działa lokalnie — audio nie opuszcza Maca</span>
+    <span class="signal insight">Hipoteza, którą system wysuwa</span>
+  </div>
+
+  <h2>Film grain · --motif-grain</h2>
+  <div class="grain"><span>warmth / craft overlay</span></div>
+</body>
+</html>
