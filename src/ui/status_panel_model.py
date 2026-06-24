@@ -41,6 +41,9 @@ class PanelModel:
     progress: Optional[float] = None  # 0.0–1.0 for the active work, if known
     recent_rows: List[PanelRow] = field(default_factory=list)
     pro_active: bool = False
+    #: Staged audio file names available for re-transcription (newest first).
+    #: Rendered as the expandable "Re-transcribe" section in the panel footer.
+    retranscribe_files: List[str] = field(default_factory=list)
 
 
 #: Human-readable status line per state. Active states get a verb; the active
@@ -84,6 +87,7 @@ def build_panel_model(
     error_message: Optional[str] = None,
     recorder_name: Optional[str] = None,
     pending_count: Optional[int] = None,
+    retranscribe_files: Optional[List[str]] = None,
 ) -> PanelModel:
     """Derive the full :class:`PanelModel` from current app state.
 
@@ -119,4 +123,5 @@ def build_panel_model(
         progress=progress if status in _ACTIVE_STATES else None,
         recent_rows=rows,
         pro_active=pro_active,
+        retranscribe_files=list(retranscribe_files or []),
     )

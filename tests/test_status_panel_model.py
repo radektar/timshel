@@ -71,6 +71,14 @@ def test_pro_flag_passes_through():
     assert build_panel_model(AppStatus.IDLE).pro_active is False
 
 
+def test_retranscribe_files_pass_through():
+    files = ["b.wav", "a.mp3"]
+    model = build_panel_model(AppStatus.IDLE, retranscribe_files=files)
+    assert model.retranscribe_files == files
+    # Defaults to an empty list, never None.
+    assert build_panel_model(AppStatus.IDLE).retranscribe_files == []
+
+
 @pytest.mark.parametrize("status", list(AppStatus))
 def test_model_builds_for_every_status(status):
     model = build_panel_model(status, current_file="x.wav", progress=0.5)

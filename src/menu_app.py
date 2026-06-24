@@ -159,10 +159,12 @@ class MalincheMenuApp(rumps.App):
         )
         self.menu.add(self.quit_item)
 
-        # Menu-bar status panel (NSPopover): left-click shows the card, right-
-        # click falls back to this native menu. Installed once the status-item
-        # button exists (after the run loop starts). On any failure the native
-        # menu stays fully functional — no regression.
+        # Menu-bar status panel (NSPopover): BOTH left- and right-click open the
+        # same card — it carries every action, so there is no separate native
+        # menu to reach. The native menu (self.menu) is kept only as the fallback
+        # when AppKit is unavailable. Installed once the status-item button
+        # exists (after the run loop starts); on any failure the native menu
+        # stays fully functional — no regression.
         from src.ui.status_panel import build_status_panel
 
         self._status_panel = build_status_panel(
@@ -170,6 +172,9 @@ class MalincheMenuApp(rumps.App):
                 "settings": self._show_settings,
                 "logs": self._open_logs,
                 "import": self._import_audio_clicked,
+                "digest": self._open_latest_digest,
+                "genDigest": self._generate_digest_now,
+                "retranscribe": self._retranscribe_panel_file,
                 "quit": self._quit_app,
             }
         )
@@ -254,6 +259,10 @@ class MalincheMenuApp(rumps.App):
                 pass
         if self._retranscription_in_progress:
             current_file = self._retranscription_file or current_file
+        try:
+            retranscribe_files = [f.name for f in self._get_staged_files()]
+        except Exception:  # pragma: no cover - cosmetic
+            retranscribe_files = []
         tier = license_manager.get_current_tier()
         return build_panel_model(
             status,
@@ -263,6 +272,7 @@ class MalincheMenuApp(rumps.App):
             error_message=error_message,
             recorder_name=recorder_name,
             pending_count=pending_count,
+            retranscribe_files=retranscribe_files,
         )
 
     def _update_icon(self, status: AppStatus) -> None:
@@ -1137,11 +1147,24 @@ class MalincheMenuApp(rumps.App):
             self.retranscribe_menu.add(item)
 
     def _retranscribe_file_callback(self, sender):
-        """Handle retranscribe menu item click."""
-        audio_path = getattr(sender, '_audio_path', None)
+        """Handle retranscribe native-menu item click."""
+        self._retranscribe_path(getattr(sender, '_audio_path', None))
+
+    def _retranscribe_panel_file(self, filename):
+        """Handle a re-transcribe row click from the status panel.
+
+        The panel passes a bare file name; resolve it back to the staged audio
+        path before running the shared re-transcription flow.
+        """
+        if not filename:
+            return
+        self._retranscribe_path(config.LOCAL_RECORDINGS_DIR / filename)
+
+    def _retranscribe_path(self, audio_path):
+        """Confirm and re-transcribe *audio_path* (shared by menu and panel)."""
         if not audio_path:
             return
-        
+
         # Check if retranscription already in progress
         if self._retranscription_in_progress:
             rumps.alert(

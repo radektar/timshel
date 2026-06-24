@@ -1,9 +1,10 @@
 """AppKit renderer for the menu-bar status panel (L4 phase 2b — render).
 
-A left-click on the status item opens this NSPopover — a vibrant card showing the
-current status, the file being transcribed, recent transcripts, and the primary
-actions — instead of the flat native menu. Right-click still shows the full
-native menu, so nothing is lost.
+A click (left or right) on the status item opens this NSPopover — a vibrant card
+showing the current status, the file being transcribed, recent transcripts, and
+every action (import, re-transcribe, digest, logs, settings, quit) — instead of
+the flat native menu. Both clicks open the same card; the native menu remains
+only as the AppKit-less fallback, so nothing is lost.
 
 The card is rendered from the pure
 :class:`~src.ui.status_panel_model.PanelModel` (tested separately); this module
@@ -24,14 +25,11 @@ from src.ui import style
 try:
     import objc
     from AppKit import (
-        NSApp,
         NSBox,
         NSBoxSeparator,
         NSButton,
         NSEventMaskLeftMouseDown,
         NSEventMaskRightMouseDown,
-        NSEventModifierFlagControl,
-        NSEventTypeRightMouseDown,
         NSImageView,
         NSMakeRect,
         NSMakeSize,
@@ -76,6 +74,7 @@ if _APPKIT_AVAILABLE:
             self._model = None
             self._status_item = None
             self._menu = None
+            self._retranscribe_expanded = False
             self._popover = NSPopover.alloc().init()
             self._popover.setBehavior_(NSPopoverBehaviorTransient)
             self._popover.setContentViewController_(NSViewController.alloc().init())
@@ -83,10 +82,16 @@ if _APPKIT_AVAILABLE:
 
         # -- rendering ----------------------------------------------------- #
 
+        #: Sentinel label marking where the expandable re-transcribe block goes.
+        _RETRANSCRIBE = "__retranscribe__"
+
         @objc.python_method
         def _footer_spec(self, model):
             return [
                 ("Import audio…", "square.and.arrow.down", "importClicked:"),
+                (self._RETRANSCRIBE, "arrow.triangle.2.circlepath", None),
+                ("Open latest digest", "doc.append", "digestClicked:"),
+                ("Generate digest now", "sparkles", "genDigestClicked:"),
                 ("Open logs", "doc.plaintext", "logsClicked:"),
                 ("Settings", "gearshape", "settingsClicked:"),
                 ("Quit", "power", "quitClicked:"),
@@ -184,6 +189,9 @@ if _APPKIT_AVAILABLE:
             elements.append(self._divider(cy, inner))
             cy += _ROW_GAP
             for label, symbol_name, action in self._footer_spec(model):
+                if label == self._RETRANSCRIBE:
+                    cy = self._render_retranscribe(model, elements, symbol_name, cy, inner)
+                    continue
                 btn = self._make_action_button(
                     label,
                     symbol_name,
@@ -224,10 +232,16 @@ if _APPKIT_AVAILABLE:
             return box
 
         @objc.python_method
-        def _make_action_button(self, label, symbol_name, frame, action):
+        def _make_action_button(
+            self, label, symbol_name, frame, action,
+            trailing_symbol=None, tag=None, label_style="body",
+        ):
             # Menu-style row: full-width hover-highlight button as the click
             # target, with a separate icon (icon column) + label (text column)
             # so everything lines up on the same two-column grid as the header.
+            # Optional trailing_symbol draws a chevron at the right edge (used by
+            # the expandable re-transcribe row); tag lets a shared action map a
+            # click back to a list index (the staged-file rows).
             from src.ui.hover import make_hover_button
 
             button = make_hover_button(frame) or NSButton.alloc().initWithFrame_(frame)
@@ -235,7 +249,10 @@ if _APPKIT_AVAILABLE:
             button.setBordered_(False)
             button.setTarget_(self)
             button.setAction_(action)
+            if tag is not None:
+                button.setTag_(tag)
             h = frame.size.height
+            w = frame.size.width
 
             img = style.sf_symbol(symbol_name, point=14.0)
             if img is not None:
@@ -245,23 +262,84 @@ if _APPKIT_AVAILABLE:
                 icon.setImage_(img)
                 button.addSubview_(icon)
 
-            lbl = style.make_label(label, style="body")
+            trailing_w = 18 if trailing_symbol else 0
+            lbl = style.make_label(label, style=label_style)
             if lbl is not None:
                 lbl.setFrame_(
-                    NSMakeRect(_TEXT_DX, (h - 18) / 2, frame.size.width - _TEXT_DX, 18)
+                    NSMakeRect(
+                        _TEXT_DX, (h - 18) / 2, w - _TEXT_DX - trailing_w, 18
+                    )
                 )
                 button.addSubview_(lbl)
+
+            if trailing_symbol:
+                chev = style.sf_symbol(trailing_symbol, point=11.0)
+                if chev is not None:
+                    cv = NSImageView.alloc().initWithFrame_(
+                        NSMakeRect(w - 16, (h - 12) / 2, 12, 12)
+                    )
+                    cv.setImage_(chev)
+                    button.addSubview_(cv)
             return button
+
+        @objc.python_method
+        def _render_retranscribe(self, model, elements, symbol_name, cy, inner):
+            """Render the expandable 'Re-transcribe' row + its staged files.
+
+            Collapsed: a single row with a disclosure chevron. Expanded: the
+            staged audio files as indented, clickable rows (each re-transcribes
+            that recording). Returns the new vertical cursor.
+            """
+            files = list(model.retranscribe_files) if model else []
+            expanded = self._retranscribe_expanded and bool(files)
+            chevron = "chevron.down" if expanded else "chevron.right"
+            toggle = self._make_action_button(
+                "Re-transcribe",
+                symbol_name,
+                NSMakeRect(_PAD, cy, inner, _BTN_H),
+                "retranscribeToggleClicked:",
+                trailing_symbol=(chevron if files else None),
+            )
+            elements.append(toggle)
+            cy += _BTN_H + _BTN_GAP
+
+            if not self._retranscribe_expanded:
+                return cy
+
+            if not files:
+                cap = style.make_label(
+                    "    No recordings to re-transcribe", style="caption",
+                    secondary=True,
+                )
+                if cap is not None:
+                    cap.setFrame_(NSMakeRect(_PAD + _TEXT_DX, cy, inner - _TEXT_DX, 16))
+                    elements.append(cap)
+                    cy += 20
+                return cy
+
+            indent = 14.0
+            for i, name in enumerate(files):
+                row = self._make_action_button(
+                    name,
+                    "waveform",
+                    NSMakeRect(_PAD + indent, cy, inner - indent, _BTN_H - 4),
+                    "retranscribeFileClicked:",
+                    tag=i,
+                    label_style="caption",
+                )
+                elements.append(row)
+                cy += (_BTN_H - 4) + _BTN_GAP
+            return cy
 
         # -- actions ------------------------------------------------------- #
 
         @objc.python_method
-        def _invoke(self, key):
+        def _invoke(self, key, arg=None):
             self.close()
             cb = self._callbacks.get(key)
             if cb is not None:
                 try:
-                    cb(None)
+                    cb(arg)
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.error("Panel action %s failed: %s", key, exc)
 
@@ -277,11 +355,37 @@ if _APPKIT_AVAILABLE:
         def importClicked_(self, sender):
             self._invoke("import")
 
+        def digestClicked_(self, sender):
+            self._invoke("digest")
+
+        def genDigestClicked_(self, sender):
+            self._invoke("genDigest")
+
+        def retranscribeToggleClicked_(self, sender):
+            # Expand/collapse the staged-file list in place (no close).
+            self._retranscribe_expanded = not self._retranscribe_expanded
+            self._rerender_in_place()
+
+        def retranscribeFileClicked_(self, sender):
+            files = list(self._model.retranscribe_files) if self._model else []
+            idx = int(sender.tag())
+            if 0 <= idx < len(files):
+                self._invoke("retranscribe", files[idx])
+
+        @objc.python_method
+        def _rerender_in_place(self):
+            if self._popover is None or not self._popover.isShown():
+                return
+            view, height = self._render(self._model)
+            self._popover.contentViewController().setView_(view)
+            self._popover.setContentSize_(NSMakeSize(_PANEL_WIDTH, height))
+
         # -- status-item wiring -------------------------------------------- #
 
         def installOnStatusItem_button_menu_(self, status_item, button, ns_menu):
-            """Left-click → popover, right-click → the native menu (re-attached
-            only for the duration of the right-click). Caller-guarded."""
+            """Both left- and right-click open the same popover — it carries
+            every action, so the native menu is no longer a separate surface.
+            ``ns_menu`` is kept only for AppKit-less fallback. Caller-guarded."""
             self._status_item = status_item
             self._menu = ns_menu
             status_item.setMenu_(None)
@@ -290,17 +394,8 @@ if _APPKIT_AVAILABLE:
             button.sendActionOn_(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown)
 
         def statusButtonClicked_(self, sender):
-            event = NSApp.currentEvent()
-            is_right = event is not None and (
-                event.type() == NSEventTypeRightMouseDown
-                or bool(event.modifierFlags() & NSEventModifierFlagControl)
-            )
-            if is_right and self._status_item is not None and self._menu is not None:
-                self._status_item.setMenu_(self._menu)
-                sender.performClick_(None)
-                self._status_item.setMenu_(None)
-            else:
-                self.toggleRelativeTo_(sender)
+            # One surface: any click toggles the panel.
+            self.toggleRelativeTo_(sender)
 
         # -- public API ---------------------------------------------------- #
 
@@ -310,6 +405,8 @@ if _APPKIT_AVAILABLE:
             if self._popover.isShown():
                 self._popover.close()
                 return
+            # Each fresh open starts with the re-transcribe list collapsed.
+            self._retranscribe_expanded = False
             view, height = self._render(self._model)
             self._popover.contentViewController().setView_(view)
             self._popover.setContentSize_(NSMakeSize(_PANEL_WIDTH, height))
@@ -329,8 +426,10 @@ if _APPKIT_AVAILABLE:
 def build_status_panel(callbacks: Optional[Dict[str, Callable]] = None):
     """Create the panel controller, or ``None`` without AppKit.
 
-    ``callbacks`` maps action keys (``settings``, ``logs``, ``import``, ``quit``)
-    to the menu-app handlers. Returned object exposes
+    ``callbacks`` maps action keys (``settings``, ``logs``, ``import``,
+    ``digest``, ``genDigest``, ``retranscribe``, ``quit``) to the menu-app
+    handlers — ``retranscribe`` receives the staged file name. Returned object
+    exposes
     ``installOnStatusItem_button_menu_``, ``toggleRelativeTo_``, ``update_`` and
     ``close``.
     """
