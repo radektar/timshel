@@ -1097,18 +1097,6 @@ class MalincheMenuApp(rumps.App):
 
     def _refresh_retranscribe_menu(self, _):
         """Refresh the retranscribe submenu with current staged files."""
-        if license_manager.get_current_tier() == FeatureTier.FREE:
-            self.retranscribe_menu.title = "Retranscription (PRO)"
-            try:
-                if self.retranscribe_menu._menu is not None:
-                    self.retranscribe_menu.clear()
-            except (AttributeError, TypeError):
-                pass
-            locked_item = rumps.MenuItem("Upgrade to PRO to create v2/v3 versions")
-            locked_item.set_callback(None)
-            self.retranscribe_menu.add(locked_item)
-            return
-
         self.retranscribe_menu.title = "Retranscribe file…"
         # Clear existing submenu items (handle case when _menu is not yet initialized)
         try:

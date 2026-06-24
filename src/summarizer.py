@@ -428,31 +428,14 @@ Nie udało się wygenerować podsumowania.
         }
 
 
-from src.config.license import license_manager
-
 def get_summarizer() -> Optional[BaseSummarizer]:
     """Factory function to create appropriate summarizer instance.
     
     Returns:
         Summarizer instance or None if summarization is disabled/unavailable
     """
-    # PRO or BYOK (own Anthropic key): summaries require one or the other
-    features = license_manager.get_features()
-    byok_claude = (
-        config.LLM_PROVIDER == "claude" and bool(config.LLM_API_KEY)
-    )
-    if not features.ai_summaries:
-        if byok_claude:
-            logger.info(
-                "BYOK: AI summaries enabled via customer ANTHROPIC_API_KEY "
-                "(no PRO license required)"
-            )
-        else:
-            logger.info(
-                "AI summaries require PRO license or BYOK Claude key — skipping"
-            )
-            return None
-
+    # Tier gating removed: summaries are available to everyone. Availability is
+    # decided purely by config (an API key / enabled provider), not by license.
     if not config.ENABLE_SUMMARIZATION:
         logger.debug("Summarization disabled in config")
         return None

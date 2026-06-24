@@ -18,7 +18,6 @@ from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.config import config
-from src.config.license import license_manager
 from src.connections.candidate_assembly import CandidateSet
 from src.llm.model_router import resolve_model
 from src.logger import logger
@@ -210,14 +209,11 @@ class ConnectionSynthesizer:
 
 
 def get_synthesizer() -> Optional[ConnectionSynthesizer]:
-    """Factory mirroring ``get_summarizer`` — PRO tier or BYOK Claude key."""
-    features = license_manager.get_features()
-    byok_claude = config.LLM_PROVIDER == "claude" and bool(config.LLM_API_KEY)
-    if not features.connection_synthesis and not byok_claude:
-        logger.info(
-            "Connection synthesis requires PRO license or BYOK Claude key — skipping"
-        )
-        return None
+    """Factory mirroring ``get_summarizer`` — available to everyone.
+
+    Tier gating removed: availability is decided purely by config (a Claude API
+    key / enabled provider), not by license.
+    """
     if not config.ENABLE_CONNECTION_SYNTHESIS:
         logger.debug("Connection synthesis disabled in config")
         return None

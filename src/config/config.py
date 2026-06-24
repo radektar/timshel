@@ -255,23 +255,17 @@ tags: [{tags}]
                 # This is a default value, not reading from ENV
                 self.LLM_API_KEY = "http://localhost:11434"
 
-        # Map AI settings from UserSettings, with backward-compatible defaults.
-        #
-        # If enable_ai_summaries is True in UserSettings, enable summarization (if API key available).
-        # If enable_ai_summaries is False, don't enable summarization even if API key exists.
-        # Exception: Ollama always enables summarization (no API key required).
-        enable_summarization = bool(self._user_settings.enable_ai_summaries)
-
-        # Only enable summarization if user explicitly enabled it in settings
-        # If enable_ai_summaries is False, summarization stays False regardless of API key
-        if enable_summarization:
-            if self.LLM_PROVIDER == "ollama":
-                enable_summarization = True
-            elif self.LLM_PROVIDER != "ollama":
-                # Disable summarization if API key is missing
-                if not self.LLM_API_KEY:
-                    enable_summarization = False
-        # else: enable_summarization is already False, keep it False
+        # AI summaries run whenever a usable LLM backend is configured: Ollama
+        # needs no key; cloud providers need an API key. Key presence is the
+        # single control — it matches the Settings copy ("without a key … skips
+        # AI summaries"). The enable_ai_summaries user flag is kept in
+        # UserSettings for compatibility but no longer gates here; it used to
+        # leave summaries stuck off when a key was added via Settings (which
+        # never wrote the flag) rather than onboarding.
+        if self.LLM_PROVIDER == "ollama":
+            enable_summarization = True
+        else:
+            enable_summarization = bool(self.LLM_API_KEY)
 
         self.ENABLE_SUMMARIZATION = enable_summarization
 

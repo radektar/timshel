@@ -1,16 +1,21 @@
-"""Simulated multi-device dedup tests on a single machine."""
+"""Simulated multi-device tests on a single machine."""
 
 from pathlib import Path
 from unittest.mock import patch
 
 from src.config.config import Config
-from src.config.features import FeatureTier
 from src.transcriber import Transcriber
 from src.vault_index import IndexEntry, VaultIndex
 
 
-def test_device_b_skips_after_device_a_transcribed(tmp_path: Path) -> None:
-    """Device B should skip when index from Device A is already synced."""
+def test_device_b_versions_after_device_a_transcribed(tmp_path: Path) -> None:
+    """Tier gating removed: device B re-processing a synced fingerprint now
+    creates a new version (v2) instead of skipping.
+
+    Versioning is available to everyone; cross-device dedup is no longer a
+    tier-gated behaviour. (Previously only the FREE tier skipped here, while the
+    beta default — PRO — already versioned.)
+    """
     vault_dir = tmp_path / "iCloudVault"
     vault_dir.mkdir()
 
@@ -42,11 +47,29 @@ def test_device_b_skips_after_device_a_transcribed(tmp_path: Path) -> None:
 
     audio = vault_dir / "sample.m4a"
     audio.write_bytes(b"same audio")
+    transcript = vault_dir / "sample.txt"
 
-    with patch("src.transcriber.compute_fingerprint", return_value=fingerprint), patch(
-        "src.transcriber.license_manager.get_current_tier", return_value=FeatureTier.FREE
-    ), patch.object(transcriber_b, "_run_macwhisper") as run_mock:
+    md_v2 = vault_dir / "sample.v2.md"
+
+    def fake_postprocess(
+        _audio_file: Path,
+        _transcript_path: Path,
+        fingerprint: str,
+        version: int = 1,
+        previous_version: str | None = None,
+        output_filename: str | None = None,
+    ) -> Path:
+        md_v2.write_text("---\nprevious_version: sample.md\n---\n")
+        return md_v2
+
+    with patch(
+        "src.transcriber.compute_fingerprint", return_value=fingerprint
+    ), patch.object(
+        transcriber_b, "_run_macwhisper", return_value=transcript
+    ) as run_mock, patch.object(
+        transcriber_b, "_postprocess_transcript", side_effect=fake_postprocess
+    ):
         assert transcriber_b.transcribe_file(audio) is True
-        run_mock.assert_not_called()
+        run_mock.assert_called_once()
 
-    assert len(list(vault_dir.glob("*.md"))) == 0
+    assert md_v2.exists()

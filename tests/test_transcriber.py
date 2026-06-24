@@ -425,62 +425,6 @@ def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypa
     assert result is True  # Already exists counts as success (via post-process)
 
 
-def test_transcribe_file_already_transcribed_md(transcriber, tmp_path, monkeypatch):
-    """Test transcribe_file skips when fingerprint already exists (FREE)."""
-    # Patch global config for state_manager functions
-    from src import config as config_module
-    
-    transcriber.whisper_available = True
-    # If markdown exists, whisper should never be called
-    transcriber._run_macwhisper = MagicMock()  # type: ignore[arg-type]
-    
-    audio_file = tmp_path / "test.mp3"
-    audio_file.touch()
-    
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-    md_file = output_dir / "2025-11-19_Test.md"
-    md_file.write_text(
-        "---\n"
-        'title: "Test"\n'
-        "date: 2025-11-19\n"
-        "recording_date: 2025-11-19T10:00:00\n"
-        "source: test.mp3\n"
-        "duration: 00:10:00\n"
-        "tags: [transcription]\n"
-        "---\n\n"
-        "## Podsumowanie\n\nTest\n"
-    )
-    
-    # Update transcriber's injected config (not global config)
-    transcriber.config.TRANSCRIBE_DIR = output_dir
-    # Also patch global for state_manager functions
-    monkeypatch.setattr(config_module.config, 'TRANSCRIBE_DIR', output_dir)
-
-    fingerprint = "sha256:test-fingerprint"
-    transcriber.vault_index.add(
-        fingerprint,
-        IndexEntry(
-            fingerprint=fingerprint,
-            source_filename=audio_file.name,
-            source_volume=audio_file.parent.name,
-            markdown_path=md_file.name,
-            versions=[{"version": 1, "markdown_path": md_file.name}],
-        ),
-    )
-
-    with patch("src.transcriber.compute_fingerprint", return_value=fingerprint), patch(
-        "src.transcriber.license_manager.get_current_tier"
-    ) as tier_mock:
-        from src.config.features import FeatureTier
-
-        tier_mock.return_value = FeatureTier.FREE
-        result = transcriber.transcribe_file(audio_file)
-    
-    assert result is True  # MD exists, skip transcription
-    transcriber._run_macwhisper.assert_not_called()
-
-
 def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
     """Test successful post-processing of transcript."""
     output_dir = tmp_path / "output"

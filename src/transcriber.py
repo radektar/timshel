@@ -23,8 +23,6 @@ from src.tagger import BaseTagger, get_tagger
 from src.fingerprint import compute_fingerprint
 from src.hostinfo import get_hostname
 from src.vault_index import IndexEntry, VaultIndex
-from src.config.license import license_manager
-from src.config.features import FeatureTier
 from src.config.settings import UserSettings
 from src.markdown_frontmatter import read_frontmatter
 from src.volume_utils import find_matching_volumes
@@ -1824,7 +1822,8 @@ Brak podsumowania AI. Możliwe przyczyny:
         # treat it as successfully transcribed and skip any further work.
         fingerprint = compute_fingerprint(audio_file)
         existing_entry = self.vault_index.lookup(fingerprint)
-        can_version = license_manager.get_current_tier() != FeatureTier.FREE
+        # Tier gating removed: versioning (v2/v3) is available to everyone.
+        can_version = True
         if existing_entry and not can_version:
             logger.info("✓ Already transcribed (fingerprint exists): %s", audio_file.name)
             return True

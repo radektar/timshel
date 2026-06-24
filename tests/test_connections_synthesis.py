@@ -148,17 +148,14 @@ def test_get_synthesizer_no_key_returns_none(monkeypatch):
     monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
     monkeypatch.setattr(config, "LLM_API_KEY", None)
     monkeypatch.setattr(config, "ENABLE_CONNECTION_SYNTHESIS", True)
-    with patch("src.connections.synthesis.license_manager.get_features") as mf:
-        mf.return_value = FeatureFlags(connection_synthesis=False)
-        assert get_synthesizer() is None
+    assert get_synthesizer() is None
 
 
-def test_get_synthesizer_byok_builds(monkeypatch):
+def test_get_synthesizer_builds_with_key(monkeypatch):
+    """Tier gating removed: a Claude key alone yields a synthesizer."""
     monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
     monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
     monkeypatch.setattr(config, "ENABLE_CONNECTION_SYNTHESIS", True)
     monkeypatch.setattr(config, "LLM_MODEL", "claude-haiku-4-5-20251001")
-    with patch("src.connections.synthesis.license_manager.get_features") as mf:
-        mf.return_value = FeatureFlags(connection_synthesis=False)  # BYOK path
-        with patch("src.connections.synthesis.ConnectionSynthesizer"):
-            assert get_synthesizer() is not None
+    with patch("src.connections.synthesis.ConnectionSynthesizer"):
+        assert get_synthesizer() is not None

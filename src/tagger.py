@@ -205,28 +205,10 @@ class ClaudeTagger(BaseTagger):
         return unique
 
 
-from src.config.license import license_manager
-
-
 def get_tagger() -> Optional[BaseTagger]:
     """Factory returning tagger instance based on configuration."""
-    # PRO or BYOK (own Anthropic key)
-    features = license_manager.get_features()
-    byok_claude = (
-        config.LLM_PROVIDER == "claude" and bool(config.LLM_API_KEY)
-    )
-    if not features.ai_smart_tags:
-        if byok_claude:
-            logger.info(
-                "BYOK: AI smart tags enabled via customer ANTHROPIC_API_KEY "
-                "(no PRO license required)"
-            )
-        else:
-            logger.info(
-                "AI tags require PRO license or BYOK Claude key — skipping"
-            )
-            return None
-
+    # Tier gating removed: smart tags are available to everyone. Availability is
+    # decided purely by config (an API key / enabled provider), not by license.
     if not config.ENABLE_LLM_TAGGING:
         logger.debug("LLM tagging disabled in config.")
         return None

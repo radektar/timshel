@@ -286,40 +286,19 @@ class TestGetSummarizer:
     def test_get_summarizer_disabled(self, monkeypatch):
         """Test that None is returned when summarization is disabled."""
         monkeypatch.setattr(config, 'ENABLE_SUMMARIZATION', False)
-        # Ensure license allows it for this test
-        with patch('src.summarizer.license_manager.get_features') as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=True)
-            result = get_summarizer()
-            assert result is None
-    
-    def test_get_summarizer_no_license(self):
-        """Test that None is returned when license does not allow AI summaries."""
-        with patch('src.summarizer.license_manager.get_features') as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=False)
-            result = get_summarizer()
-            assert result is None
-
-    def test_get_summarizer_byok_bypasses_pro_without_key_still_none(self, monkeypatch):
-        """FREE tier + no API key → no summarizer."""
-        monkeypatch.setattr(config, "ENABLE_SUMMARIZATION", True)
-        monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
-        monkeypatch.setattr(config, "LLM_API_KEY", None)
-        with patch("src.summarizer.license_manager.get_features") as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=False)
-            assert get_summarizer() is None
+        result = get_summarizer()
+        assert result is None
 
     @patch("src.summarizer.ClaudeSummarizer")
-    def test_get_summarizer_byok_with_claude_key(self, mock_claude, monkeypatch):
-        """FREE tier but own Claude key → summarizer is created (BYOK)."""
+    def test_get_summarizer_no_longer_tier_gated(self, mock_claude, monkeypatch):
+        """Tier gating removed: a Claude key alone yields a summarizer."""
         monkeypatch.setattr(config, "ENABLE_SUMMARIZATION", True)
         monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
         monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
         monkeypatch.setattr(config, "LLM_MODEL", "claude-3-haiku-20240307")
         mock_instance = MagicMock()
         mock_claude.return_value = mock_instance
-        with patch("src.summarizer.license_manager.get_features") as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=False)
-            result = get_summarizer()
+        result = get_summarizer()
         assert result is mock_instance
         mock_claude.assert_called_once_with(
             api_key="sk-test", model="claude-3-haiku-20240307"
@@ -330,12 +309,10 @@ class TestGetSummarizer:
         monkeypatch.setattr(config, 'ENABLE_SUMMARIZATION', True)
         monkeypatch.setattr(config, 'LLM_PROVIDER', 'claude')
         monkeypatch.setattr(config, 'LLM_API_KEY', None)
-        
-        with patch('src.summarizer.license_manager.get_features') as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=True)
-            result = get_summarizer()
-            assert result is None
-    
+
+        result = get_summarizer()
+        assert result is None
+
     @patch('src.summarizer.ClaudeSummarizer')
     def test_get_summarizer_claude_success(self, mock_claude, monkeypatch):
         """Test successful Claude summarizer creation."""
@@ -343,20 +320,18 @@ class TestGetSummarizer:
         monkeypatch.setattr(config, 'LLM_PROVIDER', 'claude')
         monkeypatch.setattr(config, 'LLM_API_KEY', 'test-key')
         monkeypatch.setattr(config, 'LLM_MODEL', 'claude-3-haiku-20240307')
-        
-        with patch('src.summarizer.license_manager.get_features') as mock_features:
-            mock_features.return_value = FeatureFlags(ai_summaries=True)
-            mock_instance = MagicMock()
-            mock_claude.return_value = mock_instance
-            
-            result = get_summarizer()
-            
-            assert result is not None
-            mock_claude.assert_called_once_with(
-                api_key='test-key',
-                model='claude-3-haiku-20240307'
-            )
-    
+
+        mock_instance = MagicMock()
+        mock_claude.return_value = mock_instance
+
+        result = get_summarizer()
+
+        assert result is not None
+        mock_claude.assert_called_once_with(
+            api_key='test-key',
+            model='claude-3-haiku-20240307'
+        )
+
     def test_get_summarizer_unknown_provider(self, monkeypatch):
         """Test handling of unknown provider."""
         monkeypatch.setattr(config, 'ENABLE_SUMMARIZATION', True)

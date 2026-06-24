@@ -9,35 +9,8 @@ from src.transcriber import Transcriber
 from src.vault_index import IndexEntry
 
 
-def test_free_tier_does_not_create_new_version(tmp_path: Path) -> None:
-    """FREE tier should skip version creation."""
-    cfg = Config()
-    cfg.TRANSCRIBE_DIR = tmp_path
-    transcriber = Transcriber(config=cfg)
-
-    fp = "sha256:file"
-    transcriber.vault_index.add(
-        fp,
-        IndexEntry(
-            fingerprint=fp,
-            source_filename="file.mp3",
-            source_volume="LS-P1",
-            markdown_path="file.md",
-            versions=[{"version": 1}],
-        ),
-    )
-    audio = tmp_path / "file.mp3"
-    audio.write_bytes(b"hello")
-    with patch("src.transcriber.compute_fingerprint", return_value=fp), patch(
-        "src.transcriber.license_manager.get_current_tier"
-    ) as tier_mock:
-        tier_mock.return_value = FeatureTier.FREE
-        assert transcriber.transcribe_file(audio) is True
-    assert not list(tmp_path.glob("*.v2.md"))
-
-
-def test_pro_tier_creates_v2_and_v3(tmp_path: Path) -> None:
-    """PRO tier should create versioned markdown files and index history."""
+def test_creates_v2_and_v3(tmp_path: Path) -> None:
+    """Versioning is available to everyone (tier gating removed)."""
     cfg = Config()
     cfg.TRANSCRIBE_DIR = tmp_path
     transcriber = Transcriber(config=cfg)
@@ -85,9 +58,9 @@ def test_pro_tier_creates_v2_and_v3(tmp_path: Path) -> None:
         md_v3.write_text("---\nprevious_version: file.v2.md\n---\n")
         return md_v3
 
-    with patch("src.transcriber.compute_fingerprint", return_value=fp), patch(
-        "src.transcriber.license_manager.get_current_tier", return_value=FeatureTier.PRO
-    ), patch.object(transcriber, "_run_macwhisper", return_value=transcript), patch.object(
+    with patch("src.transcriber.compute_fingerprint", return_value=fp), patch.object(
+        transcriber, "_run_macwhisper", return_value=transcript
+    ), patch.object(
         transcriber, "_postprocess_transcript", side_effect=fake_postprocess
     ):
         assert transcriber.transcribe_file(audio) is True
