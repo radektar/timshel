@@ -35,10 +35,12 @@ MODELS = [
     "claude-haiku-4-5-20251001",
 ]
 
-# Approximate list prices, USD per 1M tokens (input, output).
-# EDIT to current pricing before trusting the $ column.
+# List prices, USD per 1M tokens (input, output).
+# Verified against Anthropic's official pricing page on 2026-06-23.
+# NOTE: Opus 4.8 is $5/$25 (NOT the $15/$75 of the deprecated Opus 4.1);
+# the 1M context window is billed at standard rates (no long-context premium).
 PRICES = {
-    "claude-opus-4-8": (15.0, 75.0),
+    "claude-opus-4-8": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
