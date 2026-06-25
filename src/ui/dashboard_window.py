@@ -540,7 +540,9 @@ def build_dashboard_window(
         return None
     try:
         if deck is None:
-            deck = im.sample_deck()
+            from src.ui.insight_pipeline import latest_deck
+
+            deck = latest_deck() or im.sample_deck()
         return _DashboardController.alloc().initWithDeck_callbacks_(deck, callbacks or {})
     except Exception as exc:  # pragma: no cover - defensive
         logger.error("Could not build dashboard window: %s", exc)

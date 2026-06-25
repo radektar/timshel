@@ -34,8 +34,10 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
       `✦ Nowy insight (N)` count badge waits on the pipeline (needs the unseen count).
 - [ ] **Signal** — gold dot on menu-bar icon when unseen insight; notification carries thesis;
       click opens window on that connection.
-- [ ] **Pipeline** — carry full `rationale`/`directions`/`notes`/`type` from digest →
-      `menu_app`/`state` → window. Today only the filename flows.
+- [x] **Pipeline** — `digest_writer` persists a structured `{vault}/.malinche/insights-latest.json`
+      (type/notes/rationale/directions) on each digest; `insight_pipeline.py` loads it into an
+      `InsightDeck`; the window defaults to `latest_deck() or sample_deck()`. ✅ 7 tests.
+      Sidecar write is best-effort (never disturbs the digest).
 - [ ] **Token reconciliation (Faza 0)** — decide jade `#057857` vs `#46B17E`; dark-surface
       insight tokens in `theme.py`; native titlebar vs custom dark chrome.
 - [ ] **Wire into `menu_app.py`** + `make lint` + `make test` green.

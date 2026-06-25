@@ -71,6 +71,41 @@ def render_digest(connections: List[Connection], notes_considered: int) -> str:
     return "\n".join(out)
 
 
+def _write_insights_sidecar(connections: List[Connection], digest_path: Path) -> None:
+    """Persist the full connections for the Insights window.
+
+    The digest ``.md`` is lossy for the UI (the window needs the structured
+    type / notes / rationale / directions). This drops a single
+    ``{vault}/.malinche/insights-latest.json`` the dashboard reads. Best-effort:
+    a failure here must never disturb the digest write itself.
+    """
+    import json
+
+    try:
+        out_dir = Path(config.TRANSCRIBE_DIR) / ".malinche"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "digest": digest_path.name,
+            "connections": [
+                {
+                    "type": c.type,
+                    "notes": list(c.notes),
+                    "rationale": c.rationale,
+                    "directions": list(c.directions),
+                }
+                for c in connections
+            ],
+        }
+        target = out_dir / "insights-latest.json"
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tmp.replace(target)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("insights sidecar write failed (non-fatal): %s", exc)
+
+
 def write_digest_note(
     connections: List[Connection], notes_considered: int
 ) -> Tuple[Path, List[dict]]:
@@ -89,6 +124,8 @@ def write_digest_note(
     tmp = path.with_suffix(".md.tmp")
     tmp.write_text(body, encoding="utf-8")
     tmp.replace(path)
+
+    _write_insights_sidecar(connections, path)
 
     conn_meta = [
         {
