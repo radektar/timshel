@@ -1048,7 +1048,12 @@ class MalincheMenuApp(rumps.App):
             "review_volumes": self._manage_volumes_clicked,
             "forget_all_volumes": self._forget_all_volumes,
         }
-        show_settings_window(callbacks)
+        saved = show_settings_window(callbacks)
+        if saved and getattr(self, "transcriber", None) is not None:
+            # show_settings_window() already rebuilt the global config; refresh
+            # the live daemon's summarizer/tagger and clear any AI circuit-breaker
+            # trip so a fixed API key takes effect immediately — no restart.
+            self.transcriber.reload_ai_config()
 
     def _forget_all_volumes(self, _):
         """Clear the trusted volume whitelist; user will be re-prompted on next mount."""
@@ -1283,7 +1288,17 @@ class MalincheMenuApp(rumps.App):
     def _notify_billing_error(self, exc: Exception) -> None:
         """Show a one-time alert when Claude API hits a permanent error."""
         exc_str = str(exc).lower()
-        if "credit balance" in exc_str:
+        if "invalid x-api-key" in exc_str or "authentication" in exc_str:
+            title = "⚠️ Claude API: key rejected"
+            message = (
+                "Your Claude API key was rejected (invalid, missing or "
+                "revoked).\n\n"
+                "Open Settings and paste a valid key from\n"
+                "https://console.anthropic.com/settings/keys\n\n"
+                "Summaries and tags resume as soon as you save — no restart "
+                "needed. Whisper transcription keeps working regardless."
+            )
+        elif "credit balance" in exc_str:
             title = "⚠️ Claude API: insufficient credits"
             message = (
                 "Your Anthropic (BYOK) account has run out of credits.\n\n"

@@ -14,7 +14,12 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from src.config import config as default_config
 from src.config.config import Config
 from src.logger import logger
-from src.summarizer import APIBillingError, get_summarizer, BaseSummarizer
+from src.summarizer import (
+    APIBillingError,
+    BaseSummarizer,
+    _is_permanent_api_error,
+    get_summarizer,
+)
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
 from src.state_manager import get_last_sync_time, save_sync_time
@@ -306,6 +311,26 @@ class Transcriber:
                 self.ai_billing_callback(exc)
             except Exception as cb_exc:  # noqa: BLE001
                 logger.error("AI billing callback failed: %s", cb_exc)
+
+    def reload_ai_config(self) -> None:
+        """Re-read AI config live after a settings change (e.g. a fixed API key).
+
+        The summarizer/tagger each hold an Anthropic client built with the key
+        that was current at daemon start, and the circuit breaker latches for
+        the session — so a key fixed in Settings would otherwise only take
+        effect on the next app launch (the cause of summaries/tags staying dead
+        after a 401). Call this *after* the global config has been rebuilt
+        (:func:`src.config.config.reload_config`) so the new key/model is picked
+        up immediately and any prior auth/billing/model trip is cleared.
+        """
+        self._ai_disabled_reason = None
+        self.summarizer = get_summarizer()
+        self.tagger = get_tagger()
+        logger.info(
+            "🔄 AI config reloaded (summaries=%s, tags=%s)",
+            self.summarizer is not None,
+            self.tagger is not None,
+        )
 
     def _run_index_migration_if_needed(self) -> None:
         """Run one-time migration of legacy markdown metadata to index."""
@@ -1362,7 +1387,7 @@ class Transcriber:
                     summary = self.summarizer.generate(transcript_text)
                     logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
                 except APIBillingError as exc:
-                    self._disable_ai("billing", exc)
+                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
                     summary = None
                 except Exception as e:
                     logger.error(f"Summary generation failed: {e}", exc_info=True)
@@ -1415,7 +1440,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                         if tag not in tags:
                             tags.append(tag)
                 except APIBillingError as exc:
-                    self._disable_ai("billing", exc)
+                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
                 except Exception as error:  # noqa: BLE001
                     logger.error(
                         "Tag generation failed for %s: %s",

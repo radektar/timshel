@@ -166,6 +166,27 @@ class TestClaudeSummarizer:
         with pytest.raises(APIBillingError):
             summarizer.generate("Test transcript")
 
+    def test_generate_raises_api_billing_error_on_invalid_key(
+        self, summarizer, mock_anthropic
+    ):
+        """A rejected API key (HTTP 401) must surface as a permanent error, not
+        be silently dropped — otherwise summaries/tags vanish with no signal."""
+        class FakeAuthError(Exception):
+            status_code = 401
+            message = "invalid x-api-key"
+
+            def __str__(self) -> str:
+                return (
+                    "Error code: 401 - {'type': 'error', 'error': "
+                    "{'type': 'authentication_error', "
+                    "'message': 'invalid x-api-key'}}"
+                )
+
+        mock_anthropic.messages.create.side_effect = FakeAuthError()
+
+        with pytest.raises(APIBillingError):
+            summarizer.generate("Test transcript")
+
     def test_generate_falls_back_on_other_api_errors(
         self, summarizer, mock_anthropic
     ):

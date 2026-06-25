@@ -771,6 +771,14 @@ def show_settings_window(callbacks: Optional[Dict[str, Callable]] = None) -> boo
     settings.save()
     logger.info("Settings updated and saved")
 
+    # Rebuild the global Config so the running process picks up the new values
+    # (API key, model, paths) live. Without this the Config singleton keeps the
+    # values it cached at startup, so a changed/fixed API key would only take
+    # effect on the next launch — the root cause of silent 401s after a key edit.
+    from src.config.config import reload_config
+
+    reload_config()
+
     if settings.whisper_model != old_model:
         manager = DependencyManager()
         missing = manager.needed()

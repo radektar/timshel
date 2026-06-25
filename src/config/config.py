@@ -300,6 +300,26 @@ def get_config() -> Config:
     return _config_instance
 
 
+def reload_config() -> Config:
+    """Rebuild the global Config from disk, picking up UserSettings changes.
+
+    The Config singleton caches settings-derived runtime fields
+    (``LLM_API_KEY``, ``ENABLE_SUMMARIZATION``, ``ENABLE_LLM_TAGGING``,
+    ``TRANSCRIBE_DIR``, whisper settings, …) at construction time and never
+    re-reads them. After the user edits and saves settings, call this so the
+    live process uses the new values **without a restart** — otherwise a
+    changed/fixed API key only takes effect on the next app launch (the cause
+    of silent 401s after a key update).
+
+    The fully-built instance is swapped in atomically (single assignment in
+    CPython), so a concurrent reader on the daemon thread never observes a
+    half-initialised config.
+    """
+    global _config_instance
+    _config_instance = Config()
+    return _config_instance
+
+
 # Backward compatibility: expose config as a property-like object
 # This allows existing code using `from src.config import config` to continue working
 class _ConfigProxy:

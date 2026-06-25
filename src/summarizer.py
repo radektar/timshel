@@ -61,13 +61,27 @@ class APIBillingError(Exception):
 
 
 def _is_permanent_api_error(exc: BaseException) -> str | None:
-    """Return error reason string when *exc* is a permanent Anthropic API error, else None."""
+    """Return a reason string when *exc* is a permanent Anthropic API error, else None.
+
+    "Permanent" = retrying with the same config cannot succeed this session, so
+    the caller trips the AI circuit breaker and surfaces a clear message instead
+    of failing silently. Recognises both the raw Anthropic SDK exception (which
+    carries ``status_code``) and our own wrapped :class:`APIBillingError`
+    (string only) — so re-classifying an already-wrapped error still yields the
+    right reason.
+    """
     status = getattr(exc, "status_code", None)
-    message = str(getattr(exc, "message", exc)).lower()
-    exc_str = str(exc).lower()
-    if status == 400 and ("credit balance" in message or "credit balance is too low" in exc_str):
+    blob = (str(getattr(exc, "message", "")) + " " + str(exc)).lower()
+    # Auth: missing / invalid / revoked API key (HTTP 401). The single most
+    # common silent failure — without this it returns None and the summary is
+    # quietly dropped, leaving the user with no summaries/tags and no idea why.
+    if status == 401 or "invalid x-api-key" in blob or "authentication_error" in blob:
+        return "auth"
+    # Billing: Anthropic credit balance exhausted (HTTP 400 invalid_request_error).
+    if "credit balance" in blob:
         return "billing"
-    if status == 404 and ("model" in message or "not_found" in exc_str):
+    # Model: unknown / retired model id (HTTP 404).
+    if (status == 404 or "not_found" in blob) and "model" in blob:
         return "model_not_found"
     return None
 
@@ -107,12 +121,14 @@ class ClaudeSummarizer(BaseSummarizer):
     from transcriptions in Polish.
     """
     
-    def __init__(self, api_key: str, model: str = "claude-3-haiku-20240307"):
+    def __init__(self, api_key: str, model: str = "claude-haiku-4-5-20251001"):
         """Initialize Claude summarizer.
-        
+
         Args:
             api_key: Anthropic API key
-            model: Claude model name
+            model: Claude model name. Defaults to the current config default;
+                the retired ``claude-3-haiku-20240307`` (now HTTP 404) was a
+                latent trap if any caller relied on the default.
         """
         global Anthropic
         try:
