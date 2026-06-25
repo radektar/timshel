@@ -136,6 +136,14 @@ if _APPKIT_AVAILABLE:
                     center, 0.0, center, b.size.width * 0.6, 0
                 )
 
+    def _skeleton_bar(frame, radius=7.0):
+        v = NSView.alloc().initWithFrame_(frame)
+        v.setWantsLayer_(True)
+        if v.layer() is not None:
+            v.layer().setBackgroundColor_(_c(255, 255, 255, 0.06).CGColor())
+            v.layer().setCornerRadius_(radius)
+        return v
+
     def _label(text, size, color, weight="regular", bold=False):
         field = NSTextField.labelWithString_(text)
         f = NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size)
@@ -198,6 +206,7 @@ if _APPKIT_AVAILABLE:
             self._window = None
             self._row_buttons: List[object] = []
             self._keep_timer = None
+            self._transcribing = False
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -404,6 +413,8 @@ if _APPKIT_AVAILABLE:
 
             conn = self._deck.active()
             if conn is None:
+                if self._transcribing:
+                    return self._build_skeleton(view, frame)
                 return self._build_empty(view, frame)
 
             inner_w = frame.size.width - 2 * _READER_PAD_X
@@ -504,6 +515,35 @@ if _APPKIT_AVAILABLE:
             return view
 
         @objc.python_method
+        def _build_skeleton(self, view, frame):
+            """Loading state: a 'Transkrybuję…' badge + shimmer-grey placeholders,
+            shown when the window is open while the model works and no insight
+            has landed yet — no fake content."""
+            inner_w = frame.size.width - 2 * _READER_PAD_X
+            cy = _PAD
+            badge = _label("●  Transkrybuję…", 11, _c(224, 162, 123))
+            badge.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 16))
+            view.addSubview_(badge)
+            cy += 26
+            view.addSubview_(
+                _skeleton_bar(NSMakeRect(_READER_PAD_X, cy, inner_w, _STAGE_H), 11)
+            )
+            cy += _STAGE_H + 16
+            for frac, h in ((0.3, 13), (0.92, 18), (0.78, 18)):
+                view.addSubview_(
+                    _skeleton_bar(NSMakeRect(_READER_PAD_X, cy, inner_w * frac, h))
+                )
+                cy += h + 9
+            cy += 10
+            cx = _READER_PAD_X
+            for w in (120.0, 150.0):
+                view.addSubview_(
+                    _skeleton_bar(NSMakeRect(cx, cy, w, 22), 11)
+                )
+                cx += w + 8
+            return view
+
+        @objc.python_method
         def _chip(self, text, origin):
             w = min(220.0, 18.0 + 7.0 * len(text))
             btn = NSButton.alloc().initWithFrame_(NSMakeRect(origin.x, origin.y, w, 24))
@@ -594,6 +634,15 @@ if _APPKIT_AVAILABLE:
         def updateDeck_(self, deck):
             self._deck = deck if deck is not None else im.InsightDeck()
             if self._window is not None:
+                self._render()
+
+        def setTranscribing_(self, flag):
+            """Tell the window the model is working (skeleton when empty)."""
+            new = bool(flag)
+            if new == self._transcribing:
+                return
+            self._transcribing = new
+            if self._window is not None and self._window.isVisible():
                 self._render()
 
 

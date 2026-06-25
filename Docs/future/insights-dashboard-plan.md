@@ -26,8 +26,9 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
       dimmed + ✓; "Ostatnie transkrypty" foot. ✅ (manual stacked rows; NSTableView only if N grows.)
 - [x] **Reader** — constellation stage + type + rationale + note chips + directions +
       Zachowaj/Odrzuć wired to the deck (select/keep/dismiss re-render). ✅
-- [x] **States** — empty ("Cisza w korpusie") ✅. Keep-flash (gold ✦ + "Zachowane" wash on the
-      reader, then advance via NSTimer) ✅ verified. Transcribing skeleton: TODO polish.
+- [x] **States** — empty ("Cisza w korpusie") ✅. Keep-flash ✅. Transcribing skeleton
+      ("● Transkrybuję…" badge + grey placeholders when open + working + no insight yet) ✅;
+      driven by `setTranscribing_` from `menu_app._update_icon`. All verified.
 - [x] **Dark surface depth** — backdrop drawRect subview fills deep obsidian (#100E15) + soft top
       halo; pixel-verified (18,17,23). ✅ (Full-window offscreen capture greys it — capture artifact,
       not the real render; the constellation/text capture fine.)

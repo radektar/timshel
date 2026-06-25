@@ -298,6 +298,16 @@ class MalincheMenuApp(rumps.App):
             except Exception:  # pragma: no cover - cosmetic, never fatal
                 pass
 
+        # Let an open Insights window show its loading state while we work.
+        dash = getattr(self, "_dashboard", None)
+        if dash is not None:
+            try:
+                dash.setTranscribing_(
+                    status in (AppStatus.TRANSCRIBING, AppStatus.SCANNING)
+                )
+            except Exception:  # pragma: no cover - cosmetic, never fatal
+                pass
+
         # When an unseen insight is waiting, show the badged (gold-dot) icon —
         # a non-template image, so the gold survives macOS's menu-bar tinting.
         if getattr(self, "_unseen_insights", 0) > 0:

@@ -84,3 +84,20 @@ def test_keep_flash_noop_without_window():
     ctrl = dw.build_dashboard_window()
     # no _ensure_window() → no window yet
     assert ctrl._show_keep_flash() is False
+
+
+def test_skeleton_renders_when_transcribing_and_empty():
+    ctrl = dw.build_dashboard_window(deck=im.InsightDeck())
+    ctrl._ensure_window()
+    ctrl._transcribing = True
+    ctrl._render()
+    _render(ctrl)  # skeleton must paint without raising
+
+
+def test_set_transcribing_toggles_flag():
+    ctrl = dw.build_dashboard_window()
+    assert ctrl._transcribing is False
+    ctrl.setTranscribing_(True)
+    assert ctrl._transcribing is True
+    ctrl.setTranscribing_(False)
+    assert ctrl._transcribing is False
