@@ -114,6 +114,16 @@ class MalincheMenuApp(rumps.App):
         self.menu.add(self.status_item)
         self.menu.add(rumps.separator)
 
+        # Insights — open the "Konstelacja" window (the designed home where the
+        # connections Malinche found are read). Entered from here, not by
+        # hijacking the menu-bar click (that opens this native menu, Docker-style).
+        self.insights_item = rumps.MenuItem(
+            "Insights…",
+            callback=self._open_insights,
+        )
+        self.menu.add(self.insights_item)
+        self.menu.add(rumps.separator)
+
         self.open_logs_item = rumps.MenuItem(
             "Open logs…",
             callback=self._open_logs,
@@ -159,28 +169,15 @@ class MalincheMenuApp(rumps.App):
         )
         self.menu.add(self.quit_item)
 
-        # Menu-bar status panel (NSPopover): BOTH left- and right-click open the
-        # same card — it carries every action, so there is no separate native
-        # menu to reach. The native menu (self.menu) is kept only as the fallback
-        # when AppKit is unavailable. Installed once the status-item button
-        # exists (after the run loop starts); on any failure the native menu
-        # stays fully functional — no regression.
-        from src.ui.status_panel import build_status_panel
+        # Menu-bar click opens the native NSMenu (system surface, like Docker /
+        # Cursor). The designed "home" is the Insights window (dashboard_window),
+        # reached from the "Insights…" item above — we no longer hijack the click
+        # with an NSPopover. The old status-panel card is retired as a surface;
+        # ``_status_panel = None`` keeps the guard in ``_update_icon`` a no-op.
+        from src.ui.dashboard_window import build_dashboard_window
 
-        self._status_panel = build_status_panel(
-            {
-                "settings": self._show_settings,
-                "logs": self._open_logs,
-                "import": self._import_audio_clicked,
-                "digest": self._open_latest_digest,
-                "genDigest": self._generate_digest_now,
-                "retranscribe": self._retranscribe_panel_file,
-                "quit": self._quit_app,
-            }
-        )
-        self._panel_install_tries = 0
-        if self._status_panel is not None:
-            rumps.Timer(self._install_status_panel, 0.4).start()
+        self._status_panel = None
+        self._dashboard = build_dashboard_window()
 
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
@@ -894,34 +891,6 @@ class MalincheMenuApp(rumps.App):
         )
         return decision
 
-    def _install_status_panel(self, timer):
-        """Wire the NSPopover panel onto the status-item button (one-shot).
-
-        Runs on a short timer because the status item only exists once the run
-        loop has started. Stops itself on success, or after a few attempts.
-        Fully guarded: any failure leaves the native menu intact.
-        """
-        self._panel_install_tries += 1
-        try:
-            nsapp = getattr(self, "_nsapp", None)
-            status_item = getattr(nsapp, "nsstatusitem", None)
-            button = status_item.button() if status_item is not None else None
-            ns_menu = getattr(self.menu, "_menu", None)
-            if button is not None and ns_menu is not None and self._status_panel is not None:
-                self._status_panel.installOnStatusItem_button_menu_(
-                    status_item, button, ns_menu
-                )
-                timer.stop()
-                logger.info("Status panel installed on the menu-bar item")
-                return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Status panel install failed (keeping native menu): %s", exc)
-            timer.stop()
-            self._status_panel = None
-            return
-        if self._panel_install_tries >= 10:
-            timer.stop()  # give up; native menu stays
-
     def _update_status(self, _):
         """Update status menu item based on current state."""
         if not self.transcriber:
@@ -966,6 +935,21 @@ class MalincheMenuApp(rumps.App):
         except Exception as exc:
             logger.error("Failed to open log viewer: %s", exc)
             rumps.alert("Error", f"Could not open log viewer: {exc}", "OK")
+
+    def _open_insights(self, _):
+        """Open the Insights 'Konstelacja' window — the designed home surface."""
+        try:
+            if getattr(self, "_dashboard", None) is None:
+                from src.ui.dashboard_window import build_dashboard_window
+
+                self._dashboard = build_dashboard_window()
+            if self._dashboard is not None:
+                self._dashboard.showWindow()
+            else:
+                logger.warning("Insights window unavailable (AppKit missing)")
+                rumps.alert("Malinche", "Insights view needs macOS AppKit.", ok="OK")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Could not open Insights window: %s", exc)
 
     def _open_latest_digest(self, _):
         """Open the most recent synthesis digest note in the default app."""

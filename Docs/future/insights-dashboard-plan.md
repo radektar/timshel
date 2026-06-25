@@ -28,8 +28,10 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
       Zachowaj/Odrzuć wired to the deck (select/keep/dismiss re-render). ✅
 - [x] **States** — empty ("Cisza w korpusie") ✅. Transcribing skeleton + keep-flash animation: TODO polish.
 - [ ] **Activity tab** — recent transcripts + connection counts (reuse `PanelModel`). [v1.1]
-- [ ] **Menu integration** — native `NSMenu` becomes the click surface again; add
-      `✦ Nowy insight (N)` + `Otwórz Malinche` entries opening the window; retire popover-as-click.
+- [x] **Menu integration** — native `NSMenu` is the click surface again (popover hijack
+      retired: `_install_status_panel` removed, `_status_panel=None`); `Insights…` item opens
+      the window; dashboard controller built in `__init__`. ✅ py_compile + flake8-neutral.
+      `✦ Nowy insight (N)` count badge waits on the pipeline (needs the unseen count).
 - [ ] **Signal** — gold dot on menu-bar icon when unseen insight; notification carries thesis;
       click opens window on that connection.
 - [ ] **Pipeline** — carry full `rationale`/`directions`/`notes`/`type` from digest →
