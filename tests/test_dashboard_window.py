@@ -1,0 +1,68 @@
+"""Smoke tests for the Insights dashboard window (AppKit, ui-marked)."""
+
+from __future__ import annotations
+
+import pytest
+
+from src.ui import dashboard_window as dw
+from src.ui import insight_model as im
+
+pytestmark = pytest.mark.ui
+
+if not dw._APPKIT_AVAILABLE:  # pragma: no cover - non-mac
+    pytest.skip("AppKit unavailable", allow_module_level=True)
+
+from AppKit import NSImage  # noqa: E402
+from Foundation import NSMakeSize  # noqa: E402
+
+
+def _render(ctrl):
+    ctrl._ensure_window()
+    cv = ctrl._window.contentView()
+    img = NSImage.alloc().initWithSize_(NSMakeSize(860, 560))
+    img.lockFocus()
+    try:
+        cv.displayRectIgnoringOpacity_(cv.bounds())
+    finally:
+        img.unlockFocus()
+
+
+def test_builds_with_sample_deck():
+    ctrl = dw.build_dashboard_window()
+    assert ctrl is not None
+    _render(ctrl)
+    assert ctrl._window.title() == "Malinche — Konstelacja"
+
+
+def test_navigation_and_triage_render():
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    ctrl._deck.select(2)
+    ctrl._render()
+    ctrl._deck.keep()
+    ctrl._render()
+    ctrl._deck.dismiss()
+    ctrl._render()
+    _render(ctrl)  # final paint must not raise
+
+
+def test_empty_state_renders():
+    ctrl = dw.build_dashboard_window(deck=im.InsightDeck())
+    assert ctrl is not None
+    _render(ctrl)
+    assert ctrl._deck.is_empty
+
+
+def test_update_deck_refreshes():
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    ctrl.updateDeck_(im.InsightDeck())
+    assert ctrl._deck.is_empty
+    _render(ctrl)
+
+
+def test_hex_helper():
+    col = dw._hex("#C24010")
+    assert col is not None
+    # malformed falls back rather than raising
+    assert dw._hex("nope") is not None
