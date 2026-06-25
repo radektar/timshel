@@ -101,19 +101,21 @@ if _APPKIT_AVAILABLE:
 
         def drawRect_(self, _rect):
             b = self.bounds()
+            # Solid deep-obsidian base first — guarantees the dark surface even if
+            # the gradient is subtle or the offscreen capture skips it.
+            _c(16, 14, 21).setFill()
+            NSBezierPath.bezierPathWithRect_(b).fill()
+            # A soft, low-alpha lighter halo from the top (mock: "at 64% 0%").
             grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
-                [_c(28, 27, 36), _c(22, 20, 28), _c(16, 14, 21)],
+                [_c(40, 38, 55, 0.6), _c(28, 27, 36, 0.22), _c(16, 14, 21, 0.0)],
                 [0.0, 0.5, 1.0],
                 NSColorSpace.sRGBColorSpace(),
             )
             if grad is not None:
-                center = NSMakePoint(b.size.width * 0.64, b.size.height * 0.0)
+                center = NSMakePoint(b.size.width * 0.64, 0.0)
                 grad.drawFromCenter_radius_toCenter_radius_options_(
-                    center, 0.0, center, b.size.width * 1.1, 0
+                    center, 0.0, center, b.size.height * 1.25, 0
                 )
-            else:  # pragma: no cover - gradient is always available on mac
-                _c(16, 14, 21).setFill()
-                NSBezierPath.bezierPathWithRect_(b).fill()
 
     def _label(text, size, color, weight="regular", bold=False):
         field = NSTextField.labelWithString_(text)
@@ -234,8 +236,16 @@ if _APPKIT_AVAILABLE:
             w = frame.size.width or _WIN_W
             h = frame.size.height or _WIN_H
 
-            bg = _DarkBackground.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-            bg.setAutoresizingMask_(18)
+            bg = _FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+            bg.setWantsLayer_(True)
+            if bg.layer() is not None:
+                bg.layer().setBackgroundColor_(_c(16, 14, 21).CGColor())
+            # Deep-obsidian backdrop as a drawRect subview (a contentView's own
+            # drawRect is not reliably invoked; a subview's is). Fills solid +
+            # a soft top halo.
+            backdrop = _DarkBackground.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+            backdrop.setAutoresizingMask_(18)
+            bg.addSubview_(backdrop)
 
             # nav label top-right ("połączenie X z N")
             total = len(self._deck)
