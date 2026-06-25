@@ -19,13 +19,14 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
 - [x] **Constellation view** — `NSView.drawRect_` (Core Graphics): nodes (radial glow),
       arcs (quadratic bézier + glow), golden bloom. ✅ `constellation_view.py`, 8 ui tests,
       offscreen render verified vs mock. Entrance animation deferred to the window pass.
-- [ ] **Dashboard window shell** — `src/ui/dashboard_window.py`: `NSWindow` + dark chrome,
-      grid (rail | reader). Focused/unfocused/min-width states. AppKit-optional guard.
-- [ ] **Rail (connection list)** — `NSTableView`: dot + label + 2-line snippet; active = gold
-      rail; kept = dimmed + ✓. "Ostatnie transkrypty" foot (reuse `PanelModel`).
-- [ ] **Reader** — constellation stage + type + rationale (display font) + note chips +
-      directions + Zachowaj/Odrzuć. Keep flash; dismiss → next.
-- [ ] **States** — empty ("Cisza w korpusie"), transcribing skeleton.
+- [x] **Dashboard window shell** — `src/ui/dashboard_window.py`: `NSWindow` + native dark
+      titlebar (transparent, full-size content), dark radial bg, grid (rail | reader),
+      resizable w/ min-size. AppKit-optional guard. ✅ rendered & verified vs mock.
+- [x] **Rail (connection list)** — dot + label + 2-line snippet; active = gold rail; kept =
+      dimmed + ✓; "Ostatnie transkrypty" foot. ✅ (manual stacked rows; NSTableView only if N grows.)
+- [x] **Reader** — constellation stage + type + rationale + note chips + directions +
+      Zachowaj/Odrzuć wired to the deck (select/keep/dismiss re-render). ✅
+- [x] **States** — empty ("Cisza w korpusie") ✅. Transcribing skeleton + keep-flash animation: TODO polish.
 - [ ] **Activity tab** — recent transcripts + connection counts (reuse `PanelModel`). [v1.1]
 - [ ] **Menu integration** — native `NSMenu` becomes the click surface again; add
       `✦ Nowy insight (N)` + `Otwórz Malinche` entries opening the window; retire popover-as-click.
