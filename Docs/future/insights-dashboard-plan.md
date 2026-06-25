@@ -27,6 +27,9 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
 - [x] **Reader** — constellation stage + type + rationale + note chips + directions +
       Zachowaj/Odrzuć wired to the deck (select/keep/dismiss re-render). ✅
 - [x] **States** — empty ("Cisza w korpusie") ✅. Transcribing skeleton + keep-flash animation: TODO polish.
+- [x] **Dark surface depth** — backdrop drawRect subview fills deep obsidian (#100E15) + soft top
+      halo; pixel-verified (18,17,23). ✅ (Full-window offscreen capture greys it — capture artifact,
+      not the real render; the constellation/text capture fine.)
 - [ ] **Activity tab** — recent transcripts + connection counts (reuse `PanelModel`). [v1.1]
 - [x] **Menu integration** — native `NSMenu` is the click surface again (popover hijack
       retired: `_install_status_panel` removed, `_status_panel=None`); `Insights…` item opens
