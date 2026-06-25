@@ -203,6 +203,7 @@ def render_symbol_png(
     point: float = 15.0,
     weight: str = "regular",
     pixel_size: int = 36,
+    dot: bool = False,
 ) -> Optional[bytes]:
     """Rasterise an SF Symbol to template PNG bytes (black glyph + alpha).
 
@@ -213,6 +214,12 @@ def render_symbol_png(
 
     The glyph is centred and aspect-fit into a ``pixel_size`` square so menu-bar
     icons render crisply at Retina without distortion.
+
+    With ``dot=True`` the result is a **non-template** badged icon: the glyph is
+    toned to a neutral grey that reads on both light and dark menu bars, and a
+    bright gold dot is composited top-right — the ambient "an unseen insight is
+    waiting" signal. The caller must set ``template = False`` for that variant so
+    the gold survives (a template image would be recoloured to a single tint).
     """
     if not _APPKIT_AVAILABLE:
         return None
@@ -221,6 +228,8 @@ def render_symbol_png(
         return None
     from AppKit import (
         NSBitmapImageFileTypePNG,
+        NSColor,
+        NSCompositingOperationSourceAtop,
         NSCompositingOperationSourceOver,
         NSGraphicsContext,
     )
@@ -245,6 +254,28 @@ def render_symbol_png(
         NSCompositingOperationSourceOver,
         1.0,
     )
+    if dot:
+        from AppKit import NSBezierPath, NSRectFillUsingOperation
+
+        # Tone the (template-black) glyph to a menu-bar-readable grey.
+        NSColor.colorWithRed_green_blue_alpha_(0.62, 0.6, 0.56, 1.0).set()
+        NSRectFillUsingOperation(
+            NSMakeRect(0, 0, pixel_size, pixel_size),
+            NSCompositingOperationSourceAtop,
+        )
+        # Bright gold dot, top-right (image coords: origin bottom-left).
+        r = pixel_size * 0.19
+        cx = pixel_size - r - pixel_size * 0.02
+        cy = pixel_size - r - pixel_size * 0.02
+        NSColor.colorWithRed_green_blue_alpha_(0.84, 0.69, 0.20, 1.0).setFill()
+        NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(cx - r, cy - r, 2 * r, 2 * r)
+        ).fill()
+        NSColor.colorWithRed_green_blue_alpha_(0.96, 0.87, 0.56, 1.0).setFill()
+        ir = r * 0.5
+        NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(cx - ir, cy - ir, 2 * ir, 2 * ir)
+        ).fill()
     canvas.unlockFocus()
 
     from AppKit import NSBitmapImageRep

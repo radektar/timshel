@@ -35,9 +35,10 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
       retired: `_install_status_panel` removed, `_status_panel=None`); `Insights…` item opens
       the window; dashboard controller built in `__init__`. ✅ py_compile + flake8-neutral.
       `✦ Nowy insight (N)` count badge waits on the pipeline (needs the unseen count).
-- [~] **Signal** — notification now carries the *thesis* (top connection's label + rationale,
-      not "digest ready") ✅; menu item shows a count badge `✦ Insights (N)` ✅. Gold-dot icon
-      compositing + notification-click-opens-window: next iteration (PNG badge on the menu-bar icon).
+- [x] **Signal** — notification carries the *thesis* ✅; menu count badge `✦ Insights (N)` ✅;
+      gold-dot menu-bar icon when an unseen insight waits ✅ (`render_symbol_png(dot=True)` —
+      non-template grey glyph + gold dot, readable on light/dark; visually verified). Driven by
+      `_unseen_insights`, picked up on the status tick. (Notification-click-to-open: nice-to-have.)
 - [x] **Pipeline** — `digest_writer` persists a structured `{vault}/.malinche/insights-latest.json`
       (type/notes/rationale/directions) on each digest; `insight_pipeline.py` loads it into an
       `InsightDeck`; the window defaults to `latest_deck() or sample_deck()`. ✅ 7 tests.

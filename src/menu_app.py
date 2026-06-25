@@ -215,22 +215,32 @@ class MalincheMenuApp(rumps.App):
         if not getattr(style, "_APPKIT_AVAILABLE", False):
             return resolved
 
+        # Parallel set of badged (gold-dot) icons for the "unseen insight" signal.
+        dot_resolved: dict[AppStatus, Optional[str]] = {
+            status: None for status in AppStatus
+        }
+
         icon_dir = Path(tempfile.mkdtemp(prefix="malinche-menubar-icons-"))
         for status in AppStatus:
             try:
+                name = style.symbol_name_for_status(status)
                 png = style.render_symbol_png(
-                    style.symbol_name_for_status(status),
-                    point=15.0,
-                    weight="regular",
-                    pixel_size=36,
+                    name, point=15.0, weight="regular", pixel_size=36
                 )
-                if not png:
-                    continue
-                out = icon_dir / f"{status.value}.png"
-                out.write_bytes(png)
-                resolved[status] = str(out)
+                if png:
+                    out = icon_dir / f"{status.value}.png"
+                    out.write_bytes(png)
+                    resolved[status] = str(out)
+                dot_png = style.render_symbol_png(
+                    name, point=15.0, weight="regular", pixel_size=36, dot=True
+                )
+                if dot_png:
+                    dot_out = icon_dir / f"{status.value}-dot.png"
+                    dot_out.write_bytes(dot_png)
+                    dot_resolved[status] = str(dot_out)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
+        self._icon_paths_dot = dot_resolved
         return resolved
 
     def _build_panel_model(self, status: AppStatus):
@@ -287,6 +297,16 @@ class MalincheMenuApp(rumps.App):
                 panel.update_(self._build_panel_model(status))
             except Exception:  # pragma: no cover - cosmetic, never fatal
                 pass
+
+        # When an unseen insight is waiting, show the badged (gold-dot) icon —
+        # a non-template image, so the gold survives macOS's menu-bar tinting.
+        if getattr(self, "_unseen_insights", 0) > 0:
+            dot_path = getattr(self, "_icon_paths_dot", {}).get(status)
+            if dot_path:
+                self.title = None
+                self.template = False
+                self.icon = dot_path
+                return
 
         icon_path = self._icon_paths.get(status)
         if icon_path:
@@ -985,6 +1005,9 @@ class MalincheMenuApp(rumps.App):
             n = deck.unseen_count if deck is not None else 0
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("could not refresh insights badge: %s", exc)
+        # Drives both the menu label and the gold-dot menu-bar icon (picked up by
+        # the next status tick in _update_icon).
+        self._unseen_insights = n
         try:
             self.insights_item.title = f"✦ Insights ({n})" if n else "Insights…"
         except Exception:  # pragma: no cover - cosmetic
