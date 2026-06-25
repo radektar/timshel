@@ -16,8 +16,9 @@ v1 scope = czytnik + szyna + sygnał. Activity tab + skeleton are in-design but 
 - [x] **Constellation geometry** — `src/ui/constellation_geometry.py`: pure node/arc/bloom
       coordinates per layout (contradiction/thread/triad), scaled. Port of `insights-engine.js`
       `LAY` + arc control points. + tests. ✅ 8 tests
-- [ ] **Constellation view** — `NSView.drawRect_` (Core Graphics): nodes (radial glow),
-      arcs (quadratic bézier + glow), golden bloom; entrance anim honouring reduced-motion.
+- [x] **Constellation view** — `NSView.drawRect_` (Core Graphics): nodes (radial glow),
+      arcs (quadratic bézier + glow), golden bloom. ✅ `constellation_view.py`, 8 ui tests,
+      offscreen render verified vs mock. Entrance animation deferred to the window pass.
 - [ ] **Dashboard window shell** — `src/ui/dashboard_window.py`: `NSWindow` + dark chrome,
       grid (rail | reader). Focused/unfocused/min-width states. AppKit-optional guard.
 - [ ] **Rail (connection list)** — `NSTableView`: dot + label + 2-line snippet; active = gold
