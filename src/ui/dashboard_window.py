@@ -117,6 +117,25 @@ if _APPKIT_AVAILABLE:
                     center, 0.0, center, b.size.height * 1.25, 0
                 )
 
+    class _FlashOverlay(NSView):
+        """Gold micro-bloom + 'Zachowane' wash, shown briefly on keep."""
+
+        def isFlipped(self):
+            return True
+
+        def drawRect_(self, _rect):
+            b = self.bounds()
+            grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
+                [_c(244, 221, 142, 0.26), _c(16, 14, 21, 0.90)],
+                [0.0, 0.64],
+                NSColorSpace.sRGBColorSpace(),
+            )
+            if grad is not None:
+                center = NSMakePoint(b.size.width * 0.5, b.size.height * 0.4)
+                grad.drawFromCenter_radius_toCenter_radius_options_(
+                    center, 0.0, center, b.size.width * 0.6, 0
+                )
+
     def _label(text, size, color, weight="regular", bold=False):
         field = NSTextField.labelWithString_(text)
         f = NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size)
@@ -178,6 +197,7 @@ if _APPKIT_AVAILABLE:
             self._callbacks: Dict[str, Callable] = callbacks or {}
             self._window = None
             self._row_buttons: List[object] = []
+            self._keep_timer = None
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -512,8 +532,58 @@ if _APPKIT_AVAILABLE:
             self._render()
 
         def keepClicked_(self, sender):
+            # The quiet punchline: a gold micro-bloom + "Zachowane", then advance.
+            if not self._show_keep_flash():
+                self._deck.keep()
+                self._render()
+                return
+            from Foundation import NSTimer
+
+            self._keep_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                    0.8, self, "afterKeepFlash:", None, False
+                )
+            )
+
+        def afterKeepFlash_(self, timer):
             self._deck.keep()
             self._render()
+
+        @objc.python_method
+        def _show_keep_flash(self):
+            """Overlay the gold bloom on the reader region; False if no window."""
+            win = self._window
+            if win is None or win.contentView() is None:
+                return False
+            content = win.contentView()
+            b = content.bounds()
+            frame = NSMakeRect(
+                _RAIL_W, _HEADER_H, b.size.width - _RAIL_W, b.size.height - _HEADER_H
+            )
+            overlay = _FlashOverlay.alloc().initWithFrame_(frame)
+            overlay.setAutoresizingMask_(18)
+            spark = _label("✦", 34, _gold(), bold=False)
+            spark.setAlignment_(1)
+            spark.setFrame_(
+                NSMakeRect(0, frame.size.height * 0.4 - 40, frame.size.width, 44)
+            )
+            overlay.addSubview_(spark)
+            lab = _label("Zachowane", 19, _cream(), bold=True)
+            lab.setAlignment_(1)
+            lab.setFrame_(
+                NSMakeRect(0, frame.size.height * 0.4 + 6, frame.size.width, 26)
+            )
+            overlay.addSubview_(lab)
+            sub = _label(
+                "trafia do digestu · następne połączenie", 12.5, _muted()
+            )
+            sub.setAlignment_(1)
+            sub.setFrame_(
+                NSMakeRect(0, frame.size.height * 0.4 + 34, frame.size.width, 18)
+            )
+            overlay.addSubview_(sub)
+            content.addSubview_(overlay)
+            return True
 
         def dismissClicked_(self, sender):
             self._deck.dismiss()
