@@ -17,6 +17,29 @@ requires_appkit = pytest.mark.skipif(
 )
 
 
+@pytest.mark.parametrize(
+    "raw, original, expected",
+    [
+        # Clean paste — the normal case.
+        ("sk-ant-api03-NEW", "sk-ant-old", "sk-ant-api03-NEW"),
+        # Paste that didn't replace the seeded placeholder: the em-dash MUST be
+        # stripped, else "—sk-ant-…" is saved and every API call 401s. This is
+        # the bug: a correct key pasted, still rejected, with no visible cause.
+        ("—sk-ant-api03-NEW", "sk-ant-old", "sk-ant-api03-NEW"),
+        # Surrounding whitespace from a copy is trimmed.
+        ("  sk-ant-api03-NEW  ", None, "sk-ant-api03-NEW"),
+        # Blank field → keep the existing key untouched.
+        ("", "sk-ant-old", "sk-ant-old"),
+        # Only the placeholder (field left untouched) → keep existing.
+        ("—", "sk-ant-old", "sk-ant-old"),
+        # Blank field with no prior key → stays unset.
+        ("", "", None),
+    ],
+)
+def test_resolve_api_key_input(raw, original, expected):
+    assert sw._resolve_api_key_input(raw, original) == expected
+
+
 def _state():
     settings = UserSettings.load()
     return settings, {

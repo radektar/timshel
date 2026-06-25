@@ -122,10 +122,17 @@ def _truncate_path(path: str, max_length: int = 60) -> str:
     return "..." + path[-(max_length - 3) :]
 
 
-def _mask_api_key(key: Optional[str]) -> str:
-    if not key:
-        return ""
-    return _API_KEY_PLACEHOLDER
+def _resolve_api_key_input(raw: str, original: Optional[str]) -> Optional[str]:
+    """Resolve the API-key field value to the key to persist.
+
+    Strips whitespace and any stray placeholder char ("—") that an older build
+    seeded into the secure field. An em-dash is invisible in a masked field and
+    is never part of a real Claude key, so a leaked one silently corrupted the
+    saved key — the cause of "I pasted a correct key but still get 401". An
+    empty field leaves the existing key untouched.
+    """
+    candidate = (raw or "").replace(_API_KEY_PLACEHOLDER, "").strip()
+    return candidate if candidate else (original or None)
 
 
 def _format_volume_row(v: TrustedVolume) -> str:
@@ -419,8 +426,17 @@ def _build_transcription_section(state):
     state["model_popup"] = model_popup
 
     key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
-    key_field.setStringValue_(_mask_api_key(state["original_api_key"]))
-    key_field.setPlaceholderString_("sk-ant-… (leave to keep; clear to remove)")
+    # Never seed the field with a stand-in for the secret: a masked secure field
+    # makes a pre-filled placeholder ("—") invisible, and a paste that doesn't
+    # replace it prepends the placeholder to the key → an invalid key the user
+    # cannot see. Leave it empty and convey state via the (visible) ghost text.
+    key_field.setStringValue_("")
+    if state["original_api_key"]:
+        key_field.setPlaceholderString_(
+            "•••• saved key (hidden) — paste a new key to replace, or leave blank"
+        )
+    else:
+        key_field.setPlaceholderString_("sk-ant-… — paste your Claude API key")
     state["api_key_field"] = key_field
 
     card, ch = _build_card(
@@ -688,13 +704,9 @@ def _show_native_settings_window(
     ]
     selected_model = state["model_codes"][state["model_popup"].indexOfSelectedItem()]
 
-    api_key_input = str(state["api_key_field"].stringValue() or "").strip()
-    if api_key_input == _API_KEY_PLACEHOLDER:
-        new_api_key: Optional[str] = state["original_api_key"] or None
-    elif api_key_input == "":
-        new_api_key = None
-    else:
-        new_api_key = api_key_input
+    new_api_key: Optional[str] = _resolve_api_key_input(
+        str(state["api_key_field"].stringValue() or ""), state["original_api_key"]
+    )
 
     basic_changed = apply_basic_settings(
         settings,
