@@ -66,7 +66,13 @@ def main() -> int:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--bridges", type=int, default=4)
     ap.add_argument("--window", type=int, default=15)
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="override config.SYNTHESIS_MAX_TOKENS (baseline prompt "
+                         "is verbose and truncates at the default 2048)")
     args = ap.parse_args()
+
+    if args.max_tokens:
+        config.SYNTHESIS_MAX_TOKENS = args.max_tokens
 
     vault = Path(config.TRANSCRIBE_DIR)
     dismissals = DismissalStore(vault).load()
