@@ -1,11 +1,13 @@
 """Transcription engine for Malinche."""
 
+import fcntl
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -74,7 +76,19 @@ class RetranscribeLockBusyError(RuntimeError):
 
 
 class ProcessLock:
-    """File-based lock guarding recorder workflow execution."""
+    """Advisory cross-process lock guarding the recorder workflow.
+
+    Backed by ``fcntl.flock`` instead of a hand-rolled PID file. The kernel
+    drops the lock automatically when the owning process exits — crash, hard
+    kill, or clean shutdown alike — so a stuck lock can never outlive its
+    owner. The previous PID-file scheme could deadlock for the whole
+    ``TRANSCRIPTION_TIMEOUT`` window: in a single-process app the recorded PID
+    is always our own (so it always looked "alive"), and a kill between
+    ``open`` and ``write`` left an empty file that was never recognised as
+    stale. The lock file is never unlinked while in use — with ``flock`` the
+    lock lives in the kernel, and deleting the file would let a second opener
+    race onto a fresh inode.
+    """
 
     def __init__(self, lock_path: Path):
         """Configure lock helper.
@@ -86,139 +100,53 @@ class ProcessLock:
         self._fd: Optional[int] = None
 
     def acquire(self) -> bool:
-        """Attempt to acquire the lock.
-
-        The lock file stores ``<pid>\\n<timestamp>`` so a crashed process can
-        be detected reliably: if the recorded PID is no longer alive we treat
-        the file as stale and remove it. This avoids the "recorder looks
-        connected but nothing happens" symptom that followed Malinche
-        crashes or hard kills.
+        """Try to grab the lock without blocking.
 
         Returns:
-            True if lock acquired, False otherwise.
+            True if the lock was acquired, False if another live process
+            currently holds it.
         """
         try:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fd = os.open(
-                str(self.lock_path),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-            )
-            payload = f"{os.getpid()}\n{time.time():.0f}".encode("utf-8")
-            os.write(self._fd, payload)
-            return True
-        except FileExistsError:
-            if self._try_cleanup_stale_lock():
-                return self.acquire()
-            return False
+            fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
         except OSError as error:
-            logger.error("Could not create process lock at %s: %s", self.lock_path, error)
+            logger.error("Could not open process lock at %s: %s", self.lock_path, error)
             return False
 
-    def _try_cleanup_stale_lock(self) -> bool:
-        """Inspect an existing lock file and remove it if the owner is gone.
-
-        Cleanup happens in two stages:
-
-        1. **PID liveness.** If the stored PID is not running (``os.kill(pid,
-           0)`` raises ``ProcessLookupError``) the lock was left by a crashed
-           process and is safe to remove immediately.
-        2. **Absolute age.** As a fallback for legacy / malformed lock files
-           that lack a PID, we still honour the ``TRANSCRIPTION_TIMEOUT``
-           window so long-running but healthy transcriptions are never
-           interrupted.
-
-        Returns:
-            True when the lock file was removed and the caller should retry
-            acquisition, False if the lock is still considered valid.
-        """
-        stored_pid: Optional[int] = None
-        lock_age: Optional[float] = None
-
         try:
-            if not self.lock_path.exists():
-                return True
-            content = self.lock_path.read_text(encoding="utf-8").strip()
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
+            # Held by another live process. The kernel releases the flock
+            # automatically if that process dies, so there is nothing to
+            # clean up and no stale file can ever wedge us.
+            os.close(fd)
             return False
 
-        # Parse "<pid>\n<timestamp>" (new format) or "<timestamp>" (legacy).
-        lines = content.splitlines()
+        # Record the holder for diagnostics (logs, manual inspection) only —
+        # the lock state lives in the kernel, never in this file's contents.
         try:
-            if len(lines) >= 2:
-                stored_pid = int(lines[0])
-                lock_age = time.time() - float(lines[1])
-            elif len(lines) == 1:
-                lock_age = time.time() - float(lines[0])
-        except ValueError:
-            stored_pid = None
-            lock_age = None
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n{time.time():.0f}".encode("utf-8"))
+        except OSError as error:
+            logger.debug("Could not write process lock diagnostics: %s", error)
 
-        if stored_pid is not None and not self._pid_alive(stored_pid):
-            logger.warning(
-                "Detected stale process lock at %s (pid %d no longer running), "
-                "removing",
-                self.lock_path,
-                stored_pid,
-            )
-            return self._remove_lock_file()
-
-        stale_age_seconds = default_config.TRANSCRIPTION_TIMEOUT + 600
-        if lock_age is not None and lock_age > stale_age_seconds:
-            logger.warning(
-                "Detected stale process lock at %s (age=%.0fs), removing",
-                self.lock_path,
-                lock_age,
-            )
-            return self._remove_lock_file()
-
-        return False
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        """Return True if *pid* refers to a running process.
-
-        Sends signal ``0`` which only performs an error check. A
-        ``ProcessLookupError`` means the process is gone; a
-        ``PermissionError`` means it is alive but owned by another user
-        (unlikely here but still counts as alive for safety).
-        """
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
+        self._fd = fd
         return True
 
-    def _remove_lock_file(self) -> bool:
-        """Best-effort removal of the lock file. Returns True on success."""
-        try:
-            self.lock_path.unlink()
-            return True
-        except OSError as error:
-            logger.warning(
-                "Could not remove stale process lock file %s: %s",
-                self.lock_path,
-                error,
-            )
-            return False
-
     def release(self) -> None:
-        """Release the lock if held."""
-        if self._fd is not None:
+        """Release the lock if held (no-op otherwise)."""
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        except OSError as error:
+            logger.warning("Error releasing process lock %s: %s", self.lock_path, error)
+        finally:
             try:
                 os.close(self._fd)
-            except OSError as error:
-                logger.warning("Error closing process lock descriptor: %s", error)
-            finally:
-                self._fd = None
-        try:
-            if self.lock_path.exists():
-                self.lock_path.unlink()
-        except OSError as error:
-            logger.warning("Could not remove process lock file %s: %s", self.lock_path, error)
+            except OSError:
+                pass
+            self._fd = None
 
 class Transcriber:
     """Main transcription engine.
@@ -249,6 +177,11 @@ class Transcriber:
         self.whisper_available = self._check_whisper()
         self.recorder_monitoring = False
         self.recorder_was_notified = False
+        # Serializes the automatic recorder workflow against a user-triggered
+        # re-transcription *within this process* (the periodic checker and the
+        # menu action run on separate threads). Cross-process exclusion — and
+        # crash-safe auto-release — is handled by ProcessLock (fcntl.flock).
+        self._workflow_lock = threading.Lock()
         self.state_updater: Optional[
             Callable[
                 [
@@ -1774,12 +1707,23 @@ Brak podsumowania AI. Możliwe przyczyny:
         
         logger.info(f"🔄 Force re-transcription requested: {audio_file.name}")
         
-        # Acquire process lock to prevent conflicts
+        # In-process guard first: an automatic process_recorder pass on the
+        # periodic-checker thread is the usual contender for this lock.
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        # Cross-process guard (advisory flock, auto-released if the holder dies).
         lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
         if not lock.acquire():
             logger.warning(
-                "Cannot acquire lock - another transcription in progress"
+                "Cannot acquire process lock - another process is transcribing"
             )
+            self._workflow_lock.release()
             raise RetranscribeLockBusyError(
                 "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
             )
@@ -1827,6 +1771,7 @@ Brak podsumowania AI. Możliwe przyczyny:
             
         finally:
             lock.release()
+            self._workflow_lock.release()
             # Reset state if no more files in progress
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
@@ -2071,12 +2016,25 @@ Brak podsumowania AI. Możliwe przyczyny:
         This is the main entry point called when recorder activity is detected.
         It orchestrates the entire transcription workflow.
         """
+        # In-process guard first: the periodic checker and a user-triggered
+        # force_retranscribe run on different threads of this same process.
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.debug(
+                "⛔️ Skipping process_recorder — another workflow is already "
+                "running in this process"
+            )
+            # Keep current state to avoid UI flicker while another run is active.
+            return
+
+        # Cross-process guard (e.g. a separate `make run` daemon): advisory
+        # flock the kernel releases automatically if the holder dies.
         lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
         if not lock.acquire():
             logger.debug(
-                "⛔️ Skipping process_recorder because another instance holds lock %s",
+                "⛔️ Skipping process_recorder because another process holds lock %s",
                 self.config.PROCESS_LOCK_FILE,
             )
+            self._workflow_lock.release()
             # Keep current state to avoid UI flicker while another run is active.
             return
 
@@ -2292,4 +2250,5 @@ Brak podsumowania AI. Możliwe przyczyny:
                 self._update_state(AppStatus.IDLE, recorder_name=None, pending_count=None)
         finally:
             lock.release()
+            self._workflow_lock.release()
 
