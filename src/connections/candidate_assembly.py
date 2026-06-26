@@ -34,6 +34,11 @@ _TOKEN_RE = re.compile(r"[a-z0-9ąćęłńóśźż]+", re.IGNORECASE)
 _BM25_K1 = 1.5
 _BM25_B = 0.75
 
+# A token is "rare" (a specific entity/concept, not a topical word) when it
+# occurs in at most this many notes corpus-wide. Bridges are built on shared
+# rare tokens: far apart in topic, joined by one specific thread.
+_BRIDGE_RARE_DF = 4
+
 
 @dataclass
 class NoteRef:
@@ -55,6 +60,11 @@ class CandidateSet:
 
     notes: List[NoteRef]
     window_basenames: Set[str]
+    bridge_basenames: Set[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.bridge_basenames is None:
+            self.bridge_basenames = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -197,6 +207,52 @@ def _bm25_ranked(window: List[NoteRef], older: List[NoteRef]) -> List[NoteRef]:
     return [note for _, note in scored]
 
 
+def _corpus_doc_freq(notes: List[NoteRef]) -> Counter:
+    """Document frequency of every content token across the corpus."""
+    df: Counter = Counter()
+    for note in notes:
+        for term in set(_tokenize(note.summary_md)):
+            df[term] += 1
+    return df
+
+
+def _bridge_neighbors(
+    window: List[NoteRef],
+    older: List[NoteRef],
+    doc_freq: Counter,
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Mid-distance 'bridge' notes: far from the window in topic, joined by a
+    shared *rare* token (a specific entity/concept), not the dominant theme.
+
+    This is the distance channel the similarity signals (tags + BM25) cannot
+    produce: serendipity = relevance x unexpectedness. We keep relevance via a
+    shared rare token and maximise unexpectedness by ignoring topical overlap.
+    Returns at most ``max_n`` notes, ranked by how many rare threads they share
+    with the window (then recency).
+    """
+    if max_n <= 0:
+        return []
+    rare_window: Set[str] = set()
+    for note in window:
+        for term in set(_tokenize(note.summary_md)):
+            if 0 < doc_freq.get(term, 0) <= _BRIDGE_RARE_DF:
+                rare_window.add(term)
+    if not rare_window:
+        return []
+
+    scored: List[tuple] = []
+    for note in older:
+        if note.basename in exclude:
+            continue
+        shared_rare = rare_window & set(_tokenize(note.summary_md))
+        if shared_rare:
+            scored.append((len(shared_rare), note.date, note))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [note for _, _, note in scored[:max_n]]
+
+
 def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
     out: List[NoteRef] = []
     i = j = 0
@@ -237,6 +293,7 @@ def assemble_candidates(
     last_digest_at: Optional[str],
     dismissals: DismissalStore,
     first_run_window: int = 15,
+    inject_bridges: int = 0,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -278,20 +335,32 @@ def assemble_candidates(
     )
     lexical_neighbors = _bm25_ranked(window, older)
 
+    # Distance channel (experiment): inject cross-topic bridges right after the
+    # window so they survive the cap/budget — deliberately displacing the
+    # weakest similar neighbours. Default 0 → byte-identical to the baseline.
+    bridges: List[NoteRef] = []
+    bridge_basenames: Set[str] = set()
+    if inject_bridges > 0:
+        bridges = _bridge_neighbors(
+            window, older, _corpus_doc_freq(corpus), window_basenames, inject_bridges
+        )
+        bridge_basenames = {n.basename for n in bridges}
+
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
-    for note in _interleave(tag_neighbors, lexical_neighbors):
+    for note in bridges + _interleave(tag_neighbors, lexical_neighbors):
         if note.basename in seen:
             continue
         seen.add(note.basename)
         ranked.append(note)
 
     ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
-    ranked = _enforce_char_budget(ranked, window_basenames)
+    ranked = _enforce_char_budget(ranked, window_basenames | bridge_basenames)
     logger.info(
-        "connection assembly: %d candidates (%d new) from %d-note corpus",
+        "connection assembly: %d candidates (%d new, %d bridges) from %d-note corpus",
         len(ranked),
         len(window_basenames),
+        len(bridge_basenames),
         len(corpus),
     )
-    return CandidateSet(ranked, window_basenames)
+    return CandidateSet(ranked, window_basenames, bridge_basenames)
