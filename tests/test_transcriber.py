@@ -1061,118 +1061,93 @@ def test_process_recorder_releases_lock(transcriber, monkeypatch):
     assert released["value"] is True
 
 
-def test_process_lock_removes_stale_file(tmp_path, monkeypatch):
-    """Stale legacy lock files (timestamp-only) should be cleaned up."""
-    from src import transcriber as transcriber_module
+def test_process_lock_excludes_second_holder(tmp_path):
+    """Two locks on one path are mutually exclusive; release frees it cleanly."""
     from src.transcriber import ProcessLock
-    from src import config as config_module
-    import time as time_module
-
-    monkeypatch.setattr(transcriber_module, "logger", MagicMock())
 
     lock_path = tmp_path / "transcriber.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    stale_age = config_module.config.TRANSCRIPTION_TIMEOUT + 1200
-    stale_timestamp = time_module.time() - stale_age
-    lock_path.write_text(f"{stale_timestamp:.0f}", encoding="utf-8")
+    first = ProcessLock(lock_path)
+    assert first.acquire() is True
 
-    lock = ProcessLock(lock_path)
-    acquired = lock.acquire()
+    # flock excludes even a second descriptor opened in the same process.
+    second = ProcessLock(lock_path)
+    assert second.acquire() is False
 
-    assert acquired is True
-    # The new lock payload is "<pid>\n<timestamp>" so the first line is our PID
-    # and the second line is a refreshed timestamp.
-    pid_line, ts_line = lock_path.read_text(encoding="utf-8").splitlines()
-    assert int(pid_line) == os.getpid()
-    assert float(ts_line) > stale_timestamp
+    first.release()
+
+    # Once released the lock is immediately grabbable again — no stale wedge.
+    assert second.acquire() is True
+    second.release()
 
 
-def test_process_lock_keeps_recent_lock(tmp_path, monkeypatch):
-    """Recent lock files with LIVING pid should prevent new acquisition."""
-    from src import transcriber as transcriber_module
+def test_process_lock_writes_diagnostics_payload(tmp_path):
+    """acquire records ``<pid>\\n<timestamp>`` for inspection — not for locking."""
     from src.transcriber import ProcessLock
-    from src import config as config_module
-    import time as time_module
-
-    monkeypatch.setattr(transcriber_module, "logger", MagicMock())
 
     lock_path = tmp_path / "transcriber.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Current process PID — guaranteed alive during the test — so the PID-based
-    # stale detection must also keep the lock.
-    recent_age = config_module.config.TRANSCRIPTION_TIMEOUT / 2
-    recent_timestamp = time_module.time() - recent_age
-    lock_path.write_text(
-        f"{os.getpid()}\n{recent_timestamp:.0f}", encoding="utf-8"
-    )
-
     lock = ProcessLock(lock_path)
-    acquired = lock.acquire()
+    assert lock.acquire() is True
+    try:
+        pid_line, ts_line = lock_path.read_text(encoding="utf-8").splitlines()
+        assert int(pid_line) == os.getpid()
+        assert float(ts_line) > 0
+    finally:
+        lock.release()
 
-    assert acquired is False
 
+def test_process_lock_ignores_leftover_file_contents(tmp_path):
+    """Regression: a leftover lock file must never wedge acquisition.
 
-def test_process_lock_removes_dead_pid_lock(tmp_path, monkeypatch):
-    """A lock file owned by a dead PID must be cleaned up immediately.
-
-    Regression for v2.0.0-alpha.2 crash scenarios where Malinche was
-    force-quit and the stale lock blocked every subsequent run.
+    The old PID-file scheme deadlocked for the whole ``TRANSCRIPTION_TIMEOUT``
+    window whenever the file held a still-live PID (in this single-process app
+    the recorded PID is always our own) or was left empty by a kill between
+    ``open`` and ``write``. With flock the file contents are irrelevant — only
+    a live holder blocks — so every one of these leftovers must still acquire.
     """
-    from src import transcriber as transcriber_module
     from src.transcriber import ProcessLock
     import time as time_module
-
-    monkeypatch.setattr(transcriber_module, "logger", MagicMock())
 
     lock_path = tmp_path / "transcriber.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write a fresh timestamp so the legacy age-based staleness check would
-    # keep the lock. Only the PID liveness check can remove it.
-    dead_pid = _pick_dead_pid()
-    lock_path.write_text(
-        f"{dead_pid}\n{time_module.time():.0f}", encoding="utf-8"
-    )
-
-    lock = ProcessLock(lock_path)
-    acquired = lock.acquire()
-
-    assert acquired is True
-    pid_line, _ = lock_path.read_text(encoding="utf-8").splitlines()
-    assert int(pid_line) == os.getpid()
+    leftovers = [
+        f"{os.getpid()}\n{time_module.time():.0f}",  # our own (live) PID
+        f"1\n{time_module.time():.0f}",              # PID 1 — always alive
+        "",                                          # empty: killed mid-acquire
+        "garbage-not-a-pid",                         # corrupt
+    ]
+    for leftover in leftovers:
+        lock_path.write_text(leftover, encoding="utf-8")
+        lock = ProcessLock(lock_path)
+        assert lock.acquire() is True, f"wedged on leftover {leftover!r}"
+        lock.release()
 
 
-def test_process_lock_keeps_lock_for_live_foreign_pid(tmp_path, monkeypatch):
-    """Lock files owned by a different but RUNNING PID must be respected."""
-    from src import transcriber as transcriber_module
-    from src.transcriber import ProcessLock
-    import time as time_module
-
-    monkeypatch.setattr(transcriber_module, "logger", MagicMock())
-
-    lock_path = tmp_path / "transcriber.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # PID 1 is ``launchd`` on macOS / ``init`` on Linux — always alive.
-    lock_path.write_text(f"1\n{time_module.time():.0f}", encoding="utf-8")
-
-    lock = ProcessLock(lock_path)
-    acquired = lock.acquire()
-
-    assert acquired is False
+def test_process_recorder_skips_when_workflow_lock_held(transcriber):
+    """If another thread holds the in-process workflow lock, the run is skipped."""
+    assert transcriber._workflow_lock.acquire(blocking=False) is True
+    try:
+        with patch.object(transcriber, "find_recorders") as mock_find:
+            transcriber.process_recorder()
+            mock_find.assert_not_called()
+    finally:
+        transcriber._workflow_lock.release()
 
 
-def _pick_dead_pid() -> int:
-    """Spawn and fully reap a child to obtain a guaranteed-dead PID.
+def test_force_retranscribe_busy_when_workflow_lock_held(transcriber, tmp_path):
+    """A user retranscribe during an automatic pass raises lock-busy at once."""
+    from src.transcriber import RetranscribeLockBusyError
 
-    Uses ``subprocess.Popen`` rather than raw ``os.fork`` to avoid the
-    multi-thread fork deprecation warning emitted inside the pytest process.
-    """
-    proc = subprocess.Popen(["/usr/bin/true"])
-    proc.wait()
-    return proc.pid
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"\x00")
+
+    assert transcriber._workflow_lock.acquire(blocking=False) is True
+    try:
+        with pytest.raises(RetranscribeLockBusyError):
+            transcriber.force_retranscribe(audio)
+    finally:
+        transcriber._workflow_lock.release()
 
 
 @patch('src.transcriber.send_notification')
