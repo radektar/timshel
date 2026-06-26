@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Insights window is a lens over the vault — notes and transcripts open in
+  Obsidian.** Source-note chips and the "Ostatnie transkrypty" rail are now
+  clickable and hand off to Obsidian via `obsidian://open?path=` (no vault-name
+  guessing); a new `src/ui/obsidian_link.py` builds the deep links and resolves a
+  bare note basename anywhere in the vault. Malinche surfaces the connection and
+  launches the reader rather than rebuilding one.
 - **Insights "Konstelacja" window + validation signal.** A native AppKit window
   (`src/ui/dashboard_window.py`) renders the digest's connections as a
   constellation (terracotta nodes, golden bloom) with Zachowaj/Odrzuć; each
@@ -19,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot surface — the source of surprising, cross-time/cross-domain connections.
 
 ### Changed
+- **"Ostatnie transkrypty" now shows real data.** The Insights rail listed three
+  hardcoded placeholder rows from the design phase; it now reads the real most-
+  recent transcripts from `vault_index.recent_entries`, injected via a callback
+  from `menu_app` (the only owner of `transcriber`/`vault_index`).
+- **Odrzuć now gives feedback.** Dismiss showed nothing — the connection just
+  vanished, so the user couldn't tell what their click signalled. It now mirrors
+  Zachowaj with a brief flash ("Odrzucone · nie wróci") before advancing, so the
+  validation signal is made on an understood action; the keep/dismiss bloom tint
+  is parameterised so a dismiss no longer flashes celebratory gold.
 - **Sharper synthesis prompt is now the default.** A horoscope guard (reject
   connections true of any random notes), a real shared-thread vs emergent-idea
   split, and a 2-3 sentence rationale that names the specific tension/transfer.

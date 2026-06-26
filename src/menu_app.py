@@ -177,7 +177,7 @@ class MalincheMenuApp(rumps.App):
         from src.ui.dashboard_window import build_dashboard_window
 
         self._status_panel = None
-        self._dashboard = build_dashboard_window()
+        self._dashboard = build_dashboard_window(callbacks=self._dashboard_callbacks())
         self._refresh_insights_badge()
 
         # Start status update timer
@@ -974,7 +974,9 @@ class MalincheMenuApp(rumps.App):
             if getattr(self, "_dashboard", None) is None:
                 from src.ui.dashboard_window import build_dashboard_window
 
-                self._dashboard = build_dashboard_window()
+                self._dashboard = build_dashboard_window(
+                    callbacks=self._dashboard_callbacks()
+                )
             if self._dashboard is not None:
                 self._dashboard.showWindow()
                 self._refresh_insights_badge()
@@ -983,6 +985,60 @@ class MalincheMenuApp(rumps.App):
                 rumps.alert("Malinche", "Insights view needs macOS AppKit.", ok="OK")
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Could not open Insights window: %s", exc)
+
+    def _dashboard_callbacks(self):
+        """Wiring the Insights window needs from the app (vault + Obsidian).
+
+        The window stays a pure renderer; only ``menu_app`` owns the transcriber
+        and the vault, so the deep-link + recent-transcript logic lives here and
+        is injected as callbacks.
+        """
+        return {
+            "recent_transcripts": self._recent_transcripts_for_insights,
+            "open_note": self._open_note_in_obsidian,
+            "open_transcript": self._open_transcript_in_obsidian,
+        }
+
+    def _recent_transcripts_for_insights(self):
+        """Real recent transcripts for the Insights rail (replaces atrapy).
+
+        Returns a list of ``{"label": str, "path": Path}`` the dashboard renders
+        as clickable rows; each opens its transcript in Obsidian.
+        """
+        from pathlib import Path
+
+        out = []
+        if self.transcriber is None:
+            return out
+        try:
+            entries = self.transcriber.vault_index.recent_entries(5)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recent_entries for insights failed: %s", exc)
+            return out
+        for entry in entries:
+            raw = entry.markdown_path or entry.source_filename or ""
+            if not raw:
+                continue
+            name = raw.rsplit("/", 1)[-1]
+            if name.endswith(".md"):
+                name = name[:-3]
+            path = Path(raw)
+            if not path.is_absolute():
+                path = Path(config.TRANSCRIBE_DIR) / raw
+            out.append({"label": name, "path": path})
+        return out
+
+    def _open_note_in_obsidian(self, basename):
+        """Resolve a source-note basename in the vault and open it in Obsidian."""
+        from src.ui import obsidian_link
+
+        obsidian_link.open_note(basename, config.TRANSCRIBE_DIR)
+
+    def _open_transcript_in_obsidian(self, path):
+        """Open a recent transcript (absolute path) in Obsidian."""
+        from src.ui import obsidian_link
+
+        obsidian_link.open_path(path)
 
     def _notify_digest_ready(self, digest_name: str) -> None:
         """Notify carrying the *thesis* of the top connection, not "digest ready".

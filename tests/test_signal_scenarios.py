@@ -64,7 +64,10 @@ def test_us2_user_dismisses_an_insight(log_path):
     assert len(rows) == 1
     assert rows[0]["action"] == "dismissed"
     assert rows[0]["conn_type"] == active.conn_type
-    assert len(ctrl._deck._items) == before - 1  # the dismiss mutated the deck
+    # the signal is recorded at click; the deck mutation lands after the flash
+    assert len(ctrl._deck._items) == before  # not yet — flash still showing
+    ctrl.afterDismissFlash_(None)
+    assert len(ctrl._deck._items) == before - 1  # the dismiss committed
 
 
 def test_us3_user_triages_a_session(log_path):

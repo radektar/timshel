@@ -119,15 +119,22 @@ if _APPKIT_AVAILABLE:
                 )
 
     class _FlashOverlay(NSView):
-        """Gold micro-bloom + 'Zachowane' wash, shown briefly on keep."""
+        """Micro-bloom + wash, shown briefly on keep/dismiss.
+
+        The bloom tint is read from the ``bloom`` instance attribute (set by the
+        caller) so the same overlay serves the celebratory gold keep flash and a
+        cooler dismiss flash — otherwise a dismiss would flash gold, reading as
+        approval of the thing the user just rejected.
+        """
 
         def isFlipped(self):
             return True
 
         def drawRect_(self, _rect):
             b = self.bounds()
+            r, g, bl, a = getattr(self, "bloom", (244, 221, 142, 0.26))
             grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
-                [_c(244, 221, 142, 0.26), _c(16, 14, 21, 0.90)],
+                [_c(r, g, bl, a), _c(16, 14, 21, 0.90)],
                 [0.0, 0.64],
                 NSColorSpace.sRGBColorSpace(),
             )
@@ -341,19 +348,34 @@ if _APPKIT_AVAILABLE:
             fhead.setFrame_(NSMakeRect(pad, foot_y, 200, 13))
             view.addSubview_(fhead)
             ry = foot_y + 20
-            for name, when in (
-                ("Haetta — rozmowa z konstruktorem", "17.06"),
-                ("8Moons — filmiki 2", "18.06"),
-                ("Harmonogram 2-tyg. projektu", "03.06"),
-            ):
-                row = _label(name, 11, _muted())
-                row.setFrame_(NSMakeRect(pad, ry, frame.size.width - 2 * pad - 36, 14))
-                row.setLineBreakMode_(4)  # truncate tail
-                view.addSubview_(row)
-                t = _label(when, 11, _c(111, 102, 90))
-                t.setFrame_(NSMakeRect(frame.size.width - pad - 34, ry, 34, 14))
-                t.setAlignment_(2)
-                view.addSubview_(t)
+            recents = self._recent_transcripts()
+            self._recent_paths = [r.get("path") for r in recents]
+            if not recents:
+                empty = _label("—", 11, _c(111, 102, 90))
+                empty.setFrame_(NSMakeRect(pad, ry, frame.size.width - 2 * pad, 14))
+                view.addSubview_(empty)
+            for i, r in enumerate(recents):
+                btn = NSButton.alloc().initWithFrame_(
+                    NSMakeRect(pad - 4, ry - 3, frame.size.width - 2 * pad + 8, 18)
+                )
+                btn.setBordered_(False)
+                btn.setTransparent_(True)
+                btn.setTitle_("")
+                btn.setTarget_(self)
+                btn.setAction_("transcriptClicked:")
+                btn.setTag_(i)
+                btn.setToolTip_("Otwórz w Obsidian")
+                lab = _label(r.get("label", "Transkrypt"), 11, _muted())
+                lab.setFrame_(NSMakeRect(4, 2, frame.size.width - 2 * pad, 14))
+                lab.setLineBreakMode_(4)  # truncate tail
+                btn.addSubview_(lab)
+                when = r.get("when")
+                if when:
+                    t = _label(when, 11, _c(111, 102, 90))
+                    t.setFrame_(NSMakeRect(frame.size.width - pad - 34, ry, 34, 14))
+                    t.setAlignment_(2)
+                    view.addSubview_(t)
+                view.addSubview_(btn)
                 ry += 19
             return view
 
@@ -455,9 +477,10 @@ if _APPKIT_AVAILABLE:
             ncap.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
             view.addSubview_(ncap)
             cy += 18
+            self._note_basenames = list(conn.notes)
             cx = _READER_PAD_X
-            for note in conn.notes:
-                chip = self._chip(note, NSMakePoint(cx, cy))
+            for i, note in enumerate(conn.notes):
+                chip = self._chip(note, NSMakePoint(cx, cy), i)
                 view.addSubview_(chip)
                 cx += chip.frame().size.width + 6
                 if cx > frame.size.width - 120:
@@ -545,10 +568,13 @@ if _APPKIT_AVAILABLE:
             return view
 
         @objc.python_method
-        def _chip(self, text, origin):
+        def _chip(self, text, origin, index):
             w = min(220.0, 18.0 + 7.0 * len(text))
             btn = NSButton.alloc().initWithFrame_(NSMakeRect(origin.x, origin.y, w, 24))
             btn.setBordered_(False)
+            btn.setTarget_(self)
+            btn.setAction_("noteClicked:")
+            btn.setTag_(int(index))
             btn.setWantsLayer_(True)
             if btn.layer() is not None:
                 btn.layer().setCornerRadius_(12)
@@ -571,6 +597,43 @@ if _APPKIT_AVAILABLE:
         def railRowClicked_(self, sender):
             self._deck.select(int(sender.tag()))
             self._render()
+
+        def noteClicked_(self, sender):
+            """Open the clicked source note in Obsidian (lens, not reader)."""
+            names = getattr(self, "_note_basenames", [])
+            i = int(sender.tag())
+            if 0 <= i < len(names):
+                self._invoke_callback("open_note", names[i])
+
+        def transcriptClicked_(self, sender):
+            """Open the clicked recent transcript in Obsidian."""
+            paths = getattr(self, "_recent_paths", [])
+            i = int(sender.tag())
+            if 0 <= i < len(paths) and paths[i] is not None:
+                self._invoke_callback("open_transcript", paths[i])
+
+        @objc.python_method
+        def _invoke_callback(self, name, *args):
+            cb = self._callbacks.get(name)
+            if cb is None:
+                logger.debug("dashboard callback %r not wired", name)
+                return
+            try:
+                cb(*args)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("dashboard callback %r failed: %s", name, exc)
+
+        @objc.python_method
+        def _recent_transcripts(self):
+            """Real recent transcripts via the injected callback (never atrapy)."""
+            cb = self._callbacks.get("recent_transcripts")
+            if cb is None:
+                return []
+            try:
+                return list(cb() or [])
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("recent_transcripts callback failed: %s", exc)
+                return []
 
         @objc.python_method
         def _emit_signal(self, action):
@@ -610,8 +673,8 @@ if _APPKIT_AVAILABLE:
             self._render()
 
         @objc.python_method
-        def _show_keep_flash(self):
-            """Overlay the gold bloom on the reader region; False if no window."""
+        def _show_flash(self, symbol, title, subtitle, color, bloom):
+            """Overlay a brief bloom on the reader region; False if no window."""
             win = self._window
             if win is None or win.contentView() is None:
                 return False
@@ -621,22 +684,21 @@ if _APPKIT_AVAILABLE:
                 _RAIL_W, _HEADER_H, b.size.width - _RAIL_W, b.size.height - _HEADER_H
             )
             overlay = _FlashOverlay.alloc().initWithFrame_(frame)
+            overlay.bloom = bloom
             overlay.setAutoresizingMask_(18)
-            spark = _label("✦", 34, _gold(), bold=False)
+            spark = _label(symbol, 34, color, bold=False)
             spark.setAlignment_(1)
             spark.setFrame_(
                 NSMakeRect(0, frame.size.height * 0.4 - 40, frame.size.width, 44)
             )
             overlay.addSubview_(spark)
-            lab = _label("Zachowane", 19, _cream(), bold=True)
+            lab = _label(title, 19, _cream(), bold=True)
             lab.setAlignment_(1)
             lab.setFrame_(
                 NSMakeRect(0, frame.size.height * 0.4 + 6, frame.size.width, 26)
             )
             overlay.addSubview_(lab)
-            sub = _label(
-                "trafia do digestu · następne połączenie", 12.5, _muted()
-            )
+            sub = _label(subtitle, 12.5, _muted())
             sub.setAlignment_(1)
             sub.setFrame_(
                 NSMakeRect(0, frame.size.height * 0.4 + 34, frame.size.width, 18)
@@ -645,8 +707,37 @@ if _APPKIT_AVAILABLE:
             content.addSubview_(overlay)
             return True
 
+        @objc.python_method
+        def _show_keep_flash(self):
+            return self._show_flash(
+                "✦", "Zachowane", "trafia do digestu · następne połączenie",
+                _gold(), (244, 221, 142, 0.26),
+            )
+
+        @objc.python_method
+        def _show_dismiss_flash(self):
+            return self._show_flash(
+                "✕", "Odrzucone", "nie wróci · następne połączenie",
+                _c(176, 162, 141), (176, 162, 141, 0.12),
+            )
+
         def dismissClicked_(self, sender):
+            # Mirror keep: record the signal, flash quiet feedback, then advance —
+            # otherwise a dismissed connection just vanishes with no acknowledgement.
             self._emit_signal(vsig.DISMISSED)
+            if not self._show_dismiss_flash():
+                self._deck.dismiss()
+                self._render()
+                return
+            from Foundation import NSTimer
+
+            self._dismiss_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                    0.7, self, "afterDismissFlash:", None, False
+                )
+            )
+
+        def afterDismissFlash_(self, timer):
             self._deck.dismiss()
             self._render()
 
