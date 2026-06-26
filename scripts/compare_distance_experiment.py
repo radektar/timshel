@@ -128,8 +128,11 @@ def main() -> int:
             print(block + "\n")
             out_lines.append(block.replace("  •", "-") + "\n")
 
+    # Raw, machine-written dump (regenerated each run). The curated
+    # distance-experiment-results.md (analysis + a frozen snapshot) is kept by
+    # hand and must NOT be clobbered by a rerun.
     out_path = (Path(__file__).resolve().parents[1]
-                / "Docs" / "future" / "distance-experiment-results.md")
+                / "Docs" / "future" / "distance-experiment-raw.md")
     out_path.write_text("\n".join(out_lines), encoding="utf-8")
     print(f"\n📄 results written → {out_path}")
     return 0

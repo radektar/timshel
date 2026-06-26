@@ -3,6 +3,33 @@
 Window: 15 newest notes · bridges injected: `['25-11-19 - Rozwoj dzialalnosci opartej na warsztatach i agroturystyce', '26-04-16 - Analiza modelu biznesowego - oblozenie i strategie cenowe', '26-04-20 - Projekt Haetta- Wymagania Miszki i wyzwania konceptu', '26-05-10 - Rybojady kalendarz']`
 
 
+## Analiza
+
+**Hipoteza:** zaskoczenie bierze się z DYSTANSU (jakie notatki w ogóle się porównują), nie z lepszego modelu. Test: 3 warianty na tym samym oknie, jeden model (Opus 4.8), zmienia się tylko retrieval i prompt. **A→B izoluje dystans, B→C izoluje prompt.**
+
+| | znalezione | rozkład typów | mosty użyte | jakość |
+|---|---|---|---|---|
+| **A** baseline (podobieństwo + stary prompt) | 5 | 4× shared-thread, 1 emergent | 0 | niska — generyczne grupowanie tematyczne |
+| **B** +dystans (mosty + stary prompt) | 6 | 4 shared, 1 emergent, 1 contradiction | 3 | średnia — głębia jest, ale tonie w szumie |
+| **C** +dystans +ostry prompt | 4 | 2 contradiction, 2 emergent, **0 shared** | 3 z 4 | wysoka — konkret, transfer, zaskoczenie |
+
+**Atrybucja (czysta):**
+- **Dystans jest konieczny.** A→B: mosty dały kontradykcję i emergent, które *strukturalnie* nie mogły powstać w A — notatki (XI'25 agroturystyka, IV Haetta) nie były nawet kandydatami przy retrievalu po podobieństwie.
+- **Prompt jest mnożnikiem.** B→C: ostry prompt wyzerował 4 shared-thready (guard na horoskop + „dwa zaskakujące zamiast sześciu oczywistych") i pogłębił rationale do 2–3 zdań nazywających konkretne napięcie/transfer.
+- Wniosek: **dystans otwiera przestrzeń, prompt ją oczyszcza.** Oba wchodzą, nie „albo-albo".
+
+**Przykład tego samego zjawiska na trzech poziomach:**
+- A (horoskop): *„we wszystkich trzech notatkach powraca wzorzec: tanie demo AI → reakcja rynku"* — prawda, o niczym.
+- C (transfer): *„AR nieopłacalny przez koszt jednostkowy + BOŚ buduje tani silnik AI + Misza ręczne rendery → tania generacja AI mogłaby zbić koszt, który zablokował model AR"*.
+
+**Zastrzeżenia:**
+1. **N=1** — jedno okno, jeden run, jakość C oceniona ręcznie. Ground truth to kept/dismiss (`signal.jsonl`). To eval kierunkowy, nie dowód statystyczny.
+2. **Bug produkcyjny:** baseline prompt przy domyślnym `SYNTHESIS_MAX_TOKENS=2048` obcina się i zwraca **0 połączeń** (pierwszy run: A=B=0, oba `out=2048`). Ten plik to wersja `--max-tokens 4096`. Ostry prompt jest zwięzły i mieści się w 2048.
+
+**Rekomendacja:** ostry prompt + mosty jako default, napraw `max_tokens` niezależnie, zmierz keep/dismiss przez 2–4 tyg zanim uznasz za wygrane.
+
+---
+
 ## A  baseline (similarity + baseline prompt)
 
 found 5 (emergent-idea=1, shared-thread=4)
