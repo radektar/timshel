@@ -219,3 +219,34 @@ def test_app_core_import_raises_when_not_started():
 
     with pytest.raises(RuntimeError):
         app.import_audio_file(Path("/tmp/x.mp3"))
+
+
+def test_app_core_reload_ai_config_forwards_to_transcriber():
+    """MalincheTranscriber.reload_ai_config delegates to the inner Transcriber.
+
+    Regression: the menu app calls ``reload_ai_config`` on the orchestrator
+    after a Settings save; the method lives on the inner Transcriber, so the
+    orchestrator must forward it or hot-reload of a fixed API key silently dies
+    with an AttributeError.
+    """
+    from src.app_core import MalincheTranscriber
+
+    app = MalincheTranscriber(setup_signals=False)
+    app.transcriber = MagicMock()
+
+    app.reload_ai_config()
+    app.transcriber.reload_ai_config.assert_called_once_with()
+
+
+def test_app_core_reload_ai_config_noop_when_not_started():
+    """Reloading before the daemon built its transcriber is a safe no-op.
+
+    A key saved that early is picked up by the start-time client build, so this
+    must not raise into the settings handler.
+    """
+    from src.app_core import MalincheTranscriber
+
+    app = MalincheTranscriber(setup_signals=False)
+    app.transcriber = None
+
+    app.reload_ai_config()  # must not raise

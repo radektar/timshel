@@ -74,6 +74,18 @@ class MalincheTranscriber:
             raise RuntimeError("Transcriber not started yet")
         return self.transcriber.import_audio_file(source)
 
+    def reload_ai_config(self) -> None:
+        """Re-read AI config live after a settings change.
+
+        Forwards to the underlying :class:`Transcriber` so a fixed API key /
+        model takes effect immediately (no restart). The menu app calls this
+        after Settings is saved. A no-op until the daemon has built its
+        transcriber — a key saved that early is picked up by the start-time
+        client build anyway, so this must not raise into the settings handler.
+        """
+        if self.transcriber is not None:
+            self.transcriber.reload_ai_config()
+
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals.
 

@@ -122,17 +122,17 @@ def _truncate_path(path: str, max_length: int = 60) -> str:
     return "..." + path[-(max_length - 3) :]
 
 
-def _resolve_api_key_input(raw: str, original: Optional[str]) -> Optional[str]:
+def _resolve_api_key_input(raw: str) -> Optional[str]:
     """Resolve the API-key field value to the key to persist.
 
-    Strips whitespace and any stray placeholder char ("—") that an older build
-    seeded into the secure field. An em-dash is invisible in a masked field and
-    is never part of a real Claude key, so a leaked one silently corrupted the
-    saved key — the cause of "I pasted a correct key but still get 401". An
-    empty field leaves the existing key untouched.
+    The field is now plaintext and pre-filled with the stored key, so the user
+    always sees and edits the real value. Strips surrounding whitespace and any
+    stray placeholder char ("—") a legacy build may have seeded — an em-dash is
+    never part of a real Claude key and silently 401s if saved. An empty field
+    means "no key" (the user cleared it).
     """
     candidate = (raw or "").replace(_API_KEY_PLACEHOLDER, "").strip()
-    return candidate if candidate else (original or None)
+    return candidate or None
 
 
 def _format_volume_row(v: TrustedVolume) -> str:
@@ -148,7 +148,30 @@ def _format_volume_row(v: TrustedVolume) -> str:
 
 try:
     import objc
-    from AppKit import NSApp, NSObject
+    from AppKit import NSApp, NSEventModifierFlagCommand, NSObject, NSWindow
+
+    class _SettingsWindow(NSWindow):
+        """NSWindow that routes ⌘X/⌘C/⌘V/⌘A to the first responder.
+
+        Malinche runs as a menu-bar (LSUIElement) app with no application Edit
+        menu, so the standard editing key-equivalents are never translated into
+        ``cut:``/``copy:``/``paste:``/``selectAll:`` — pressing ⌘V in the API-key
+        field did nothing. Forwarding them down the responder chain here (where
+        the focused text field's field editor picks them up) restores normal
+        keyboard paste without installing a global menu.
+        """
+
+        def performKeyEquivalent_(self, event):
+            if event.modifierFlags() & NSEventModifierFlagCommand:
+                action = {
+                    "x": "cut:",
+                    "c": "copy:",
+                    "v": "paste:",
+                    "a": "selectAll:",
+                }.get((event.charactersIgnoringModifiers() or "").lower())
+                if action and NSApp.sendAction_to_from_(action, None, self):
+                    return True
+            return objc.super(_SettingsWindow, self).performKeyEquivalent_(event)
 
     class _SettingsDelegate(NSObject):
         def init(self):
@@ -253,7 +276,8 @@ try:
     _APPKIT_DELEGATE_AVAILABLE = True
 except ImportError:
     _APPKIT_DELEGATE_AVAILABLE = False
-    _SettingsDelegate = None  # type: ignore[assignment]
+    _SettingsDelegate = None  # type: ignore[assignment, misc]
+    _SettingsWindow = None  # type: ignore[assignment, misc]
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +431,7 @@ def _build_general_section(state, delegate):
 
 
 def _build_transcription_section(state):
-    from AppKit import NSPopUpButton, NSSecureTextField
+    from AppKit import NSPopUpButton, NSTextField
     from Foundation import NSMakeRect
 
     language_codes = state["language_codes"]
@@ -425,18 +449,13 @@ def _build_transcription_section(state):
     model_popup.selectItemAtIndex_(model_codes.index(state["selected_model"]))
     state["model_popup"] = model_popup
 
-    key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
-    # Never seed the field with a stand-in for the secret: a masked secure field
-    # makes a pre-filled placeholder ("—") invisible, and a paste that doesn't
-    # replace it prepends the placeholder to the key → an invalid key the user
-    # cannot see. Leave it empty and convey state via the (visible) ghost text.
-    key_field.setStringValue_("")
-    if state["original_api_key"]:
-        key_field.setPlaceholderString_(
-            "•••• saved key (hidden) — paste a new key to replace, or leave blank"
-        )
-    else:
-        key_field.setPlaceholderString_("sk-ant-… — paste your Claude API key")
+    key_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
+    # Plaintext (NOT NSSecureTextField) and pre-filled with the stored key: the
+    # user must be able to SEE exactly what is saved and what they paste. A
+    # masked field once hid a mis-paste — a shell command landed in here and
+    # then 401'd with no visible cause. Showing the value makes that obvious.
+    key_field.setStringValue_(state["original_api_key"])
+    key_field.setPlaceholderString_("sk-ant-… — paste your Claude API key")
     state["api_key_field"] = key_field
 
     card, ch = _build_card(
@@ -560,7 +579,6 @@ def _show_native_settings_window(
         NSBackingStoreBuffered,
         NSButton,
         NSView,
-        NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskTitled,
     )
@@ -589,7 +607,7 @@ def _show_native_settings_window(
     }
 
     style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-    window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+    window = _SettingsWindow.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, _WINDOW_SIZE[0], _WINDOW_SIZE[1]),
         style,
         NSBackingStoreBuffered,
@@ -705,7 +723,7 @@ def _show_native_settings_window(
     selected_model = state["model_codes"][state["model_popup"].indexOfSelectedItem()]
 
     new_api_key: Optional[str] = _resolve_api_key_input(
-        str(state["api_key_field"].stringValue() or ""), state["original_api_key"]
+        str(state["api_key_field"].stringValue() or "")
     )
 
     basic_changed = apply_basic_settings(

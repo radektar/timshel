@@ -18,26 +18,25 @@ requires_appkit = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize(
-    "raw, original, expected",
+    "raw, expected",
     [
         # Clean paste — the normal case.
-        ("sk-ant-api03-NEW", "sk-ant-old", "sk-ant-api03-NEW"),
-        # Paste that didn't replace the seeded placeholder: the em-dash MUST be
-        # stripped, else "—sk-ant-…" is saved and every API call 401s. This is
-        # the bug: a correct key pasted, still rejected, with no visible cause.
-        ("—sk-ant-api03-NEW", "sk-ant-old", "sk-ant-api03-NEW"),
+        ("sk-ant-api03-NEW", "sk-ant-api03-NEW"),
+        # A pre-filled value left unchanged passes straight through.
+        ("sk-ant-old", "sk-ant-old"),
+        # Stray em-dash from a legacy seeded placeholder MUST be stripped, else
+        # "—sk-ant-…" is saved and every API call 401s with no visible cause.
+        ("—sk-ant-api03-NEW", "sk-ant-api03-NEW"),
         # Surrounding whitespace from a copy is trimmed.
-        ("  sk-ant-api03-NEW  ", None, "sk-ant-api03-NEW"),
-        # Blank field → keep the existing key untouched.
-        ("", "sk-ant-old", "sk-ant-old"),
-        # Only the placeholder (field left untouched) → keep existing.
-        ("—", "sk-ant-old", "sk-ant-old"),
-        # Blank field with no prior key → stays unset.
-        ("", "", None),
+        ("  sk-ant-api03-NEW  ", "sk-ant-api03-NEW"),
+        # Field cleared → no key (the user deliberately emptied a visible field).
+        ("", None),
+        # Only the legacy placeholder char → treated as empty.
+        ("—", None),
     ],
 )
-def test_resolve_api_key_input(raw, original, expected):
-    assert sw._resolve_api_key_input(raw, original) == expected
+def test_resolve_api_key_input(raw, expected):
+    assert sw._resolve_api_key_input(raw) == expected
 
 
 def _state():
@@ -107,3 +106,29 @@ def test_delegate_exposes_section_selectors():
     delegate = sw._SettingsDelegate.alloc().init()
     assert delegate.respondsToSelector_(b"selectSection:")
     assert delegate.respondsToSelector_(b"highlightSection:")
+
+
+@requires_appkit
+def test_api_key_field_prefilled_with_stored_key():
+    """The plaintext key field shows the stored key so the user can verify it.
+
+    Regression for the 401 saga: the masked field hid whatever was stored, so a
+    mis-pasted value (a shell command) sat there invisibly. The field must now
+    surface the real saved key on open.
+    """
+    _settings, state = _state()
+    state["original_api_key"] = "sk-ant-STORED-KEY"
+    sw._build_transcription_section(state)
+    assert state["api_key_field"].stringValue() == "sk-ant-STORED-KEY"
+
+
+@requires_appkit
+def test_settings_window_overrides_key_equivalent_for_paste():
+    """The window subclass defines its own performKeyEquivalent: (⌘V/C/X/A).
+
+    Without it, the menu-bar app has no Edit menu and keyboard paste is dead in
+    the API-key field.
+    """
+    assert sw._SettingsWindow is not None
+    # The override must be defined on our subclass, not merely inherited.
+    assert "performKeyEquivalent_" in sw._SettingsWindow.__dict__

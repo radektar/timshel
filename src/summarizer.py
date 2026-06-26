@@ -11,6 +11,32 @@ from src.logger import logger
 Anthropic = None  # type: ignore[assignment]
 
 
+def _fingerprint_key(key: Optional[str]) -> str:
+    """Redacted, log-safe view of an API key.
+
+    Shows just enough to catch a truncated, whitespace-padded, placeholder-
+    contaminated, or simply *wrong* key — without ever writing the secret to a
+    log. Answers "which key is actually being sent?" when Claude returns 401 on
+    a key the user is sure is correct: compare ``head``/``tail`` against the key
+    in the Anthropic console, and watch for the ``⚠`` flags.
+    """
+    if not key:
+        return "<none>"
+    stripped = key.strip()
+    flags = []
+    if key != stripped:
+        flags.append("SURROUNDING_WHITESPACE")
+    if any(c in key for c in ("\n", "\r", "\t")):
+        flags.append("INNER_WHITESPACE")
+    if "—" in key or "•" in key:
+        flags.append("PLACEHOLDER_CHAR")
+    if not stripped.startswith("sk-ant-"):
+        flags.append("UNEXPECTED_PREFIX")
+    tail = key[-4:] if len(key) > 8 else ""
+    note = (" ⚠ " + ",".join(flags)) if flags else ""
+    return f"len={len(key)} head={key[:14]!r} tail={tail!r}{note}"
+
+
 # --------------------------------------------------------------------------- #
 # Output-language detection.
 #
@@ -143,6 +169,15 @@ class ClaudeSummarizer(BaseSummarizer):
         
         self.client = Anthropic(api_key=api_key)
         self.model = model
+        # Visibility for "valid key but 401": log the redacted fingerprint of the
+        # key actually handed to the Anthropic client. Built at startup and on
+        # every settings hot-reload, so the log viewer shows exactly which key is
+        # in use — confirm it matches the one pasted in Settings.
+        logger.info(
+            "🔑 Claude client built — key %s, model=%s",
+            _fingerprint_key(api_key),
+            model,
+        )
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
     
