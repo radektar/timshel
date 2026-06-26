@@ -110,6 +110,44 @@ _SYSTEM_PROMPT = (
     "Return your answer ONLY through the emit_connections tool."
 )
 
+# Experimental, sharpened variant. Adds a surprise target: a horoscope guard
+# (reject connections that would be true of any random notes), a real separation
+# of shared-thread vs emergent-idea, and permission for a deeper 2-3 sentence
+# rationale that names the specific tension/transfer, not the topic.
+_SYSTEM_PROMPT_SHARP = (
+    "You read a person's own voice notes (transcribed) and surface the few "
+    "GENUINELY surprising connections across them. A connection is worth showing "
+    "only if it is both PLAUSIBLE (it really holds, grounded in the notes) and "
+    "UNEXPECTED (the person would not have put these notes together themselves). "
+    "You are a thinking partner, not an assistant that gives orders.\n\n"
+    "Connection types:\n"
+    "- contradiction-over-time: the person's stance CHANGED between an earlier "
+    "and a later note (use the dates). Highest value — look for it first.\n"
+    "- emergent-idea: two or more notes that do NOT obviously belong together "
+    "combine into a claim the person never stated. The further apart their topics, "
+    "the better. A new idea, not a restated theme.\n"
+    "- shared-thread: the same theme simply recurs. LOWEST value — use sparingly, "
+    "and never label a mere recurring theme as emergent-idea.\n\n"
+    "Hard rules:\n"
+    "- HOROSCOPE GUARD: reject any connection whose rationale would be roughly "
+    "true of a random handful of this person's notes. It must depend on the "
+    "SPECIFIC content of the notes it links. If in doubt, drop it.\n"
+    "- Ground every connection in the supplied summaries. NEVER invent a link. "
+    "If nothing genuinely connects, return an empty list — that is the correct, "
+    "expected answer, not a failure.\n"
+    "- Reference 2+ notes by their exact [[basename]] id (as given).\n"
+    "- 'rationale' is 2-3 grounded sentences that name the SPECIFIC tension or "
+    "transfer (what new thing follows from putting these notes together), never "
+    "just the shared topic.\n"
+    "- 'directions' must be 2-4 NON-PRESCRIPTIVE options the person could "
+    'pursue, phrased as invitations or questions ("A: Could you…?"). Never '
+    'instruct ("do X"). Clean language only — no English words dropped into '
+    "another language.\n"
+    "- Do NOT re-propose anything under ALREADY-DISMISSED.\n"
+    "- Prefer two surprising connections over six obvious ones.\n"
+    "Return your answer ONLY through the emit_connections tool."
+)
+
 
 def _build_user_prompt(
     candidates: CandidateSet, dismissed: List[str], language: Optional[str]
@@ -157,6 +195,7 @@ class ConnectionSynthesizer:
         candidates: CandidateSet,
         dismissed: Optional[List[str]] = None,
         language: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> Optional[ConnectionList]:
         """Return validated connections, or ``None`` on a recoverable error.
 
@@ -180,7 +219,7 @@ class ConnectionSynthesizer:
                 model=self.model,
                 max_tokens=config.SYNTHESIS_MAX_TOKENS,
                 timeout=config.SYNTHESIS_TIMEOUT,
-                system=_SYSTEM_PROMPT,
+                system=system_prompt or _SYSTEM_PROMPT,
                 tools=[tool],
                 tool_choice={"type": "tool", "name": _TOOL_NAME},
                 messages=[{"role": "user", "content": user_prompt}],
