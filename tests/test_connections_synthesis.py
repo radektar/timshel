@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from src.config import config
-from src.config.features import FeatureFlags
 from src.connections import synthesis as synth_module
 from src.connections.candidate_assembly import CandidateSet, NoteRef
 from src.connections.synthesis import (
@@ -35,7 +34,7 @@ def _candidates(count=2):
     return CandidateSet(notes, {notes[0].basename})
 
 
-def _patch_client(monkeypatch, payload=None, raise_exc=None):
+def _patch_client(monkeypatch, payload=None, raise_exc=None, stop_reason=None):
     block = type(
         "Block",
         (),
@@ -50,7 +49,9 @@ def _patch_client(monkeypatch, payload=None, raise_exc=None):
         def create(self, *_a, **_k):
             if raise_exc:
                 raise raise_exc
-            return type("Msg", (), {"content": [block]})()
+            return type(
+                "Msg", (), {"content": [block], "stop_reason": stop_reason}
+            )()
 
     class FakeClient:
         def __init__(self, *_a, **_k):
@@ -123,6 +124,28 @@ def test_synthesize_returns_connections(monkeypatch):
     )
     out = ConnectionSynthesizer(api_key="k", model="m").synthesize(_candidates())
     assert out is not None and len(out.connections) == 1
+
+
+def test_synthesize_returns_none_on_truncation(monkeypatch):
+    # A truncated forced-tool call must be recoverable (None), not an empty
+    # ConnectionList — otherwise the caller marks the run done and resets the
+    # weekly trigger on what was really a token-ceiling failure.
+    _patch_client(
+        monkeypatch,
+        payload={
+            "connections": [
+                {
+                    "type": "shared-thread",
+                    "notes": ["a", "b"],
+                    "rationale": "x",
+                    "directions": ["A: ?", "B: ?"],
+                }
+            ]
+        },
+        stop_reason="max_tokens",
+    )
+    out = ConnectionSynthesizer(api_key="k", model="m").synthesize(_candidates())
+    assert out is None
 
 
 def test_synthesize_skips_small_corpus(monkeypatch):

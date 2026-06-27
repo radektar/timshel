@@ -86,6 +86,18 @@ class MalincheTranscriber:
         if self.transcriber is not None:
             self.transcriber.reload_ai_config()
 
+    @property
+    def vault_index(self):
+        """The inner transcriber's vault index (recent transcripts, lookups).
+
+        Forwarded so callers (the menu app's Insights rail) don't reach through
+        ``.transcriber.transcriber``. Raises ``AttributeError`` before the
+        daemon has built its transcriber, which callers already guard.
+        """
+        if self.transcriber is None:
+            raise AttributeError("vault_index unavailable before transcriber init")
+        return self.transcriber.vault_index
+
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals.
 

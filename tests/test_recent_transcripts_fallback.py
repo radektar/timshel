@@ -51,3 +51,22 @@ def test_index_empty_triggers_disk_fallback(tmp_path, monkeypatch):
 
     rows = app._recent_transcripts_for_insights()
     assert [r["label"] for r in rows] == ["On Disk"]
+
+
+def test_vault_index_attribute_error_falls_through_to_disk(tmp_path, monkeypatch):
+    # Regression: a transcriber whose vault_index access raises (the wrong-
+    # delegation-level bug) must NOT return empty early — it falls to disk.
+    monkeypatch.setattr("src.menu_app.config.TRANSCRIBE_DIR", tmp_path)
+    monkeypatch.setattr("src.menu_app.config.DIGEST_DIR_NAME", "Malinche Digests")
+    (tmp_path / "Survivor.md").write_text("x", encoding="utf-8")
+
+    class _Raises:
+        @property
+        def vault_index(self):
+            raise AttributeError("not built yet")
+
+    app = _app()
+    app.transcriber = _Raises()
+
+    rows = app._recent_transcripts_for_insights()
+    assert [r["label"] for r in rows] == ["Survivor"]

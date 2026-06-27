@@ -990,6 +990,18 @@ class MalincheMenuApp(rumps.App):
                     callbacks=self._dashboard_callbacks()
                 )
             if self._dashboard is not None:
+                # Refresh to the latest persisted digest before showing. The
+                # window is built once (eagerly, at launch) when no digest
+                # exists yet, so without this it would render the placeholder
+                # deck for the whole session even after a real digest lands.
+                try:
+                    from src.ui.insight_pipeline import latest_deck
+
+                    fresh = latest_deck()
+                    if fresh is not None:
+                        self._dashboard.updateDeck_(fresh)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("could not refresh insights deck on open: %s", exc)
                 self._dashboard.showWindow()
                 self._refresh_insights_badge()
             else:
@@ -1026,7 +1038,7 @@ class MalincheMenuApp(rumps.App):
             entries = self.transcriber.vault_index.recent_entries(5)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("recent_entries for insights failed: %s", exc)
-            return out
+            entries = []  # fall through to the on-disk scan below
         for entry in entries:
             raw = entry.markdown_path or entry.source_filename or ""
             if not raw:
@@ -1150,26 +1162,41 @@ class MalincheMenuApp(rumps.App):
         except Exception:  # pragma: no cover - non-mac / old OS
             return None
 
+    _STATUS_SYMBOLS = {
+        AppStatus.IDLE: "circle",
+        AppStatus.SCANNING: "magnifyingglass",
+        AppStatus.TRANSCRIBING: "waveform",
+        AppStatus.DOWNLOADING: "arrow.down.circle",
+        AppStatus.MIGRATING: "arrow.triangle.2.circlepath",
+        AppStatus.RECORDER_IDLE: "circle.fill",
+        AppStatus.RECORDER_PENDING: "circle.dashed",
+        AppStatus.ERROR: "exclamationmark.triangle.fill",
+    }
+
     def _apply_status_icon(self, status) -> None:
-        """Set an SF Symbol status dot on the header item, keyed by state."""
-        symbols = {
-            AppStatus.IDLE: "circle",
-            AppStatus.SCANNING: "magnifyingglass",
-            AppStatus.TRANSCRIBING: "waveform",
-            AppStatus.DOWNLOADING: "arrow.down.circle",
-            AppStatus.MIGRATING: "arrow.triangle.2.circlepath",
-            AppStatus.RECORDER_IDLE: "circle.fill",
-            AppStatus.RECORDER_PENDING: "circle.dashed",
-            AppStatus.ERROR: "exclamationmark.triangle.fill",
-        }
+        """Set an SF Symbol status dot on the header item, keyed by state.
+
+        Called on every status tick (~2s), so it short-circuits when the state
+        hasn't changed and caches the rendered NSImage per state — no fresh
+        image allocation when nothing moved.
+        """
         item = getattr(self, "status_item", None)
         if item is None:
             return
-        img = self._sf_image(symbols.get(status, "circle"))
-        if img is None:
+        if getattr(self, "_status_icon_applied", None) == status:
             return
+        cache = getattr(self, "_status_icon_cache", None)
+        if cache is None:
+            cache = self._status_icon_cache = {}
+        img = cache.get(status)
+        if img is None:
+            img = self._sf_image(self._STATUS_SYMBOLS.get(status, "circle"))
+            if img is None:
+                return
+            cache[status] = img
         try:
             item._menuitem.setImage_(img)
+            self._status_icon_applied = status
         except Exception:  # pragma: no cover - cosmetic
             pass
 

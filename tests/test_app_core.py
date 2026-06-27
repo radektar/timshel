@@ -70,3 +70,23 @@ def test_periodic_check_without_monitor_still_processes():
         app._periodic_check()
 
     app.transcriber.process_recorder.assert_called_once()
+
+
+def test_vault_index_property_delegates_to_inner_transcriber():
+    """menu_app reads ``app.transcriber.vault_index`` — it must forward to the
+    inner Transcriber rather than raising (the recent-transcripts rail bug)."""
+    app = MalincheTranscriber(setup_signals=False)
+    sentinel = object()
+    app.transcriber = type("Inner", (), {"vault_index": sentinel})()
+    assert app.vault_index is sentinel
+
+
+def test_vault_index_property_raises_before_transcriber_built():
+    """Before the daemon builds its Transcriber, the property raises
+    AttributeError — which the menu caller catches and falls back to disk."""
+    app = MalincheTranscriber(setup_signals=False)
+    app.transcriber = None
+    import pytest
+
+    with pytest.raises(AttributeError):
+        _ = app.vault_index

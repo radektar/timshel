@@ -242,6 +242,18 @@ class ConnectionSynthesizer:
             return None
 
         self.last_usage = getattr(message, "usage", None)
+        # A forced tool call truncated at the token ceiling still returns a
+        # tool_use block with partial/invalid JSON; parsing it leniently would
+        # yield "0 connections", indistinguishable from a genuinely empty run —
+        # and the caller would then mark_ran(), resetting the weekly clock and
+        # discarding the accumulated trigger. Treat truncation as recoverable.
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            logger.warning(
+                "synthesis: response truncated at max_tokens (%s) — skipping run, "
+                "will retry next tick",
+                config.SYNTHESIS_MAX_TOKENS,
+            )
+            return None
         for block in message.content:
             if (
                 getattr(block, "type", None) == "tool_use"

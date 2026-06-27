@@ -50,6 +50,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncated mid tool-call at 2048 and returned zero connections).
 
 ### Fixed
+- **Insights window showed placeholder connections even after a real digest.**
+  The window is built once at launch (when no digest exists yet, so it renders
+  the `sample_deck()` placeholder), and opening it only called `showWindow()` —
+  `updateDeck_` was never invoked, so a digest landing mid-session never reached
+  the open window (the badge count updated, the content didn't). `_open_insights`
+  now refreshes from `latest_deck()` before showing.
+- **"Ostatnie transkrypty" rail was permanently empty — wrong delegation level.**
+  `menu_app` read `self.transcriber.vault_index`, but `self.transcriber` is the
+  `MalincheTranscriber` wrapper and `vault_index` lives on its inner `Transcriber`
+  — so the access raised `AttributeError`, was swallowed, and returned empty
+  *before* reaching the new on-disk fallback (which was therefore dead). Added a
+  `vault_index` property to `MalincheTranscriber` that forwards to the inner
+  transcriber, and made the error path fall through to the disk scan.
+- **A truncated synthesis call silently reset the weekly digest trigger.** With
+  forced tool-use, a response hitting `max_tokens` still carries a `tool_use`
+  block with partial JSON; parsing it leniently yielded "0 connections",
+  indistinguishable from a genuinely empty run — so the scheduler marked the run
+  done and zeroed the accumulated trigger. `synthesize` now checks
+  `stop_reason == "max_tokens"` and returns `None` (recoverable; retried next
+  tick) instead.
 - **Crash (EXC_BAD_ACCESS) when reopening the Insights window.** The dashboard
   `NSWindow` defaulted to `releasedWhenClosed = YES`, so closing it deallocated
   the window while Python kept the reference; the second open then touched freed
