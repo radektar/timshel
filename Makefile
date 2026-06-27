@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release eval-synthesis signal-report
 
 help:
 	@echo "Malinche - Development Commands"
@@ -17,6 +17,7 @@ help:
 	@echo "  make test-ui       - Run menu bar UI tests (L4)"
 	@echo "  make lint          - Run linters"
 	@echo "  make format        - Format code"
+	@echo "  make signal-report - Action-rate readout over the Insights signal log"
 	@echo ""
 	@echo "Distribution (macOS):"
 	@echo "  make build-app     - Build .app bundle"
@@ -61,6 +62,10 @@ test-coverage:
 eval-synthesis:
 	@echo "Comparing synthesis models on gold cases (needs a Claude key in settings)..."
 	python scripts/eval_synthesis.py
+
+signal-report:
+	@echo "Computing action-rate over the Insights signal log (ADR-004)..."
+	python -m src.connections.signal_report
 
 lint:
 	@echo "Running linters..."

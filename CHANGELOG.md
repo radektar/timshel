@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The action-rate KPI is now measurable — `make signal-report`.** The
+  action-engine writes `action_taken` events; this is the read side that closes
+  the loop. It folds `signal.jsonl` into **action-rate** — the share of *engaged*
+  connections (any triaged, unique canonical `sig`) that produced at least one
+  non-`none` move — plus breakdowns by kind, target, LLM tool, and connection
+  type, the time span, and a one-line gate read (alive vs. kill-signal). Pure
+  `summarize()` over event dicts with a tolerant loader (legacy v1 / malformed
+  lines are skipped, not miscounted); `--json` for piping. See
+  `src/connections/signal_report.py` and `Docs/future/ADR-004-insight-action-integration.md`.
 - **Insights become actions — the window is now an action engine, not an
   archive.** Each connection lays out as *spark → ground → act*: the high-level
   rationale up top, the dated, quoted **evidence** per note revealed inline on
