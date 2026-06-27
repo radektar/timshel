@@ -66,6 +66,8 @@ class UserSettings:
     # AI (PRO)
     enable_ai_summaries: bool = defaults.DEFAULT_ENABLE_AI_SUMMARIES
     ai_api_key: Optional[str] = None
+    # Connected LLM for the Insights action handoff (claude | chatgpt | gemini).
+    ai_handoff_tool: str = "claude"
 
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
@@ -134,6 +136,7 @@ class UserSettings:
             "whisper_model": self.whisper_model,
             "enable_ai_summaries": self.enable_ai_summaries,
             "ai_api_key": self.ai_api_key,
+            "ai_handoff_tool": self.ai_handoff_tool,
             "show_notifications": self.show_notifications,
             "start_at_login": self.start_at_login,
             "setup_completed": self.setup_completed,

@@ -96,6 +96,9 @@ class Config:
 
     # Connection synthesis ("Zestawianie") configuration
     ENABLE_CONNECTION_SYNTHESIS: bool = True
+    # Connected LLM for the Insights action handoff (claude | chatgpt | gemini).
+    # The window's primary CTA reads "Kontynuuj w <active>" (ADR-004).
+    LLM_HANDOFF_TOOL: str = "claude"
     # Per-stage model overrides (None -> fall back to LLM_MODEL via model_router).
     LLM_MODEL_SUMMARY: Optional[str] = None
     LLM_MODEL_TAGS: Optional[str] = None
@@ -108,7 +111,7 @@ class Config:
     # 4096 (was 2048): the verbose legacy prompt truncated mid tool-call at 2048
     # and returned zero connections. The production prompt is terse and fits, but
     # the headroom keeps a multi-connection digest from ever being cut off.
-    SYNTHESIS_MAX_TOKENS: int = 4096
+    SYNTHESIS_MAX_TOKENS: int = 8192  # headroom for evidence + fuller directions (ADR-004)
     SYNTHESIS_TIMEOUT: float = 60.0
     # Cross-topic "bridge" notes injected per digest (distance channel): notes far
     # from the recent window in topic but joined by a shared rare token. 0 = pure
@@ -261,6 +264,11 @@ tags: [{tags}]
                 # Ollama doesn't require API key, but we can use base URL (default)
                 # This is a default value, not reading from ENV
                 self.LLM_API_KEY = "http://localhost:11434"
+
+        # Connected LLM for the Insights action handoff (ADR-004).
+        self.LLM_HANDOFF_TOOL = getattr(
+            self._user_settings, "ai_handoff_tool", "claude"
+        ) or "claude"
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama
         # needs no key; cloud providers need an API key. Key presence is the

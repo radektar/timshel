@@ -11,6 +11,7 @@ from src.connections.candidate_assembly import CandidateSet, NoteRef
 from src.connections.synthesis import (
     Connection,
     ConnectionSynthesizer,
+    Evidence,
     _parse_payload,
     get_synthesizer,
 )
@@ -70,6 +71,51 @@ def test_connection_normalizes_wikilink_notes():
         directions=["A: ?", "B: ?"],
     )
     assert c.notes == ["Cooling v1", "Cooling v2"]
+
+
+def test_connection_carries_evidence():
+    # The 'ground' layer: each note gets a dated verbatim fragment. Note ids
+    # are normalized the same way as Connection.notes so signatures agree.
+    c = Connection(
+        type="contradiction-over-time",
+        notes=["A", "B"],
+        rationale="the assumption shifted",
+        evidence=[
+            {"note": "[[A]]", "date": "17.06", "quote": "stands on quality"},
+            {"note": "B", "date": "18.06", "quote": "budget 2x, lower quality?"},
+        ],
+        directions=["Could you name what shifted?", "Defend or revise the pillars?"],
+    )
+    assert [e.note for e in c.evidence] == ["A", "B"]
+    assert isinstance(c.evidence[0], Evidence)
+
+
+def test_connection_evidence_optional():
+    # A model that under-provides evidence must not lose the whole connection —
+    # the deck degrades to an empty ground layer, it does not reject.
+    c = Connection(
+        type="shared-thread",
+        notes=["a", "b"],
+        rationale="x",
+        directions=["A: ?", "B: ?"],
+    )
+    assert c.evidence == []
+
+
+def test_connection_drops_evidence_for_unknown_notes():
+    # Evidence referencing a note not in the connection is filtered out, not
+    # fatal — grounded-only, but lenient like _parse_payload.
+    c = Connection(
+        type="shared-thread",
+        notes=["a", "b"],
+        rationale="x",
+        evidence=[
+            {"note": "a", "date": "01.06", "quote": "real"},
+            {"note": "ghost", "date": "02.06", "quote": "stray"},
+        ],
+        directions=["A: ?", "B: ?"],
+    )
+    assert [e.note for e in c.evidence] == ["a"]
 
 
 def test_parse_payload_is_lenient():

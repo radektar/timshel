@@ -33,6 +33,30 @@ def test_connection_dict_to_insight_maps_fields():
     assert c.layout() == "contradiction"
 
 
+def test_connection_dict_carries_evidence_and_signature():
+    # ADR-004: the ground layer + identity fields must survive the bridge so the
+    # window can render evidence and log a canonical action_taken signature.
+    d = {
+        "type": "contradiction-over-time",
+        "sig": "deadbeef",
+        "notes": ["Note A", "Note B"],
+        "rationale": "The assumption shifted.",
+        "evidence": [
+            {"note": "Note A", "date": "17.06", "quote": "quality first"},
+            {"note": "Note B", "date": "18.06", "quote": "budget 2x"},
+            "junk",  # non-dict dropped
+        ],
+        "directions": ["Why?", "What changed?"],
+    }
+    c = ip.connection_dict_to_insight(d)
+    assert c.synthesis_type == "contradiction-over-time"
+    assert c.sig == "deadbeef"
+    assert [(e.note, e.date, e.quote) for e in c.evidence] == [
+        ("Note A", "17.06", "quality first"),
+        ("Note B", "18.06", "budget 2x"),
+    ]
+
+
 def test_deck_from_dicts_builds_and_skips_malformed():
     dicts = [
         {"type": "shared-thread", "notes": ["A", "B"], "rationale": "r", "directions": ["x", "y"]},

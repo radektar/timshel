@@ -116,9 +116,21 @@ Note: this push design is **itself trust-preserving** — never overclaims certa
 user the choice, always lets him correct. The killer value (trust) holds all the way up to the
 interaction level, not just the storage level.
 
-**Still open:** (a) how deep the synthesis handoff goes (open the thread in Claude vs auto-draft an
-outline); (b) v1 scope on the ladder — *proposed:* ship foundation + pull recall first (low-risk trust
-floor), connection-push as the signature v1.x bet once recall is trusted — needs Radek's confirmation.
+**Resolved 2026-06-27 (a):** the synthesis handoff = **open the thread in the user's connected LLM**
+(Claude / ChatGPT / Gemini, switchable), seeded with the insight + evidence + the directions the user
+selected — *not* an auto-drafted outline. Malinche packages and throws over the wall; the conversation
+lives in the user's tool. See `future/insight-to-action-plan.md` + `future/ADR-004-insight-action-integration.md`.
+
+**Still open:** (b) v1 scope on the ladder — *proposed:* ship foundation + pull recall first (low-risk
+trust floor), connection-push as the signature v1.x bet once recall is trusted — needs Radek's confirmation.
+
+**Amendment 2026-06-27 — default handoff target vs. the non-prescriptive lock.** The Insights surface
+now gives the handoff a **default target** (the primary CTA "Kontynuuj w [connected LLM]"). This does
+**not** break the non-prescriptive principle above: the default governs *transport* (where the insight
+is handed off), never *content* (the directions stay invitations/questions, the model never says "do
+X"). The default-bias this introduces into the preference signal is accepted for the N=1 validation
+phase and must be re-weighted/re-collected under a neutral menu before any smart-default router is
+trained from `action_taken` data. (Decision: Radek, 2026-06-27.)
 
 ### What PRO sells (re-derived from the killer)
 PRO = the **zero-config managed packaging** of the local "it's all there" stack (auto whisper +

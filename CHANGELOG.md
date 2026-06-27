@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Insights become actions — the window is now an action engine, not an
+  archive.** Each connection lays out as *spark → ground → act*: the high-level
+  rationale up top, the dated, quoted **evidence** per note revealed inline on
+  demand (so an insight survives without fresh memory), and the directions
+  promoted to **multi-select** with one shared handoff bar. Selected directions
+  are packaged (insight + evidence + chosen directions) and handed to your
+  **connected LLM** (Claude / ChatGPT / Gemini, switchable), the **calendar**
+  (`.ics` → Calendar.app), a **task** (Reminders.app), or the **clipboard** —
+  all zero-OAuth, via macOS `open`/`osascript`. The constellation is demoted to
+  a small static per-type **sigil**; the reader scrolls with a pinned
+  Odrzuć · Zachowaj footer that is never cropped. A new `action_taken` signal
+  (`signal.jsonl` v2) records what you *did* with an insight — action-rate
+  replaces keep-rate as the validation KPI. Synthesis now emits the evidence
+  layer and fuller, still-non-prescriptive directions. See
+  `Docs/future/ADR-004-insight-action-integration.md`.
 - **Insights window is a lens over the vault — notes and transcripts open in
   Obsidian.** Source-note chips and the "Ostatnie transkrypty" rail are now
   clickable and hand off to Obsidian via `obsidian://open?path=` (no vault-name

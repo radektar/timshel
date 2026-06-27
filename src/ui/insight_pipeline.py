@@ -36,12 +36,30 @@ def map_type(synthesis_type: str) -> str:
 
 
 def connection_dict_to_insight(d: dict) -> im.InsightConnection:
-    """Build an :class:`InsightConnection` from one sidecar/synthesis dict."""
+    """Build an :class:`InsightConnection` from one sidecar/synthesis dict.
+
+    Carries the ground layer (``evidence``) and the identity fields
+    (``synthesis_type`` + precomputed ``sig``) so the window can render the
+    evidence and log a canonical ``action_taken`` signature (ADR-004).
+    """
+    syn_type = d.get("type", "")
+    evidence = [
+        im.EvidenceItem(
+            note=str(e.get("note", "")),
+            date=str(e.get("date", "")),
+            quote=str(e.get("quote", "")),
+        )
+        for e in (d.get("evidence") or [])
+        if isinstance(e, dict)
+    ]
     return im.make_connection(
-        map_type(d.get("type", "")),
+        map_type(syn_type),
         d.get("rationale", ""),
         list(d.get("notes", []) or []),
         list(d.get("directions", []) or []),
+        evidence=evidence,
+        synthesis_type=syn_type,
+        sig=str(d.get("sig", "")),
     )
 
 

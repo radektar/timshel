@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from src.config import config
-from src.connections.dismissals import connection_signature
+from src.connections.signature import connection_signature
 from src.connections.synthesis import Connection
 from src.logger import logger
 
@@ -63,6 +63,11 @@ def render_digest(connections: List[Connection], notes_considered: int) -> str:
         label = _TYPE_LABELS.get(conn.type, conn.type)
         out.append(f"## {idx}. {label}: {conn.rationale}")
         out.append(f"Notes: {_wikilinks(conn.notes)}")
+        if conn.evidence:
+            out.append("Based on:")
+            for ev in conn.evidence:
+                date = f"{ev.date} · " if ev.date else ""
+                out.append(f"- {date}[[{ev.note}]]: „{ev.quote}”")
         out.append("Directions you could take this:")
         for direction in conn.directions:
             out.append(f"- {direction}")
@@ -89,8 +94,13 @@ def _write_insights_sidecar(connections: List[Connection], digest_path: Path) ->
             "connections": [
                 {
                     "type": c.type,
+                    "sig": connection_signature(c.notes, c.type),
                     "notes": list(c.notes),
                     "rationale": c.rationale,
+                    "evidence": [
+                        {"note": e.note, "date": e.date, "quote": e.quote}
+                        for e in c.evidence
+                    ],
                     "directions": list(c.directions),
                 }
                 for c in connections

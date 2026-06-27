@@ -49,9 +49,12 @@ def test_us1_user_keeps_an_insight(log_path):
     ctrl.afterKeepFlash_(None)  # the deferred mutation lands
     rows = _rows(log_path)
     assert len(rows) == 1
-    assert rows[0]["action"] == "kept"
-    assert rows[0]["conn_type"] == active.conn_type
-    assert rows[0]["key"]
+    # Zachowaj is the quiet archive — a save signal, kind:none (ADR-004).
+    assert rows[0]["action"] == "action_taken"
+    assert rows[0]["target"] == "save"
+    assert rows[0]["kind"] == "none"
+    assert rows[0]["conn_type"] == active.synthesis_type
+    assert rows[0]["sig"]
     assert ctrl._deck.is_kept(0)  # the keep committed
 
 
@@ -62,8 +65,10 @@ def test_us2_user_dismisses_an_insight(log_path):
     ctrl.dismissClicked_(None)
     rows = _rows(log_path)
     assert len(rows) == 1
-    assert rows[0]["action"] == "dismissed"
-    assert rows[0]["conn_type"] == active.conn_type
+    # Odrzuć is a signal, not a suppressor: kind:none / target:none.
+    assert rows[0]["action"] == "action_taken"
+    assert rows[0]["target"] == "none"
+    assert rows[0]["conn_type"] == active.synthesis_type
     # the signal is recorded at click; the deck mutation lands after the flash
     assert len(ctrl._deck._items) == before  # not yet — flash still showing
     ctrl.afterDismissFlash_(None)
@@ -78,8 +83,8 @@ def test_us3_user_triages_a_session(log_path):
     ctrl.keepClicked_(None)
     ctrl.afterKeepFlash_(None)
     ctrl.dismissClicked_(None)
-    actions = [r["action"] for r in _rows(log_path)]
-    assert actions == ["kept", "kept", "dismissed"]
+    targets = [r["target"] for r in _rows(log_path)]
+    assert targets == ["save", "save", "none"]
 
 
 def test_us6_keep_is_recorded_at_click_not_after_flash(log_path):
@@ -90,7 +95,7 @@ def test_us6_keep_is_recorded_at_click_not_after_flash(log_path):
     ctrl.keepClicked_(None)  # do NOT fire afterKeepFlash_
     rows = _rows(log_path)
     assert len(rows) == 1
-    assert rows[0]["action"] == "kept"
+    assert rows[0]["action"] == "action_taken"
     # the mutation has NOT happened yet — proving the line predates the timer
     assert ctrl._deck.active_index == active_index
     assert not ctrl._deck.is_kept(active_index)

@@ -11,7 +11,6 @@ positives tolerable IF dismissible").
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -19,13 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from src.connections.signature import connection_signature  # canonical (ADR-004)
 from src.logger import logger
 
-
-def connection_signature(notes: Iterable[str], conn_type: str) -> str:
-    """Stable signature for a connection, independent of note order."""
-    key = conn_type.strip().lower() + "|" + "|".join(sorted(n.strip() for n in notes))
-    return hashlib.sha1(key.encode("utf-8")).hexdigest()
+__all__ = ["DismissalStore", "connection_signature"]
 
 
 def _parse_int_list(raw: str) -> List[int]:

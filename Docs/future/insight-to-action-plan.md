@@ -41,24 +41,52 @@ audience to doers; accepted for the N=1 validation phase (Radek is the user).
 
 ## Design — decided
 
-### The gesture: a flat action menu, human decides
+### The gesture: select directions, hand them off — with a default target
 
-When an insight is shown, the user picks the action. **Flat menu, no
-model-suggested default, regardless of insight type** — the human decides every
-time. (Decision 2026-06-27, overriding the earlier "model suggests" lean.)
+When an insight is shown, the directions become **selectable** (multi-select).
+The user ticks any subset (or all), and **one shared handoff bar acts on the
+whole selection at once** — not one direction at a time. (Design resolved in the
+dashboard redesign, Claude Design, 2026-06-27.)
 
 ```
-emergent-idea: "Recorder + Obsidian = one product"
-[Rozwiń]  [Zadanie]  [Kalendarz]  [Kopiuj]               [Odrzuć]
+SPRZECZNOŚĆ W CZASIE
+„Założenie o jakości przesunęło się w miesiąc…"
+  ☑ Co wymusiło zmianę założenia — jednorazowy kompromis czy trwała zmiana?
+  ☐ Filary projektu bronić mimo budżetu, czy zrewidować?
+  ──────────────────────────────────────────────────────────────
+  2 wybrane   [▣ Kontynuuj w Claude ⌄]  [Utwórz zadanie] [Kalendarz] [Kopiuj]
+                                                       Odrzuć · Zachowaj
 ```
 
-Why flat / human-decides for now: it produces **clean, unbiased preference
-data** ("given a free choice, what does the user do with an insight of type X").
-A model-suggested default would contaminate the signal via default-bias — we'd
-measure suggestion-acceptance, not true intent. The flat menu is the instrument
-that *earns the right* to a smart-default ("first move") version later: the
-`action_taken` log becomes the training data for what a future router should
-suggest. We do not build the router before we have watched unbiased choices.
+**Decision (2026-06-27, Radek): keep a default action.** The primary CTA is
+**"Kontynuuj w [connected LLM]"** — a visually weighted default, with the other
+targets (task / calendar / clipboard) one click away. This is a *conscious
+departure* from the earlier "no model-suggested default" lock.
+
+Why this is acceptable (the trade-off, recorded honestly):
+
+- The default is about **transport, not content.** It picks *where* the insight
+  is handed off, not *what to think* — the directions themselves stay
+  non-prescriptive questions (POSITIONING lock intact).
+- We accept some **default-bias** in the preference signal in exchange for a far
+  more usable surface. At **N=1 (Radek)** this is not a statistical sample; the
+  question is "does an action happen at all," not "which action wins a fair
+  vote." A prominent path raises the odds of *any* action — the thing we're
+  actually testing.
+- The instrument still tells the truth **as long as every target stays one click
+  and we log the action actually taken.** `action_taken.target` records the real
+  choice, default or not. The bias is flagged for the router phase: before we
+  ever train a smart-default from this data, we re-weight or re-collect under a
+  neutral menu. (Tracked in ADR-004.)
+
+### Connected LLM — all three (2026-06-27, Radek)
+
+The handoff LLM is **switchable: Claude / ChatGPT / Gemini**, ships in v1 (not
+Claude-only). A settings preference holds the active connection; the primary CTA
+reads "Kontynuuj w [active]". Each tool gets its own deep-link template (see
+ADR-004). This resolves POSITIONING open item (a): the synthesis handoff =
+**open the thread in the user's connected LLM**, seeded with the insight +
+evidence + selected directions (not an auto-drafted outline).
 
 ### The mechanism: handoff packages, not in-app hosting
 
@@ -100,9 +128,12 @@ the insight and picks.
 ## Validation — the gesture *is* the instrument
 
 Extend `{vault}/.malinche/signal.jsonl`: replace the kept/dismissed event with
-**`action_taken: {kind, target}`** (kind = develop | do | decide | none; target
-= llm | calendar | task | clipboard). **Action-rate replaces keep-rate** as the
-core KPI. The act of using an insight is the measurement; no separate survey.
+**`action_taken: {kind, target, connection_sig, directions}`** (kind = develop |
+do | decide | none; target = llm | calendar | task | clipboard;
+`connection_sig` = the canonical signature so the event joins back to the
+connection it measures; `directions` = the indices/ids of the subset handed off,
+since selection is now multi). **Action-rate replaces keep-rate** as the core
+KPI. The act of using an insight is the measurement; no separate survey.
 
 - **Success signal (binary):** a non-trivial share of surfaced insights produce
   at least one handoff (action), not just a keep/dismiss.

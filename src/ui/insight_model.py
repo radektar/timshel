@@ -66,23 +66,41 @@ def meta_for_type(conn_type: str) -> TypeMeta:
 
 
 @dataclass(frozen=True)
+class EvidenceItem:
+    """The 'ground' layer for one note: a dated verbatim fragment.
+
+    Frozen/hashable so :class:`InsightConnection` stays hashable. Mirrors
+    ``synthesis.Evidence`` but lives in the AppKit-free UI model.
+    """
+
+    note: str
+    date: str = ""
+    quote: str = ""
+
+
+@dataclass(frozen=True)
 class InsightConnection:
     """One connection between notes — the unit the reader displays.
 
-    ``notes`` are basenames (2+); ``rationale`` is one sentence; ``directions``
-    are 2–4 non-directive questions. ``conn_type`` is one of the module
-    constants. ``label``/``tcolor``/``layout`` default from the type metadata so
-    callers can pass just the type, but may override (the digest may supply its
-    own label).
+    ``notes`` are basenames (2+); ``rationale`` is the high-level spark;
+    ``evidence`` is the dated quote per note (the 'ground' layer revealed on
+    demand); ``directions`` are 2–4 non-directive questions. ``conn_type`` is one
+    of the module constants (the *display* type). ``synthesis_type`` and ``sig``
+    are carried from the sidecar so the window can log a precomputed canonical
+    signature without recomputing (ADR-004). ``label``/``tcolor`` default from the
+    type metadata but may be overridden.
     """
 
     conn_type: str
     rationale: str
     notes: Tuple[str, ...]
     directions: Tuple[str, ...] = ()
+    evidence: Tuple[EvidenceItem, ...] = ()
     snippet: str = ""
     label: str = ""
     tcolor: str = ""
+    synthesis_type: str = ""
+    sig: str = ""
 
     def resolved_label(self) -> str:
         return self.label or meta_for_type(self.conn_type).label
@@ -102,6 +120,9 @@ def make_connection(
     snippet: str = "",
     label: str = "",
     tcolor: str = "",
+    evidence: Optional[List[EvidenceItem]] = None,
+    synthesis_type: str = "",
+    sig: str = "",
 ) -> InsightConnection:
     """Build an :class:`InsightConnection`, tupling the list fields so the
     dataclass stays hashable/frozen. ``snippet`` falls back to a clipped
@@ -111,9 +132,12 @@ def make_connection(
         rationale=rationale,
         notes=tuple(notes),
         directions=tuple(directions or ()),
+        evidence=tuple(evidence or ()),
         snippet=snippet or _clip(rationale, 86),
         label=label,
         tcolor=tcolor,
+        synthesis_type=synthesis_type,
+        sig=sig,
     )
 
 
@@ -220,57 +244,110 @@ class InsightDeck:
 
 
 # --------------------------------------------------------------------------- #
-# Placeholder data — the real 8moons digest connections, used by the window
-# until the pipeline carries rationale/directions/notes from the digest. Mirrors
-# the `QUEUE` in design-system/pages/insights-engine.js so the build matches the
-# approved mock. Replace with live digest data once the pipeline lands.
+# No-digest fallback — the window shows this only when no real digest sidecar
+# exists yet (insight_pipeline.latest_deck returns None). Content mirrors the
+# approved dashboard redesign (high-level spark + evidence + fuller directions),
+# so even the empty-corpus first run looks like the real thing.
 # --------------------------------------------------------------------------- #
 
 
 def sample_deck() -> "InsightDeck":
-    """An :class:`InsightDeck` of the real digest connections (placeholder)."""
+    """An :class:`InsightDeck` of the real digest connections (placeholder).
+
+    Mirrors the approved dashboard redesign: a high-level ``rationale`` (the
+    spark) with the dated quotes moved into ``evidence`` (the ground layer), and
+    fuller, self-contained ``directions``.
+    """
     return InsightDeck(
         [
             make_connection(
                 CONTRADICTION,
-                "17.06 projekt stoi na naturalnych materiałach i jakości dla "
-                "świadomego klienta; 18.06 — budżet przekroczony 2×, rozważasz "
-                "obniżenie jakości materiałów.",
+                "Założenie o jakości przesunęło się w miesiąc — z fundamentu "
+                "projektu w pozycję do negocjacji pod presją budżetu.",
                 ["Haetta — rozmowa z konstruktorem", "8Moons — filmiki 2"],
                 [
-                    "Co wymusiło zmianę założenia jakościowego?",
-                    "Czy filary projektu trzeba zrewidować, czy bronić mimo budżetu?",
+                    "Co wymusiło zmianę założenia jakościowego — jednorazowy "
+                    "kompromis pod presją budżetu, czy trwała zmiana kierunku, "
+                    "którą warto nazwać wprost?",
+                    "Filary projektu — naturalne materiały, jakość dla świadomego "
+                    "klienta — bronić mimo budżetu, czy zrewidować i szukać "
+                    "oszczędności gdzie indziej?",
                 ],
                 snippet="Założenie o jakości przesunęło się w miesiąc — budżet 2× w górę.",
+                synthesis_type="contradiction-over-time",
+                evidence=[
+                    EvidenceItem(
+                        "Haetta — rozmowa z konstruktorem", "17.06",
+                        "…projekt stoi na naturalnych materiałach i jakości dla "
+                        "świadomego klienta…",
+                    ),
+                    EvidenceItem(
+                        "8Moons — filmiki 2", "18.06",
+                        "…budżet przekroczony 2×, rozważasz obniżenie jakości "
+                        "materiałów…",
+                    ),
+                ],
             ),
             make_connection(
                 SHARED,
-                "Okna wracają w obu notatkach jako krytyczne wąskie gardło — brak "
-                "odpowiedzi producentów i niepewna dostępność przed sierpniem.",
+                "Okna wracają w obu notatkach jako to samo wąskie gardło — brak "
+                "potwierdzeń od producentów napina sierpniowy termin z dwóch "
+                "stron naraz.",
                 [
                     "Planowanie budowy domu — materiały okna dach",
                     "Przygotowania do Eight Moons — okna i fundamenty",
                 ],
                 [
-                    "Poszukać alternatywnych producentów już teraz?",
-                    "Jak wyglądałby plan B na okna?",
+                    "Poszukać alternatywnych producentów już teraz, zanim "
+                    "sierpniowy termin zacznie dyktować wybór za ciebie?",
+                    "Jak wyglądałby realny plan B na okna — i który element "
+                    "harmonogramu zwalnia, jeśli okna się obsuną?",
                 ],
                 snippet="Okna jako wąskie gardło wracają w dwóch notatkach.",
+                synthesis_type="shared-thread",
+                evidence=[
+                    EvidenceItem(
+                        "Planowanie budowy domu — materiały okna dach", "09.06",
+                        "…producenci okien nie odpowiadają, a bez nich dach i tak "
+                        "stoi w miejscu…",
+                    ),
+                    EvidenceItem(
+                        "Przygotowania do Eight Moons — okna i fundamenty", "14.06",
+                        "…dostępność okien przed sierpniem niepewna — to blokuje "
+                        "fundamenty…",
+                    ),
+                ],
             ),
             make_connection(
                 EMERGENT,
-                "W różnych projektach wraca ten sam dylemat: skalować przez "
-                "automatyzację, czy utrzymać ręczny udział kosztem skali.",
+                "Ten sam dylemat skali wraca w trzech projektach: skalować przez "
+                "automatyzację, czy utrzymać ręczny udział kosztem zasięgu — i za "
+                "każdym razem rozstrzygasz go od nowa, bez nazwanej zasady.",
                 [
                     "Strategia TekTutoreski",
                     "8Moons — filmiki 2",
                     "Harmonogram 2-tyg. projektu",
                 ],
                 [
-                    "Czy to jedna „zasada skalowania”, którą stosujesz wszędzie?",
-                    "Gdzie hands-on buduje jakość, a gdzie tylko blokuje skalę?",
+                    "Czy to jedna „zasada skalowania”, którą stosujesz wszędzie — "
+                    "a jeśli tak, jak brzmi wypowiedziana wprost, w jednym zdaniu?",
+                    "Gdzie hands-on realnie buduje jakość i przewagę, a gdzie "
+                    "tylko blokuje skalę z przyzwyczajenia?",
                 ],
                 snippet="Ten sam dylemat skali wraca w różnych projektach.",
+                synthesis_type="emergent-idea",
+                evidence=[
+                    EvidenceItem(
+                        "Strategia TekTutoreski", "03.06",
+                        "…automatyzacja daje zasięg, ale gubi to, za co ludzie cię "
+                        "cenią — ręczną robotę…",
+                    ),
+                    EvidenceItem(
+                        "Harmonogram 2-tyg. projektu", "24.06",
+                        "…znowu zaplanowałem ręczny montaż, mimo że plan zakładał "
+                        "oddanie tego na zewnątrz…",
+                    ),
+                ],
             ),
         ]
     )
