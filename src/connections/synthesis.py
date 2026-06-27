@@ -31,6 +31,25 @@ _TOOL_NAME = "emit_connections"
 # --------------------------------------------------------------------------- #
 # Schema (validated by Pydantic, surfaced to Claude as the tool input schema)
 # --------------------------------------------------------------------------- #
+class Evidence(BaseModel):
+    """The grounding fragment for one linked note — the 'ground' layer.
+
+    One per note in the connection. ``quote`` is a SHORT verbatim fragment from
+    that note's supplied summary; ``date`` is the note's date as given. This is
+    what the Insights window reveals under the high-level rationale so the user
+    can reconstruct *why* the notes connect without relying on fresh memory.
+    """
+
+    note: str = Field(..., description="Exact [[basename]] id — one of the connection's notes.")
+    date: str = Field("", description="The note's date as supplied.")
+    quote: str = Field(..., description="A short verbatim fragment from that note's summary.")
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note_wikilink(cls, value: str) -> str:
+        return value.strip().strip("[]").strip()
+
+
 class Connection(BaseModel):
     """One proposed connection across 2+ notes."""
 
@@ -38,13 +57,29 @@ class Connection(BaseModel):
     notes: List[str] = Field(
         ..., min_length=2, description="Exact [[basename]] ids of the linked notes."
     )
-    rationale: str = Field(..., description="One grounded sentence.")
+    rationale: str = Field(
+        ...,
+        description="The spark: a high-level grounded claim. NOT the dated quotes "
+        "(those go in 'evidence').",
+    )
+    evidence: List[Evidence] = Field(
+        default_factory=list,
+        description="One grounding fragment per linked note (date + verbatim quote).",
+    )
     directions: List[str] = Field(
         ...,
         min_length=2,
         max_length=4,
-        description="2-4 non-prescriptive options, phrased as invitations.",
+        description="2-4 non-prescriptive invitations (~1-2 sentences), phrased as questions.",
     )
+
+    @field_validator("evidence")
+    @classmethod
+    def _evidence_for_known_notes(cls, value: List["Evidence"], info: Any) -> List["Evidence"]:
+        """Drop evidence whose note isn't in the connection (lenient, not fatal)."""
+        notes = info.data.get("notes") or []
+        known = {n.strip().strip("[]").strip() for n in notes}
+        return [e for e in value if not known or e.note in known]
 
     @field_validator("notes")
     @classmethod
@@ -141,13 +176,19 @@ _SYSTEM_PROMPT = (
     "If nothing genuinely connects, return an empty list — that is the correct, "
     "expected answer, not a failure.\n"
     "- Reference 2+ notes by their exact [[basename]] id (as given).\n"
-    "- 'rationale' is 2-3 grounded sentences that name the SPECIFIC tension or "
+    "- 'rationale' is 1-2 grounded sentences naming the SPECIFIC tension or "
     "transfer (what new thing follows from putting these notes together), never "
-    "just the shared topic.\n"
+    "just the shared topic. It is the high-level SPARK — do NOT pack the dated "
+    "quotes into it; those belong in 'evidence'.\n"
+    "- 'evidence': for EACH linked note, one item with its exact [[basename]] "
+    "as 'note', its 'date' as given, and a SHORT VERBATIM fragment of that "
+    "note's summary as 'quote' (the line that grounds the connection). Quote "
+    "only — never paraphrase into a quote, never invent a date.\n"
     "- 'directions' must be 2-4 NON-PRESCRIPTIVE options the person could "
-    'pursue, phrased as invitations or questions ("A: Could you…?"). Never '
-    'instruct ("do X"). Clean language only — no English words dropped into '
-    "another language.\n"
+    "pursue, each a self-contained invitation or question of ~1-2 sentences "
+    '(enough to stand alone without the fresh context). Phrase as questions '
+    '("Could you…?"), never instruct ("do X"). Clean language only — no English '
+    "words dropped into another language.\n"
     "- Do NOT re-propose anything under ALREADY-DISMISSED.\n"
     "- Prefer two surprising connections over six obvious ones.\n"
     "Return your answer ONLY through the emit_connections tool."

@@ -66,23 +66,41 @@ def meta_for_type(conn_type: str) -> TypeMeta:
 
 
 @dataclass(frozen=True)
+class EvidenceItem:
+    """The 'ground' layer for one note: a dated verbatim fragment.
+
+    Frozen/hashable so :class:`InsightConnection` stays hashable. Mirrors
+    ``synthesis.Evidence`` but lives in the AppKit-free UI model.
+    """
+
+    note: str
+    date: str = ""
+    quote: str = ""
+
+
+@dataclass(frozen=True)
 class InsightConnection:
     """One connection between notes — the unit the reader displays.
 
-    ``notes`` are basenames (2+); ``rationale`` is one sentence; ``directions``
-    are 2–4 non-directive questions. ``conn_type`` is one of the module
-    constants. ``label``/``tcolor``/``layout`` default from the type metadata so
-    callers can pass just the type, but may override (the digest may supply its
-    own label).
+    ``notes`` are basenames (2+); ``rationale`` is the high-level spark;
+    ``evidence`` is the dated quote per note (the 'ground' layer revealed on
+    demand); ``directions`` are 2–4 non-directive questions. ``conn_type`` is one
+    of the module constants (the *display* type). ``synthesis_type`` and ``sig``
+    are carried from the sidecar so the window can log a precomputed canonical
+    signature without recomputing (ADR-004). ``label``/``tcolor`` default from the
+    type metadata but may be overridden.
     """
 
     conn_type: str
     rationale: str
     notes: Tuple[str, ...]
     directions: Tuple[str, ...] = ()
+    evidence: Tuple[EvidenceItem, ...] = ()
     snippet: str = ""
     label: str = ""
     tcolor: str = ""
+    synthesis_type: str = ""
+    sig: str = ""
 
     def resolved_label(self) -> str:
         return self.label or meta_for_type(self.conn_type).label
@@ -102,6 +120,9 @@ def make_connection(
     snippet: str = "",
     label: str = "",
     tcolor: str = "",
+    evidence: Optional[List[EvidenceItem]] = None,
+    synthesis_type: str = "",
+    sig: str = "",
 ) -> InsightConnection:
     """Build an :class:`InsightConnection`, tupling the list fields so the
     dataclass stays hashable/frozen. ``snippet`` falls back to a clipped
@@ -111,9 +132,12 @@ def make_connection(
         rationale=rationale,
         notes=tuple(notes),
         directions=tuple(directions or ()),
+        evidence=tuple(evidence or ()),
         snippet=snippet or _clip(rationale, 86),
         label=label,
         tcolor=tcolor,
+        synthesis_type=synthesis_type,
+        sig=sig,
     )
 
 
