@@ -39,6 +39,20 @@ def test_resolve_note_path_missing_returns_none(tmp_path):
     assert ol.resolve_note_path("", tmp_path) is None
 
 
+def test_resolve_note_path_tolerates_case_and_whitespace(tmp_path):
+    note = tmp_path / "Cooling V1.md"
+    note.write_text("x", encoding="utf-8")
+    # different case + collapsed/extra spaces still resolves to the real file
+    assert ol.resolve_note_path("cooling  v1", tmp_path) == note
+
+
+def test_resolve_note_path_exact_wins_over_normalized(tmp_path):
+    exact = tmp_path / "Note.md"
+    exact.write_text("x", encoding="utf-8")
+    (tmp_path / "note.md").write_text("y", encoding="utf-8")
+    assert ol.resolve_note_path("Note", tmp_path) == exact
+
+
 def test_open_note_opens_resolved_path(tmp_path, monkeypatch):
     (tmp_path / "Hit.md").write_text("x", encoding="utf-8")
     seen = {}

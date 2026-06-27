@@ -90,7 +90,7 @@ def _gold():
 
 if _APPKIT_AVAILABLE:
 
-    class _FlippedView(NSView):
+    class _DashFlippedView(NSView):
         def isFlipped(self):
             return True
 
@@ -234,6 +234,10 @@ if _APPKIT_AVAILABLE:
                 NSMakeRect(0, 0, _WIN_W, _WIN_H), mask, NSBackingStoreBuffered, False
             )
             win.setTitle_("Malinche — Konstelacja")
+            # Closing the window must NOT deallocate it — we keep a Python
+            # reference and reopen it. Default NSWindow behaviour releases on
+            # close, so a second open would touch freed memory and crash.
+            win.setReleasedWhenClosed_(False)
             win.setTitlebarAppearsTransparent_(True)
             win.setMovableByWindowBackground_(True)
             win.setMinSize_(NSMakeSize(_WIN_MIN_W, _WIN_MIN_H))
@@ -273,7 +277,7 @@ if _APPKIT_AVAILABLE:
             w = frame.size.width or _WIN_W
             h = frame.size.height or _WIN_H
 
-            bg = _FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+            bg = _DashFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             bg.setWantsLayer_(True)
             if bg.layer() is not None:
                 bg.layer().setBackgroundColor_(_c(16, 14, 21).CGColor())
@@ -310,7 +314,7 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_rail(self, frame):
-            view = _FlippedView.alloc().initWithFrame_(frame)
+            view = _DashFlippedView.alloc().initWithFrame_(frame)
             # left divider drawn by reader bg; rail gets a darker wash
             wash = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, frame.size.height))
             wash.setWantsLayer_(True)
@@ -426,7 +430,7 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_reader(self, frame):
-            view = _FlippedView.alloc().initWithFrame_(frame)
+            view = _DashFlippedView.alloc().initWithFrame_(frame)
             # left divider
             div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 1, frame.size.height))
             div.setWantsLayer_(True)

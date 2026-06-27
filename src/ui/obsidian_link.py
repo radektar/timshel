@@ -43,9 +43,21 @@ def resolve_note_path(basename: str, vault_dir: Path) -> Optional[Path]:
     try:
         for hit in vault_dir.rglob(f"{basename}.md"):
             return hit
+        # Exact match failed — try a tolerant pass. Synthesis echoes note ids as
+        # the model saw them, so case or whitespace can drift from the real
+        # filename; match on a normalized stem before giving up to search.
+        want = _normalize(basename)
+        for hit in vault_dir.rglob("*.md"):
+            if _normalize(hit.stem) == want:
+                return hit
     except OSError as exc:  # pragma: no cover - defensive
         logger.debug("note path search failed for %r: %s", basename, exc)
     return None
+
+
+def _normalize(name: str) -> str:
+    """Lowercase and collapse internal whitespace for tolerant stem matching."""
+    return " ".join((name or "").split()).casefold()
 
 
 def open_url(url: str) -> bool:

@@ -117,15 +117,19 @@ class MalincheMenuApp(rumps.App):
         # Insights — open the "Konstelacja" window (the designed home where the
         # connections Malinche found are read). Entered from here, not by
         # hijacking the menu-bar click (that opens this native menu, Docker-style).
+        # Trailing "…" per macOS HIG = the command needs more input in a
+        # dialog/picker before it completes. So only "Import audio…" (file
+        # picker) and "Settings…" (config window) keep it; everything else acts
+        # immediately or opens a submenu and stays ellipsis-free.
         self.insights_item = rumps.MenuItem(
-            "Insights…",
+            "Insights",
             callback=self._open_insights,
         )
         self.menu.add(self.insights_item)
         self.menu.add(rumps.separator)
 
         self.open_logs_item = rumps.MenuItem(
-            "Open logs…",
+            "Open logs",
             callback=self._open_logs,
         )
         self.menu.add(self.open_logs_item)
@@ -139,18 +143,18 @@ class MalincheMenuApp(rumps.App):
 
         # Synthesis — open the latest connection digest note in the vault.
         self.digest_item = rumps.MenuItem(
-            "Open latest digest…",
+            "Open latest digest",
             callback=self._open_latest_digest,
         )
         self.menu.add(self.digest_item)
         self.gen_digest_item = rumps.MenuItem(
-            "Generate digest now…",
+            "Generate digest now",
             callback=self._generate_digest_now,
         )
         self.menu.add(self.gen_digest_item)
 
         # Retranscribe submenu (lazy populated by refresh timer)
-        self.retranscribe_menu = rumps.MenuItem("Retranscribe file…")
+        self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
         self.menu.add(self.retranscribe_menu)
 
         self.menu.add(rumps.separator)
@@ -168,6 +172,11 @@ class MalincheMenuApp(rumps.App):
             callback=self._quit_app,
         )
         self.menu.add(self.quit_item)
+
+        # Docker-style: SF Symbol icons on each action (template images that
+        # adapt to light/dark + selection). Best-effort — skipped on any OS
+        # where system symbols aren't available.
+        self._apply_menu_icons()
 
         # Menu-bar click opens the native NSMenu (system surface, like Docker /
         # Cursor). The designed "home" is the Insights window (dashboard_window),
@@ -290,6 +299,9 @@ class MalincheMenuApp(rumps.App):
         does not render both the icon and a stray emoji/name fallback next to
         each other in the status bar.
         """
+        # Docker-style status dot on the header item, keyed by state.
+        self._apply_status_icon(status)
+
         # Mirror the full state into the popover panel (rendered on next open).
         panel = getattr(self, "_status_panel", None)
         if panel is not None:
@@ -1026,7 +1038,38 @@ class MalincheMenuApp(rumps.App):
             if not path.is_absolute():
                 path = Path(config.TRANSCRIBE_DIR) / raw
             out.append({"label": name, "path": path})
-        return out
+        if out:
+            return out
+        # The index can be empty (fresh install, or transcripts written by an
+        # older build that didn't maintain it) while transcripts sit on disk.
+        # Fall back to the filesystem so the rail reflects what's actually
+        # there rather than showing "—".
+        return self._recent_transcripts_from_disk()
+
+    def _recent_transcripts_from_disk(self, limit: int = 5):
+        """Most-recent ``*.md`` transcripts straight from the vault on disk.
+
+        Excludes the digest sub-folder and the ``.malinche`` sidecar dir so the
+        rail only lists actual transcripts, newest first by mtime.
+        """
+        from pathlib import Path
+
+        try:
+            root = Path(config.TRANSCRIBE_DIR)
+            digest_dir = (root / config.DIGEST_DIR_NAME).resolve()
+            hits = []
+            for p in root.rglob("*.md"):
+                rp = p.resolve()
+                if ".malinche" in rp.parts:
+                    continue
+                if str(rp).startswith(str(digest_dir)):
+                    continue
+                hits.append((p.stat().st_mtime, p))
+            hits.sort(key=lambda it: it[0], reverse=True)
+        except OSError as exc:  # pragma: no cover - defensive
+            logger.debug("disk scan for recent transcripts failed: %s", exc)
+            return []
+        return [{"label": p.stem, "path": p} for _, p in hits[:limit]]
 
     def _open_note_in_obsidian(self, basename):
         """Resolve a source-note basename in the vault and open it in Obsidian."""
@@ -1075,9 +1118,83 @@ class MalincheMenuApp(rumps.App):
         # the next status tick in _update_icon).
         self._unseen_insights = n
         try:
-            self.insights_item.title = f"✦ Insights ({n})" if n else "Insights…"
+            # Count lives in the title; the ✦ is now the SF Symbol icon.
+            self.insights_item.title = f"Insights ({n})" if n else "Insights"
         except Exception:  # pragma: no cover - cosmetic
             pass
+
+    @staticmethod
+    def _sf_image(symbol: str, point_size: float = 14.0):
+        """A template NSImage for an SF Symbol, or ``None`` if unavailable.
+
+        Template images render monochrome and adapt to light/dark and menu
+        selection automatically — the right primitive for menu-item icons.
+        """
+        try:
+            from AppKit import NSImage, NSImageSymbolConfiguration
+
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                symbol, None
+            )
+            if img is None:
+                return None
+            try:
+                cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(
+                    point_size, 0
+                )
+                img = img.imageWithSymbolConfiguration_(cfg)
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+            img.setTemplate_(True)
+            return img
+        except Exception:  # pragma: no cover - non-mac / old OS
+            return None
+
+    def _apply_status_icon(self, status) -> None:
+        """Set an SF Symbol status dot on the header item, keyed by state."""
+        symbols = {
+            AppStatus.IDLE: "circle",
+            AppStatus.SCANNING: "magnifyingglass",
+            AppStatus.TRANSCRIBING: "waveform",
+            AppStatus.DOWNLOADING: "arrow.down.circle",
+            AppStatus.MIGRATING: "arrow.triangle.2.circlepath",
+            AppStatus.RECORDER_IDLE: "circle.fill",
+            AppStatus.RECORDER_PENDING: "circle.dashed",
+            AppStatus.ERROR: "exclamationmark.triangle.fill",
+        }
+        item = getattr(self, "status_item", None)
+        if item is None:
+            return
+        img = self._sf_image(symbols.get(status, "circle"))
+        if img is None:
+            return
+        try:
+            item._menuitem.setImage_(img)
+        except Exception:  # pragma: no cover - cosmetic
+            pass
+
+    def _apply_menu_icons(self) -> None:
+        """Attach SF Symbol icons to the action items (best-effort)."""
+        icons = {
+            "insights_item": "sparkles",
+            "open_logs_item": "doc.plaintext",
+            "import_item": "square.and.arrow.down",
+            "digest_item": "doc.richtext",
+            "gen_digest_item": "wand.and.stars",
+            "retranscribe_menu": "arrow.triangle.2.circlepath",
+            "settings_item": "gearshape",
+        }
+        for attr, symbol in icons.items():
+            item = getattr(self, attr, None)
+            if item is None:
+                continue
+            img = self._sf_image(symbol)
+            if img is None:
+                continue
+            try:
+                item._menuitem.setImage_(img)
+            except Exception:  # pragma: no cover - cosmetic
+                pass
 
     def _open_latest_digest(self, _):
         """Open the most recent synthesis digest note in the default app."""

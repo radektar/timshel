@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot surface — the source of surprising, cross-time/cross-domain connections.
 
 ### Changed
+- **Menu-bar menu cleaned up to Docker-level.** Trailing "…" now follows the
+  macOS HIG — it stays only on commands that need more input in a dialog
+  ("Import audio…", "Settings…") and is dropped from items that act immediately
+  or open a submenu ("Insights", "Open logs", "Open latest digest", "Generate
+  digest now", "Retranscribe file"). Each action carries an **SF Symbol icon**
+  (template images that adapt to light/dark + selection), the header shows a
+  **status dot keyed by state**, and the Insights item shows the unseen-insight
+  **count** (`Insights (N)`).
 - **"Ostatnie transkrypty" now shows real data.** The Insights rail listed three
   hardcoded placeholder rows from the design phase; it now reads the real most-
   recent transcripts from `vault_index.recent_entries`, injected via a callback
@@ -42,6 +50,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncated mid tool-call at 2048 and returned zero connections).
 
 ### Fixed
+- **Crash (EXC_BAD_ACCESS) when reopening the Insights window.** The dashboard
+  `NSWindow` defaulted to `releasedWhenClosed = YES`, so closing it deallocated
+  the window while Python kept the reference; the second open then touched freed
+  memory and crashed. Fixed with `setReleasedWhenClosed_(False)` — the same fix
+  already applied to Settings. Also renamed the dashboard's `_FlippedView` ObjC
+  subclass to `_DashFlippedView`: it collided with the identically-named class in
+  `status_panel`, an ObjC global-name clash that would raise if both modules
+  loaded in one process (and broke the test suite's collection).
+- **"Ostatnie transkrypty" was empty when the vault index had no entries.** The
+  rail read only `vault_index`, which is empty on a fresh install (or when
+  transcripts were written by an older build that didn't maintain it). It now
+  falls back to scanning the vault on disk for the most-recent `*.md`
+  (excluding the digest folder and `.malinche`) so it reflects what's actually
+  there. Clicking a source-note chip also resolves more precisely — note ids are
+  now matched case-/whitespace-insensitively before falling back to Obsidian
+  search.
 - **Olympus DSS/DS2 dictaphone recordings were ignored.** `.dss` / `.ds2` (Digital Speech Standard, the native format of Olympus DS-series voice recorders — Malinche's own heritage) were not in the accepted-formats set, so those files were skipped on ingest. They are now accepted and transcoded to 16 kHz WAV by the existing ffmpeg step (ffmpeg can decode DSS/DS2). They are decode-only — the test audio factory can't render them — so the format-sync guard treats them as accept-only.
 - **FAT/exFAT recorder cards re-prompted on relabel and could be confused with same-size cards.** These cards usually have no `VolumeUUID`, so identity fell straight back to a `name:size:fs` composite that changed when the card was renamed. `get_volume_uuid` now prefers any stable disk-bound id — `VolumeUUID` → `DiskUUID` (GPT partition GUID) → `MediaUUID` — before that composite, so a card exposing a partition/media UUID keeps a stable identity across relabels and readers. The name-based fallback remains only for cards that expose none of these.
 - **"Once" approval transcribed nothing.** Choosing "Once" (transcribe this disk now, don't remember it) authorized the disk at the gate but recorded the approval only on the `FileMonitor` instance, while recorder discovery (`find_recorders` → `should_process_volume`) reads only the persisted whitelist — so the disk passed the prompt and was then dropped, transcribing zero files (this also affected the FSEvents path, not just polling). "Once" is now a process-wide, mount-session approval (`src/volume_session.py`) consulted by *both* the gate and discovery, so the disk is actually transcribed. It is deliberately not persisted: when the disk is ejected the periodic scan forgets it (`prune_to`), so a remount re-prompts — matching the "trust just for this session" intent and the privacy promise.
