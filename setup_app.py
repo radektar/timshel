@@ -19,6 +19,9 @@ if icon_path.exists():
 menu_icons = sorted(Path("assets/menu_bar").glob("*.png"))
 if menu_icons:
     DATA_FILES.append(("menu_bar", [str(icon) for icon in menu_icons]))
+brand_icons = sorted(Path("assets/brands").glob("*.svg"))
+if brand_icons:
+    DATA_FILES.append(("brands", [str(icon) for icon in brand_icons]))
 dmg_background = Path("assets/dmg_background.png")
 if dmg_background.exists():
     DATA_FILES.append(("", [str(dmg_background)]))

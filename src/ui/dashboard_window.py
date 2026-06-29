@@ -22,6 +22,7 @@ returns ``None`` without AppKit.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, Optional, Set
 
 from src.config import config
@@ -39,7 +40,11 @@ try:
         NSColor,
         NSColorSpace,
         NSFont,
+        NSFontAttributeName,
         NSGradient,
+        NSImage,
+        NSImageLeft,
+        NSImageOnly,
         NSMakePoint,
         NSMakeRect,
         NSMakeSize,
@@ -63,7 +68,7 @@ except ImportError:  # pragma: no cover - non-mac
 # Dimensions (points).
 _WIN_W = 860.0
 _WIN_H = 560.0
-_WIN_MIN_W = 640.0
+_WIN_MIN_W = 740.0
 _WIN_MIN_H = 460.0
 _HEADER_H = 40.0
 _RAIL_W = 236.0
@@ -287,6 +292,84 @@ if _APPKIT_AVAILABLE:
                 title, {NSForegroundColorAttributeName: fg}
             )
         )
+        return btn
+
+    def _text_width(text, size):
+        """Rendered width of ``text`` at ``size`` — for measured layout."""
+        from AppKit import NSAttributedString
+
+        attr = NSAttributedString.alloc().initWithString_attributes_(
+            text, {NSFontAttributeName: NSFont.systemFontOfSize_(size)}
+        )
+        return float(attr.size().width)
+
+    # Maps a handoff tool id to its vendored brand mark (assets/brands/*.svg).
+    # The OpenAI mark stands in for ChatGPT. Used as a referral/handoff glyph.
+    _BRAND_FILE = {
+        "claude": "claude.svg",
+        "chatgpt": "openai.svg",
+        "gemini": "gemini.svg",
+    }
+
+    def _asset_path(rel):
+        """Resolve an asset relative path, bundle (.app) first, then dev tree."""
+        try:
+            from Foundation import NSBundle
+
+            rp = NSBundle.mainBundle().resourcePath()
+            if rp:
+                p = Path(str(rp)) / rel
+                if p.exists():
+                    return p
+        except Exception:  # pragma: no cover - defensive
+            pass
+        p = Path(__file__).resolve().parent.parent.parent / "assets" / rel
+        return p if p.exists() else None
+
+    def _brand_image(tool, point=15.0):
+        """A vendored provider mark as a tintable template ``NSImage``.
+
+        Loaded from ``assets/brands/`` (offline; never fetched at runtime) and
+        flagged template so it adopts the surrounding tint on the CTA. Returns
+        ``None`` if the asset or SVG support is missing — caller stays text-only.
+        """
+        fname = _BRAND_FILE.get(tool)
+        if not fname:
+            return None
+        p = _asset_path("brands/" + fname)
+        if p is None:
+            return None
+        img = NSImage.alloc().initWithContentsOfFile_(str(p))
+        if img is None:
+            return None
+        img.setTemplate_(True)
+        img.setSize_(NSMakeSize(point, point))
+        return img
+
+    def _icon_button(image, tooltip, frame, tint, bg, border, target, action):
+        """A compact icon-only pill button (secondary handoff actions)."""
+        btn = NSButton.alloc().initWithFrame_(frame)
+        btn.setBordered_(False)
+        btn.setWantsLayer_(True)
+        btn.setTitle_("")
+        if image is not None:
+            btn.setImage_(image)
+            btn.setImagePosition_(NSImageOnly)
+            try:
+                btn.setContentTintColor_(tint)
+            except Exception:  # pragma: no cover - older AppKit
+                pass
+        btn.setTarget_(target)
+        btn.setAction_(action)
+        if tooltip:
+            btn.setToolTip_(tooltip)
+        layer = btn.layer()
+        if layer is not None:
+            layer.setCornerRadius_(min(frame.size.height / 2.0, 9.0))
+            layer.setBackgroundColor_(bg.CGColor() if bg is not None else None)
+            if border is not None:
+                layer.setBorderWidth_(1.0)
+                layer.setBorderColor_(border.CGColor())
         return btn
 
     class _DashboardController(NSObject):
@@ -746,7 +829,15 @@ if _APPKIT_AVAILABLE:
                 else:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.018).CGColor())
 
-            box = NSView.alloc().initWithFrame_(NSMakeRect(12, 10, 18, 18))
+            # Vertically center the checkbox on the *first text line*, not on the
+            # whole (possibly multi-line) row — multi-line directions wrap, and a
+            # fixed offset left the box visibly low. Derive the line centre from
+            # the measured single-line height.
+            TEXT_TOP = 9.0
+            BOX = 18.0
+            line_h = _measure_height("Ag", 13.5, 10000.0)
+            box_y = TEXT_TOP + line_h / 2.0 - BOX / 2.0
+            box = NSView.alloc().initWithFrame_(NSMakeRect(12, box_y, BOX, BOX))
             box.setWantsLayer_(True)
             if box.layer() is not None:
                 box.layer().setCornerRadius_(5.0)
@@ -758,7 +849,7 @@ if _APPKIT_AVAILABLE:
             btn.addSubview_(box)
             if selected:
                 chk = _label("✓", 12, _c(255, 255, 255), bold=True)
-                chk.setFrame_(NSMakeRect(13, 9, 16, 16))
+                chk.setFrame_(NSMakeRect(12, box_y - 1, BOX, 16))
                 chk.setAlignment_(1)
                 btn.addSubview_(chk)
 
@@ -766,7 +857,7 @@ if _APPKIT_AVAILABLE:
                 text,
                 13.5,
                 _cream() if selected else _cream_soft(),
-                NSMakeRect(40, 9, text_w, row_h - 16),
+                NSMakeRect(40, TEXT_TOP, text_w, row_h - 16),
             )
             btn.addSubview_(line)
             doc.addSubview_(btn)
@@ -784,46 +875,100 @@ if _APPKIT_AVAILABLE:
                 tdiv.layer().setBackgroundColor_(_c(224, 99, 58, 0.24).CGColor())
             bar.addSubview_(tdiv)
 
-            cnt = "1 kierunek wybrany" if n == 1 else f"{n} kierunki wybrane"
-            lab = _label(cnt, 12.5, _c(240, 224, 200))
-            lab.setFrame_(NSMakeRect(_READER_PAD_X, frame.size.height / 2 - 8, 170, 16))
-            bar.addSubview_(lab)
+            from src.ui import style
+
+            BTN_H = 32.0
+            BTN_Y = (frame.size.height - BTN_H) / 2.0
+            pad = _READER_PAD_X
+            white = _c(255, 255, 255)
 
             tool = getattr(config, "LLM_HANDOFF_TOOL", "claude")
             name = ho.tool_name(tool)
-            # primary CTA + switcher caret
-            cta_w = min(220.0, 96.0 + 7.0 * len(name))
-            x = frame.size.width - _READER_PAD_X - cta_w - 60 - 96 - 86 - 18
-            x = max(190.0, x)
+
+            # Secondary actions: compact, icon-only with tooltips. Keeping them
+            # square means the action row stays narrow and can never push the
+            # last button (the old "Kopiuj") off the right edge.
+            secondary = (
+                ("checklist", "Utwórz zadanie", "taskClicked:"),
+                ("calendar", "Dodaj do kalendarza", "calendarClicked:"),
+                ("doc.on.doc", "Kopiuj do schowka", "copyClicked:"),
+            )
+            ICON_W = 34.0
+            ICON_GAP = 6.0
+            CARET_W = 26.0
+            GAP_CTA_CARET = 3.0
+            GAP_CLUSTER = 16.0
+            sec_w = len(secondary) * ICON_W + (len(secondary) - 1) * ICON_GAP
+
+            def _cta_width(label):
+                # leading pad + brand glyph + gap + measured text + trailing pad
+                return 14.0 + 16.0 + 8.0 + _text_width(label, 13.0) + 16.0
+
+            def _cluster_width(cw):
+                return cw + GAP_CTA_CARET + CARET_W + GAP_CLUSTER + sec_w
+
+            # One measured, right-anchored layout — no hardcoded width guesses.
+            # Degrade gracefully under width pressure so the *actions* never clip:
+            # 1) drop the provider name from the CTA, 2) drop the status label.
+            avail = frame.size.width - 2 * pad
+            cnt = "1 kierunek wybrany" if n == 1 else f"{n} kierunki wybrane"
+            label_w = _text_width(cnt, 12.5)
+            cta_label = "Kontynuuj w " + name
+            cta_w = _cta_width(cta_label)
+            show_label = True
+            if label_w + GAP_CLUSTER + _cluster_width(cta_w) > avail:
+                cta_label = "Kontynuuj"
+                cta_w = _cta_width(cta_label)
+            if label_w + GAP_CLUSTER + _cluster_width(cta_w) > avail:
+                show_label = False
+
+            if show_label:
+                lab = _label(cnt, 12.5, _c(240, 224, 200))
+                lab.setFrame_(
+                    NSMakeRect(pad, frame.size.height / 2 - 8, label_w + 4, 16)
+                )
+                bar.addSubview_(lab)
+
+            x = max(pad, frame.size.width - pad - _cluster_width(cta_w))
+
             primary = _pill_button(
-                "▣  Kontynuuj w " + name,
-                NSMakeRect(x, 8, cta_w, 32),
-                _c(255, 255, 255), _terracotta(), _terracotta(),
+                cta_label,
+                NSMakeRect(x, BTN_Y, cta_w, BTN_H),
+                white, _terracotta(), _terracotta(),
                 self, "continueLLMClicked:",
             )
+            brand = _brand_image(tool, 15.0)
+            if brand is not None:
+                primary.setImage_(brand)
+                primary.setImagePosition_(NSImageLeft)
+                try:
+                    primary.setImageHugsTitle_(True)
+                    primary.setContentTintColor_(white)
+                except Exception:  # pragma: no cover - older AppKit
+                    pass
+            primary.setToolTip_("Przekaż wybrane kierunki do " + name)
             bar.addSubview_(primary)
+
             caret = _pill_button(
-                "⌄", NSMakeRect(x + cta_w + 4, 8, 26, 32),
-                _c(255, 255, 255), _c(224, 99, 58, 0.85), _terracotta(),
+                "⌄",
+                NSMakeRect(x + cta_w + GAP_CTA_CARET, BTN_Y, CARET_W, BTN_H),
+                white, _c(224, 99, 58, 0.85), _terracotta(),
                 self, "switchLLMClicked:",
             )
             caret.setToolTip_("Zmień narzędzie (Claude / ChatGPT / Gemini)")
             bar.addSubview_(caret)
 
-            sx = x + cta_w + 38
-            for title, sel in (
-                ("Zadanie", "taskClicked:"),
-                ("Kalendarz", "calendarClicked:"),
-                ("Kopiuj", "copyClicked:"),
-            ):
-                bw = 36.0 + 7.0 * len(title)
-                b = _pill_button(
-                    title, NSMakeRect(sx, 8, bw, 32),
+            sx = x + cta_w + GAP_CTA_CARET + CARET_W + GAP_CLUSTER
+            for symbol, tip, sel in secondary:
+                b = _icon_button(
+                    style.sf_symbol(symbol, point=14.0, weight="regular"),
+                    tip,
+                    NSMakeRect(sx, BTN_Y, ICON_W, BTN_H),
                     _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.15),
                     self, sel,
                 )
                 bar.addSubview_(b)
-                sx += bw + 8
+                sx += ICON_W + ICON_GAP
             view.addSubview_(bar)
 
         @objc.python_method

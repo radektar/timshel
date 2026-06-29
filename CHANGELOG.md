@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Insights handoff bar — buttons no longer misalign or clip.** The action row
+  was positioned with hardcoded width guesses that diverged from the real button
+  widths, so the last button ("Kopiuj") could fall off the right edge. It is now
+  one measured, right-anchored layout that degrades gracefully under width
+  pressure (drops the provider name, then the selection-count label) so the
+  actions never clip. The secondary actions (task / calendar / clipboard) become
+  compact **icon-only** buttons (SF Symbols + tooltips), and the primary CTA now
+  carries the connected provider's **brand mark** — Claude / OpenAI(ChatGPT) /
+  Gemini — vendored locally under `assets/brands/` (offline; never fetched at
+  runtime) and tinted as a template image. Window min-width raised to keep the
+  full bar comfortable. The direction **checkbox** is now vertically centred on
+  the first text line instead of sitting low on multi-line rows.
+
 ### Added
 - **The action-rate KPI is now measurable — `make signal-report`.** The
   action-engine writes `action_taken` events; this is the read side that closes
