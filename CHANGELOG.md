@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Insights window — pixel-perfect port of the Claude Design component redesign.**
+  Implements `design-system/pages/insights-window-components-redesign.html` 1:1:
+  one **radius family** (controls 6px, checkbox 5px, rows/cards 12px); the triage
+  **segment is now a hybrid** segmented control (active segment carries icon +
+  label + count and fills the free width; inactive collapse to icon + count) that
+  fits the 236px rail; the **direction checkbox** is weightier and aligned to the
+  first text line; the **rail row** gets a 26px sigil, a `.07` active fill + gold
+  stripe, and a bookmark glyph on kept items; the **handoff CTA** becomes a split
+  pill (white brand chip with the provider glyph + a joined switcher caret) over a
+  quiet icon cluster for the secondary actions; the **footer** keeps the jade
+  Zachowaj (now with a bookmark glyph) against a ghost Odrzuć; palette aligned to
+  the on-dark design tokens (`--terra #D9542A`, `--terra-deep #C24010`).
+
 ### Added
 - **Triage navigation — Nowe / Zachowane / Odrzucone.** The rail now has a
   segmented control (count over label) to switch among the three triage views,
