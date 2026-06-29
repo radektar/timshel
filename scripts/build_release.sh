@@ -27,13 +27,18 @@ case "${PLATFORM}" in
         
         # 3. Generate checksums
         echo "--- Step 3: Generating checksums ---"
-        VERSION=$(python3 -c "import setup_app; print(setup_app.APP_VERSION)" 2>/dev/null || echo "2.0.0-alpha.7")
-        DMG_FILE="dist/${APP_NAME}-${VERSION}-ARM64-UNSIGNED.dmg"
-        
-        if [ -f "${DMG_FILE}" ]; then
+        # Checksum the DMG that Step 2 actually produced — don't reconstruct its
+        # name from a version string read by the *system* python3 (which lacks
+        # this project's deps, so the import failed, fell back to a wrong name,
+        # and the checksum was silently skipped).
+        DMG_FILE="$(ls -t dist/${APP_NAME}-*-ARM64-UNSIGNED.dmg 2>/dev/null | head -1)"
+
+        if [ -n "${DMG_FILE}" ] && [ -f "${DMG_FILE}" ]; then
             shasum -a 256 "${DMG_FILE}" > "${DMG_FILE}.sha256"
             echo "✅ Checksum generated: ${DMG_FILE}.sha256"
             echo "   $(cat "${DMG_FILE}.sha256")"
+        else
+            echo "⚠️  No DMG found in dist/ to checksum"
         fi
         
         echo ""
