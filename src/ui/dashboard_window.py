@@ -39,6 +39,7 @@ try:
         NSButton,
         NSColor,
         NSColorSpace,
+        NSCursor,
         NSFont,
         NSFontAttributeName,
         NSGradient,
@@ -50,6 +51,10 @@ try:
         NSMakeSize,
         NSScrollView,
         NSTextField,
+        NSTrackingActiveAlways,
+        NSTrackingArea,
+        NSTrackingInVisibleRect,
+        NSTrackingMouseEnteredAndExited,
         NSView,
         NSWindow,
         NSWindowStyleMaskClosable,
@@ -102,6 +107,32 @@ def _gold():
 
 def _terracotta():
     return _c(224, 99, 58)
+
+
+def _jade():
+    # Keep ("Zachowaj") reads as the local/private affirmative (design token).
+    return _c(70, 177, 126)
+
+
+def _shift(color, toward, amt):
+    """Blend ``color`` toward white (``toward=1``) or black (``toward=0``).
+
+    Used to derive hover (brighter) / pressed (darker) variants from a base fill
+    so every interactive button reacts without per-call-site colours.
+    """
+    if color is None:
+        return None
+    try:
+        r = color.redComponent()
+        g = color.greenComponent()
+        b = color.blueComponent()
+        a = color.alphaComponent()
+    except Exception:  # pragma: no cover - non-RGB colourspace
+        return color
+    r += (toward - r) * amt
+    g += (toward - g) * amt
+    b += (toward - b) * amt
+    return NSColor.colorWithRed_green_blue_alpha_(r, g, b, a)
 
 
 def _hex(hexstr: str):
@@ -271,26 +302,163 @@ if _APPKIT_AVAILABLE:
         v.stroke_hex = hexcol
         return v
 
-    def _pill_button(title, frame, fg, bg, border, target, action, size=13.0):
-        from AppKit import NSAttributedString, NSForegroundColorAttributeName
+    _HOVER_OPTS = (
+        NSTrackingMouseEnteredAndExited
+        | NSTrackingActiveAlways
+        | NSTrackingInVisibleRect
+    )
 
-        btn = NSButton.alloc().initWithFrame_(frame)
-        btn.setBordered_(False)
-        btn.setWantsLayer_(True)
-        btn.setFont_(NSFont.systemFontOfSize_(size))
-        btn.setTarget_(target)
-        btn.setAction_(action)
-        layer = btn.layer()
-        if layer is not None:
-            layer.setCornerRadius_(min(frame.size.height / 2.0, 9.0))
+    class _PillButton(NSButton):
+        """A borderless pill/icon button with real interactive states.
+
+        The Claude Design system specs hover (brighten + lift), a pressed state
+        and ``cursor: pointer`` for every action; a plain borderless ``NSButton``
+        gives none of these, so the bar read as inert. This adds: a pointing-hand
+        cursor, a hover fill (derived by brightening the base), a darker pressed
+        fill, an optional foreground-colour shift (ghost buttons), and a soft
+        shadow on hover for the lift. Pure colour swaps on a tracking area — no
+        layout churn, so no enter/exit flicker.
+        """
+
+        def initWithFrame_(self, frame):
+            self = objc.super(_PillButton, self).initWithFrame_(frame)
+            if self is None:
+                return None
+            self.setBordered_(False)
+            self.setWantsLayer_(True)
+            self._bg = self._bg_hover = self._bg_press = None
+            self._fg = self._fg_hover = None
+            self._tint = self._tint_hover = None
+            self._border = self._border_hover = None
+            self._title = ""
+            self._hovering = False
+            self._pressed = False
+            return self
+
+        @objc.python_method
+        def configure(self, **kw):
+            for k, v in kw.items():
+                setattr(self, "_" + k, v)
+            self._apply()
+
+        @objc.python_method
+        def _apply(self):
+            from AppKit import NSAttributedString, NSForegroundColorAttributeName
+
+            layer = self.layer()
+            if layer is None:
+                return
+            if self._pressed and self._bg_press is not None:
+                bg = self._bg_press
+            elif self._hovering and self._bg_hover is not None:
+                bg = self._bg_hover
+            else:
+                bg = self._bg
             layer.setBackgroundColor_(bg.CGColor() if bg is not None else None)
+
+            border = (
+                self._border_hover
+                if (self._hovering and self._border_hover is not None)
+                else self._border
+            )
             if border is not None:
                 layer.setBorderWidth_(1.0)
                 layer.setBorderColor_(border.CGColor())
-        btn.setAttributedTitle_(
-            NSAttributedString.alloc().initWithString_attributes_(
-                title, {NSForegroundColorAttributeName: fg}
+            else:
+                layer.setBorderWidth_(0.0)
+
+            fg = (
+                self._fg_hover
+                if (self._hovering and self._fg_hover is not None)
+                else self._fg
             )
+            if fg is not None and self._title:
+                self.setAttributedTitle_(
+                    NSAttributedString.alloc().initWithString_attributes_(
+                        self._title, {NSForegroundColorAttributeName: fg}
+                    )
+                )
+            tint = (
+                self._tint_hover
+                if (self._hovering and self._tint_hover is not None)
+                else self._tint
+            )
+            if tint is not None:
+                try:
+                    self.setContentTintColor_(tint)
+                except Exception:  # pragma: no cover - older AppKit
+                    pass
+
+            # Soft shadow on hover = the design's 1px "lift", without a frame
+            # nudge (which would re-fire the tracking area and flicker).
+            if self._hovering:
+                layer.setShadowColor_(_c(0, 0, 0).CGColor())
+                layer.setShadowOpacity_(0.30)
+                layer.setShadowRadius_(5.0)
+                layer.setShadowOffset_(NSMakeSize(0, -2))
+            else:
+                layer.setShadowOpacity_(0.0)
+
+        def updateTrackingAreas(self):
+            objc.super(_PillButton, self).updateTrackingAreas()
+            for area in list(self.trackingAreas()):
+                self.removeTrackingArea_(area)
+            self.addTrackingArea_(
+                NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+                    self.bounds(), _HOVER_OPTS, self, None
+                )
+            )
+
+        def resetCursorRects(self):
+            self.addCursorRect_cursor_(
+                self.bounds(), NSCursor.pointingHandCursor()
+            )
+
+        def mouseEntered_(self, event):
+            self._hovering = True
+            self._apply()
+
+        def mouseExited_(self, event):
+            self._hovering = False
+            self._pressed = False
+            self._apply()
+
+        def mouseDown_(self, event):
+            self._pressed = True
+            self._apply()
+            objc.super(_PillButton, self).mouseDown_(event)
+            self._pressed = False
+            self._apply()
+
+    def _pill_button(title, frame, fg, bg, border, target, action, size=13.0):
+        """A text pill button with hover/pressed/cursor states (see _PillButton).
+
+        ``bg``/``border`` may be ``None`` for a ghost button — hover then shifts
+        the *text* brighter (the design's Dismiss treatment) instead of the fill.
+        """
+        btn = _PillButton.alloc().initWithFrame_(frame)
+        btn.setFont_(NSFont.systemFontOfSize_(size))
+        btn.setTarget_(target)
+        btn.setAction_(action)
+        if btn.layer() is not None:
+            btn.layer().setCornerRadius_(min(frame.size.height / 2.0, 9.0))
+        if bg is not None:
+            bg_hover = _shift(bg, 1.0, 0.12)  # brighten the fill
+            bg_press = _shift(bg, 0.0, 0.14)  # darken on press
+            fg_hover = None
+        else:
+            bg_hover = _c(255, 255, 255, 0.06)  # faint wash for ghost buttons
+            bg_press = _c(255, 255, 255, 0.10)
+            fg_hover = _shift(fg, 1.0, 0.55)  # brighten the label instead
+        btn.configure(
+            title=title,
+            fg=fg,
+            fg_hover=fg_hover,
+            bg=bg,
+            bg_hover=bg_hover,
+            bg_press=bg_press,
+            border=border,
+            border_hover=_shift(border, 1.0, 0.25) if border is not None else None,
         )
         return btn
 
@@ -346,29 +514,33 @@ if _APPKIT_AVAILABLE:
         return img
 
     def _icon_button(image, tooltip, frame, tint, bg, border, target, action):
-        """A compact icon-only pill button (secondary handoff actions)."""
-        btn = NSButton.alloc().initWithFrame_(frame)
-        btn.setBordered_(False)
-        btn.setWantsLayer_(True)
+        """A compact icon-only pill button with hover/pressed/cursor states.
+
+        Icon-only secondaries read as decoration unless they react — so the
+        resting fill is a touch stronger than before and hover brightens both the
+        fill and the glyph tint (the design's affordance via colour shift).
+        """
+        btn = _PillButton.alloc().initWithFrame_(frame)
         btn.setTitle_("")
         if image is not None:
             btn.setImage_(image)
             btn.setImagePosition_(NSImageOnly)
-            try:
-                btn.setContentTintColor_(tint)
-            except Exception:  # pragma: no cover - older AppKit
-                pass
         btn.setTarget_(target)
         btn.setAction_(action)
         if tooltip:
             btn.setToolTip_(tooltip)
-        layer = btn.layer()
-        if layer is not None:
-            layer.setCornerRadius_(min(frame.size.height / 2.0, 9.0))
-            layer.setBackgroundColor_(bg.CGColor() if bg is not None else None)
-            if border is not None:
-                layer.setBorderWidth_(1.0)
-                layer.setBorderColor_(border.CGColor())
+        if btn.layer() is not None:
+            btn.layer().setCornerRadius_(min(frame.size.height / 2.0, 9.0))
+        bg_hover = _shift(bg, 1.0, 0.10) if bg is not None else _c(255, 255, 255, 0.12)
+        btn.configure(
+            tint=tint,
+            tint_hover=_shift(tint, 1.0, 0.4),
+            bg=bg,
+            bg_hover=bg_hover,
+            bg_press=_c(255, 255, 255, 0.16),
+            border=border,
+            border_hover=_shift(border, 1.0, 0.35) if border is not None else None,
+        )
         return btn
 
     class _DashboardController(NSObject):
@@ -965,7 +1137,7 @@ if _APPKIT_AVAILABLE:
                     style.sf_symbol(symbol, point=14.0, weight="regular"),
                     tip,
                     NSMakeRect(sx, BTN_Y, ICON_W, BTN_H),
-                    _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.15),
+                    _cream_soft(), _c(255, 255, 255, 0.07), _c(255, 255, 255, 0.16),
                     self, sel,
                 )
                 bar.addSubview_(b)
@@ -984,17 +1156,21 @@ if _APPKIT_AVAILABLE:
                 tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
             foot.addSubview_(tdiv)
 
+            # Dismiss = ghost (hover brightens the label); Keep = jade pill, the
+            # design's local/private affirmative — so the two no longer read as
+            # the same grey non-button.
             dismiss = _pill_button(
-                "Odrzuć", NSMakeRect(frame.size.width - 220, 8, 90, 30),
-                _muted(), None, None, self, "dismissClicked:",
+                "Odrzuć", NSMakeRect(frame.size.width - 232, 8, 92, 30),
+                _c(176, 162, 141), None, None, self, "dismissClicked:",
             )
             foot.addSubview_(dismiss)
             dot = _label("·", 13, _c(70, 68, 61))
-            dot.setFrame_(NSMakeRect(frame.size.width - 128, 12, 8, 16))
+            dot.setFrame_(NSMakeRect(frame.size.width - 134, 12, 8, 16))
             foot.addSubview_(dot)
             keep = _pill_button(
-                "Zachowaj", NSMakeRect(frame.size.width - 116, 8, 100, 30),
-                _c(126, 117, 101), None, None, self, "keepClicked:",
+                "Zachowaj", NSMakeRect(frame.size.width - 122, 8, 106, 30),
+                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(70, 177, 126, 0.42),
+                self, "keepClicked:",
             )
             foot.addSubview_(keep)
             view.addSubview_(foot)

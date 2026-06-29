@@ -17,10 +17,13 @@ try:
     from AppKit import (
         NSButton,
         NSColor,
+        NSCursor,
         NSTrackingActiveAlways,
         NSTrackingArea,
         NSTrackingInVisibleRect,
         NSTrackingMouseEnteredAndExited,
+        NSView,
+        NSWindowBelow,
     )
 
     _APPKIT_AVAILABLE = True
@@ -37,6 +40,17 @@ if _APPKIT_AVAILABLE:
     )
 
     class _HoverButton(NSButton):
+        """A borderless row button that highlights on hover.
+
+        Hover is painted as a non-destructive **wash overlay** inserted behind the
+        row's content, so call sites that set their own resting background (the
+        rail rows, the direction rows — terracotta tints) keep it; the old code
+        stamped the layer background directly and clobbered those tints on exit.
+        The wash is a brand-neutral white (the design's ``rgba(255,255,255,.04)``
+        conn-item hover), not the system selection blue. Plus a pointing-hand
+        cursor, so the row reads as clickable.
+        """
+
         def initWithFrame_(self, frame):
             self = objc.super(_HoverButton, self).initWithFrame_(frame)
             if self is None:
@@ -44,6 +58,7 @@ if _APPKIT_AVAILABLE:
             self.setWantsLayer_(True)
             self.layer().setCornerRadius_(6.0)
             self._selected = False
+            self._wash = None
             return self
 
         def updateTrackingAreas(self):
@@ -55,33 +70,51 @@ if _APPKIT_AVAILABLE:
             )
             self.addTrackingArea_(area)
 
-        # Persistent selection (e.g. the active sidebar item). Hover paints over
-        # it; leaving restores the selected fill instead of clearing it.
+        def resetCursorRects(self):
+            self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
+
+        # Persistent selection (e.g. the active sidebar item) — still painted on
+        # the layer background; the wash composites on top of it on hover.
         def setSelected_(self, flag):
             self._selected = bool(flag)
             self._applyRestingBackground()
 
         @objc.python_method
         def _applyRestingBackground(self):
-            if self._selected:
-                colour = NSColor.selectedContentBackgroundColor().CGColor()
-            else:
-                colour = NSColor.clearColor().CGColor()
+            colour = (
+                NSColor.selectedContentBackgroundColor().CGColor()
+                if self._selected
+                else NSColor.clearColor().CGColor()
+            )
             self.layer().setBackgroundColor_(colour)
 
+        @objc.python_method
+        def _ensure_wash(self):
+            if self._wash is None:
+                wash = NSView.alloc().initWithFrame_(self.bounds())
+                wash.setWantsLayer_(True)
+                wash.setAutoresizingMask_(2 | 16)  # width + height sizable
+                if wash.layer() is not None and self.layer() is not None:
+                    wash.layer().setCornerRadius_(self.layer().cornerRadius())
+                self.addSubview_positioned_relativeTo_(wash, NSWindowBelow, None)
+                self._wash = wash
+            return self._wash
+
         def mouseEntered_(self, event):
-            self.layer().setBackgroundColor_(
-                NSColor.selectedContentBackgroundColor()
-                .colorWithAlphaComponent_(0.5 if not self._selected else 1.0)
-                .CGColor()
-            )
+            wash = self._ensure_wash()
+            if wash.layer() is not None:
+                alpha = 0.08 if self._selected else 0.05
+                wash.layer().setBackgroundColor_(
+                    NSColor.whiteColor().colorWithAlphaComponent_(alpha).CGColor()
+                )
 
         def mouseExited_(self, event):
-            self._applyRestingBackground()
+            if self._wash is not None and self._wash.layer() is not None:
+                self._wash.layer().setBackgroundColor_(NSColor.clearColor().CGColor())
 
         def hitTest_(self, point):
             # The whole row is one click target; decorative icon/label children
-            # must not swallow the click.
+            # (and the wash overlay) must not swallow the click.
             if objc.super(_HoverButton, self).hitTest_(point) is not None:
                 return self
             return None

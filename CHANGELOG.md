@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Insights buttons now read as interactive — hover, pressed, cursor.** Per the
+  Claude Design system (which specs `cursor:pointer`, a hover brighten + lift,
+  and a pressed state), the action bar and footer were inert borderless buttons
+  with none of it; the only hover infra (`hover.py`) also painted the system
+  selection **blue**, off-brand. Introduced one `_PillButton` with a pointing-hand
+  cursor, a hover fill (brightened from the base), a darker pressed fill, an
+  optional label-brighten for ghost buttons, and a soft shadow for the lift —
+  routed across the CTA, switcher, secondary icons and Zachowaj / Odrzuć. The
+  rail / direction-row hover (`_HoverButton`) now paints a brand-neutral wash via
+  a non-destructive overlay (so call-site tints survive) and shows the pointing
+  cursor. **Zachowaj** is now a jade pill (the local/private affirmative) instead
+  of the same grey as Odrzuć.
+
 - **Insights handoff bar — buttons no longer misalign or clip.** The action row
   was positioned with hardcoded width guesses that diverged from the real button
   widths, so the last button ("Kopiuj") could fall off the right edge. It is now
