@@ -1,417 +1,578 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pl">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Malinche — z nagrań jeden system</title>
-<meta name="description" content="Masz transkrypty wszystkiego, a nic z nich nie wynika. Malinche czyta nagrania razem — łączy, zestawia, podsuwa powiązania. Lokalnie, na Twoim Macu." />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-<!-- Design tokens: canonical source in design-system/tokens.css, kept in sync here (site/ is the deploy root). -->
-<link rel="stylesheet" href="tokens.css" />
+<meta name="description" content="Masz transkrypty wszystkiego, a nic z nich nie wynika. Malinche czyta nagrania razem — łączy, zestawia, podsuwa powiązania. Lokalnie, na Twoim Macu.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="landing-konstelacja.css">
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;scroll-behavior:smooth}
-  body{
-    font-family:"Inter",system-ui,sans-serif;
-    color:var(--ink);
-    background:var(--cream);
-    line-height:1.6;
-    font-size:clamp(1rem,.95rem + .35vw,1.18rem);
-    position:relative;
-    overflow-x:hidden;
+  /* Parse-time token fallbacks — tokens.css (loaded via <link>) overrides with
+     identical values. Guarantees no var() is undefined when this block parses. */
+  :root{
+    --font-display:"Neue Montreal",system-ui,sans-serif;
+    --font-body:"Neue Haas Grotesk",system-ui,sans-serif;
+    --font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Courier New",monospace;
+    --paper:#FFFFFF;--panel:#F3F1EB;--panel-2:#ECEAE3;--obsidian:#141414;
+    --ink:#1A1A1A;--ink-soft:#6E6A64;--terracotta:#C24010;--terracotta-lit:#E0633A;
+    --grad-gold:#E7B45C;--grad-jade:#46B17E;
+    --border-base:rgba(20,20,20,0.10);--border-strong:rgba(20,20,20,0.22);
+    --text-h1:clamp(2.6rem,7.5vw,6rem);--text-h2:clamp(2rem,calc(1.4rem + 2.6vw),3.5rem);
+    --text-lead:clamp(1.06rem,calc(1rem + 0.45vw),1.32rem);--text-base:1rem;
+    --text-sm:0.9375rem;--text-xs:0.8125rem;
+    --leading-normal:1.6;--tracking-tight:-0.022em;--tracking-eyebrow:0.1em;
+    --radius-lg:0.875rem;--radius-2xl:1.5rem;--radius-3xl:1.75rem;--radius-4xl:2.25rem;
+    --radius-pill:999px;--radius-button:0.375rem;
+    --shadow-card:0 1px 2px rgba(20,20,20,0.04),0 16px 40px -28px rgba(20,20,20,0.20);
+    --shadow-float:0 28px 70px -28px rgba(20,20,20,0.28);
+    --shadow-chip:inset 0 0 0 1px rgba(20,20,20,0.05);
   }
-  /* film grain — warmth/craft, very current */
-  body::before{
-    content:"";position:fixed;inset:0;z-index:1;pointer-events:none;
-    opacity:.05;mix-blend-mode:multiply;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-  .wrap{max-width:var(--maxw);margin-inline:auto;padding-inline:clamp(1.25rem,4vw,3rem)}
-  a{color:inherit}
-  .accent{color:var(--terracotta)}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0}
+  body{font-family:var(--font-body);background:var(--paper);color:var(--ink);
+    -webkit-font-smoothing:antialiased;line-height:var(--leading-normal);letter-spacing:-0.005em}
+  .wrap{max-width:1160px;margin-inline:auto;padding-inline:clamp(1.25rem,5vw,3rem)}
+  a{color:inherit;text-decoration:none}
+  h1,h2,h3,h4{font-family:var(--font-display);font-weight:500;margin:0;letter-spacing:var(--tracking-tight)}
 
-  /* ---- type ---- */
-  h1,h2,h3{font-family:"Fraunces","Fraunces",Georgia,serif;font-weight:500;line-height:1.02;letter-spacing:-.018em}
-  h1{font-size:clamp(2.15rem,7.4vw,5.6rem);overflow-wrap:break-word;hyphens:manual}
-  h2{font-size:clamp(1.9rem,3.6vw,3.1rem);letter-spacing:-.02em}
-  h3{font-family:"Inter",sans-serif;font-weight:600;font-size:1.06rem;letter-spacing:0}
-  .eyebrow{font-size:.78rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--terracotta)}
-  .lead{font-size:clamp(1.12rem,1rem + .7vw,1.42rem);color:var(--ink);max-width:48ch}
-  .muted{color:var(--ink-soft)}
-  p{max-width:var(--measure)}
+  /* ---- grainy gradient engine ---- */
+  .grain{position:relative;overflow:hidden}
+  .grain::after{content:"";position:absolute;inset:-2px;background-image:var(--motif-grain);
+    background-size:200px 200px;mix-blend-mode:overlay;opacity:.5;pointer-events:none}
+  .mesh-a{background:
+    radial-gradient(58% 64% at 22% 26%, #F2C879 0%, transparent 60%),
+    radial-gradient(54% 60% at 80% 18%, #7FA0F7 0%, transparent 58%),
+    radial-gradient(60% 72% at 64% 90%, #5BC495 0%, transparent 62%),
+    radial-gradient(70% 80% at 38% 70%, #EE9F7E 0%, transparent 70%),
+    #F4D9A8}
+  .mesh-b{background:
+    radial-gradient(60% 70% at 26% 30%, #8FB0FB 0%, transparent 60%),
+    radial-gradient(58% 64% at 82% 70%, #B79BF0 0%, transparent 58%),
+    radial-gradient(64% 72% at 56% 18%, #6FD3C2 0%, transparent 62%),
+    #C9D6FA}
+  .mesh-c{background:
+    radial-gradient(60% 68% at 24% 28%, #7DD3A0 0%, transparent 60%),
+    radial-gradient(56% 62% at 80% 24%, #F2C879 0%, transparent 58%),
+    radial-gradient(64% 74% at 60% 86%, #6FCFD3 0%, transparent 62%),
+    #BFE7CD}
+  .mesh-d{background:
+    radial-gradient(58% 66% at 20% 30%, #EE9F7E 0%, transparent 60%),
+    radial-gradient(56% 62% at 84% 26%, #F2C879 0%, transparent 56%),
+    radial-gradient(62% 72% at 58% 88%, #8FB0FB 0%, transparent 62%),
+    radial-gradient(70% 80% at 40% 64%, #B79BF0 0%, transparent 72%),
+    #F3CDA6}
 
   /* ---- nav ---- */
-  /* nav: floats transparent over the dark hero, cream-glass once scrolled into the body */
-  header{position:fixed;top:0;left:0;right:0;z-index:30;background:transparent;border-bottom:1px solid transparent;transition:background .35s,border-color .35s,backdrop-filter .35s}
-  header.stuck{background:rgba(244,233,207,.82);backdrop-filter:saturate(140%) blur(12px);-webkit-backdrop-filter:saturate(140%) blur(12px);border-bottom-color:var(--line)}
-  nav{display:flex;align-items:center;justify-content:space-between;padding-block:clamp(1.1rem,2.5vw,1.7rem)}
-  .brand{display:flex;align-items:center;gap:.6rem;font-family:"Fraunces",serif;font-weight:600;font-size:1.28rem;letter-spacing:-.01em;color:var(--cream-hi);transition:color .35s}
-  header.stuck .brand{color:var(--ink)}
-  .chip{width:34px;height:34px;border-radius:10px;background:linear-gradient(180deg,var(--cream-hi),var(--cream));display:grid;place-items:center;box-shadow:0 1px 2px rgba(26,16,8,.18),inset 0 1px 0 rgba(255,255,255,.6);flex:0 0 auto}
-  .nav-links{display:flex;align-items:center;gap:1.4rem;font-size:.95rem}
-  .nav-links a{text-decoration:none;color:rgba(244,233,207,.82);font-weight:500;transition:color .2s}
-  .nav-links a:hover{color:#fff}
-  header.stuck .nav-links a{color:var(--ink-soft)}
-  header.stuck .nav-links a:hover{color:var(--ink)}
+  header{position:sticky;top:0;z-index:40;background:rgba(255,255,255,.72);
+    backdrop-filter:saturate(160%) blur(14px);-webkit-backdrop-filter:saturate(160%) blur(14px);
+    border-bottom:1px solid transparent;transition:border-color .3s}
+  header.stuck{border-bottom-color:var(--border-base)}
+  nav{display:flex;align-items:center;justify-content:space-between;height:72px;gap:1.5rem}
+  .brand{display:flex;align-items:center;gap:.55rem;font-family:var(--font-display);font-weight:500;font-size:1.22rem}
+  /* Lockup B — gradientowy sygnet (fala) w masce, bez kafla, na jasnym headerze */
+  .brand .mark{width:34px;height:32px;flex:0 0 auto;border-radius:0;
+    -webkit-mask:var(--logo-sygnet) center/contain no-repeat;mask:var(--logo-sygnet) center/contain no-repeat}
+  .nav-mid{display:flex;align-items:center;gap:2rem;font-size:var(--text-sm);color:var(--ink-soft)}
+  .nav-mid a:hover{color:var(--ink)}
+  .nav-end{display:flex;align-items:center;gap:1.1rem;font-size:var(--text-sm)}
+  .nav-end .ghost{color:var(--ink-soft)}
+  .nav-end .ghost:hover{color:var(--ink)}
+  @media(max-width:860px){.nav-mid{display:none}}
 
   /* ---- buttons ---- */
-  .btn{display:inline-flex;align-items:center;gap:.5rem;font-weight:600;font-size:.98rem;
-    padding:.85rem 1.4rem;border-radius:999px;text-decoration:none;transition:transform .15s,box-shadow .2s,background .2s;border:1px solid transparent}
-  .btn-primary{background:var(--terracotta);color:#fff;box-shadow:0 6px 20px -8px rgba(194,64,16,.7)}
-  .btn-primary:hover{background:var(--terracotta-deep);transform:translateY(-1px)}
-  .btn-ghost{border-color:var(--line);color:var(--ink);background:transparent}
-  .btn-ghost:hover{border-color:var(--ink);background:rgba(36,30,24,.03)}
+  .btn{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--font-body);font-weight:500;
+    font-size:var(--text-sm);padding:.7rem 1.25rem;border-radius:var(--radius-button);cursor:pointer;
+    border:1px solid transparent;transition:transform .15s,background .2s,border-color .2s,color .2s;white-space:nowrap}
+  .btn-dark{background:var(--obsidian);color:#fff}
+  .btn-dark:hover{background:#000;transform:translateY(-1px)}
+  .btn-light{background:#fff;color:var(--ink);border-color:var(--border-strong)}
+  .btn-light:hover{border-color:var(--ink)}
+  .btn-lg{font-size:var(--text-base);padding:.92rem 1.6rem}
+  .arr{font-size:1.05em;line-height:0;transform:translateY(.5px)}
 
-  /* ---- hero: dark band with live force-graph ---- */
-  .hero-dark{position:relative;z-index:2;overflow:hidden;
-    background:radial-gradient(120% 120% at 62% 38%, #20202B 0%, #18161F 46%, #110F16 100%);
-    min-height:min(86vh,780px)}
-  #hero-graph{position:absolute;inset:0;z-index:1}
-  #hero-graph canvas{display:block}
-  .hero-scrim{position:absolute;inset:0;z-index:2;pointer-events:none;
-    background:linear-gradient(90deg, rgba(15,13,20,.95) 0%, rgba(15,13,20,.72) 26%, rgba(15,13,20,.12) 50%, rgba(15,13,20,0) 62%)}
-  .hero-greca{position:absolute;left:0;right:0;bottom:0;height:16px;z-index:2;opacity:.14;pointer-events:none;
-    background-repeat:repeat-x;background-position:center;background-size:auto 16px;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='16' viewBox='0 0 56 16'%3E%3Cpath d='M4 16 V12 H12 V8 H20 V5 H36 V8 H44 V12 H52 V16 Z' fill='%23C24010'/%3E%3C/svg%3E")}
-  .hero-inner{position:relative;z-index:3;display:flex;align-items:center;min-height:min(86vh,780px)}
-  .hero-copy{max-width:560px;padding-block:clamp(3rem,9vh,6rem)}
-  .hero-dark .eyebrow{color:#D9542A;display:inline-block;margin-bottom:1.3rem}
-  .hero-dark h1{color:var(--cream-hi);max-width:15ch}
-  .hero-dark h1 .accent{color:#D9542A}
-  .hero-dark .lead{color:#C9BBA6;margin-top:1.4rem}
-  .cta-row{display:flex;gap:.8rem;flex-wrap:wrap;margin-top:2rem}
-  .btn-ghost-dark{border-color:rgba(244,233,207,.28);color:var(--cream)}
-  .btn-ghost-dark:hover{border-color:rgba(244,233,207,.7);background:rgba(244,233,207,.06)}
-  .local{display:inline-flex;align-items:center;gap:.5rem;margin-top:1.5rem;font-size:.84rem;font-weight:600;color:var(--jade);letter-spacing:.02em}
-  .local::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--jade);box-shadow:0 0 0 4px rgba(5,120,87,.18)}
+  /* ---- hero (full-bleed knowledge graph) ---- */
+  .hero{position:relative;overflow:hidden;min-height:min(90vh,840px);display:flex;align-items:center;
+    background:radial-gradient(120% 120% at 78% 30%, #FAF7F0 0%, var(--paper) 52%, #FBFAF6 100%)}
+  .hero .gcanvas{position:absolute;inset:0;z-index:1}
+  .hero .gcanvas canvas{display:block}
+  .hero .bleed-scrim{position:absolute;inset:0;z-index:2;pointer-events:none;
+    background:linear-gradient(90deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.86) 28%,
+      rgba(255,255,255,.30) 50%, rgba(255,255,255,0) 64%)}
+  .hero-inner{position:relative;z-index:3;width:100%}
+  .hero-copy{max-width:600px;padding-block:clamp(3rem,9vh,6rem)}
+  .eyebrow{display:inline-flex;align-items:center;gap:.5rem;font-size:var(--text-xs);font-weight:500;
+    color:var(--ink-soft);background:var(--panel);border:1px solid var(--border-base);
+    padding:.4rem .8rem;border-radius:var(--radius-pill);margin-bottom:1.6rem}
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--grad-jade)}
+  .hero h1{font-size:calc(0.82 * var(--text-h1));line-height:1.0;letter-spacing:-.032em;max-width:18ch}
+  .hero h1 .accent{color:var(--terracotta)}
+  .hero .lead{font-size:var(--text-lead);color:var(--ink-soft);max-width:44ch;margin:1.5rem 0 0;line-height:1.5}
+  .hero-cta{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:2rem}
+  .trust{margin-top:1.7rem;font-size:var(--text-sm);color:var(--ink-soft)}
 
-  /* hero overlay cards (desktop only) */
-  .hero-card{position:absolute;z-index:4;width:248px;background:rgba(28,24,32,.93);
-    border:1px solid rgba(217,84,42,.34);border-radius:13px;padding:11px 14px;
-    box-shadow:0 18px 50px -20px rgba(0,0,0,.75);backdrop-filter:blur(7px);
-    opacity:0;transform:translateY(6px);transition:opacity .22s,transform .22s;pointer-events:none}
-  .hero-card.show{opacity:1;transform:translateY(0)}
-  .hero-card .d{font-size:11.5px;font-weight:600;letter-spacing:.02em;color:#D9542A;margin-bottom:5px}
-  .hero-card .d span{color:#9A8C7B;font-weight:500}
-  .hero-card .t{font-family:"Fraunces",Georgia,serif;font-size:15.5px;line-height:1.34;color:var(--cream-hi)}
-  .hero-concl{position:absolute;z-index:5;width:290px;background:rgba(16,14,20,.96);
-    border:1px solid rgba(214,176,51,.42);border-radius:14px;padding:13px 16px;
-    box-shadow:0 22px 60px -22px rgba(0,0,0,.85);
-    opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s;pointer-events:none}
-  .hero-concl.show{opacity:1;transform:translateY(0)}
-  .hero-concl .h{font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--gold);margin-bottom:7px;display:flex;align-items:center;gap:.45rem}
-  .hero-concl .h::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(214,176,51,.2)}
-  .hero-concl .t{font-family:"Fraunces",Georgia,serif;font-size:16px;line-height:1.36;color:var(--cream)}
+  /* graph overlay cards (engine-mounted) */
+  .hg-card{position:absolute;z-index:6;width:248px;border-radius:13px;padding:11px 14px;
+    opacity:0;transform:translateY(6px);transition:opacity .22s,transform .22s;pointer-events:none;
+    background:#fff;border:1px solid var(--border-base);box-shadow:var(--shadow-card)}
+  .hg-card.show{opacity:1;transform:translateY(0)}
+  .hg-card .d{font-size:11.5px;font-weight:600;letter-spacing:.02em;margin-bottom:5px;color:var(--terracotta)}
+  .hg-card .d span{color:var(--ink-soft);font-weight:500}
+  .hg-card .t{font-family:var(--font-display);font-weight:500;font-size:15px;line-height:1.34;color:var(--ink)}
+  .hg-concl{position:absolute;z-index:7;width:290px;border-radius:14px;padding:13px 16px;
+    opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s;pointer-events:none;
+    background:#fff;border:1px solid rgba(201,148,58,.5);box-shadow:var(--shadow-float)}
+  .hg-concl.show{opacity:1;transform:translateY(0)}
+  .hg-concl .h{font-size:11.5px;font-weight:700;letter-spacing:.04em;margin-bottom:7px;display:flex;
+    align-items:center;gap:.45rem;color:#A8761E}
+  .hg-concl .h::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--grad-gold);
+    box-shadow:0 0 0 3px rgba(231,180,92,.25)}
+  .hg-concl .t{font-family:var(--font-display);font-weight:500;font-size:15.5px;line-height:1.36;color:var(--ink)}
+
   @media(max-width:980px){
-    .hero-card,.hero-concl{display:none!important}
-    .hero-scrim{background:linear-gradient(180deg, rgba(15,13,20,.55) 0%, rgba(15,13,20,.8) 58%, rgba(15,13,20,.92) 100%)}
-    .hero-copy{max-width:none;text-align:center;margin-inline:auto;padding-block:clamp(4rem,12vh,7rem)}
-    .hero-dark h1,.hero-dark .lead{margin-inline:auto}
-    .cta-row{justify-content:center}
+    .hero{min-height:auto;padding-block:clamp(2.5rem,6vw,4rem)}
+    .hero .bleed-scrim{background:linear-gradient(180deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.85) 55%, rgba(255,255,255,.96) 100%)}
+    .hero-copy{max-width:none;text-align:center;margin-inline:auto}
   }
 
-  /* ---- greca step-frieze divider ---- */
-  .frieze{height:20px;background-repeat:repeat-x;background-position:center;background-size:auto 20px;opacity:.32;margin-block:clamp(2.5rem,6vw,5rem);
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='20' viewBox='0 0 56 20'%3E%3Cpath d='M4 20 V15 H12 V10 H20 V5 H36 V10 H44 V15 H52 V20 Z' fill='%23C24010'/%3E%3C/svg%3E")}
+  /* ---- works-with strip ---- */
+  .marquee{border-block:1px solid var(--border-base);padding-block:1.6rem;margin-top:clamp(2rem,4vw,3.5rem)}
+  .marquee .lbl{text-align:center;font-size:var(--text-xs);letter-spacing:var(--tracking-eyebrow);
+    text-transform:uppercase;color:var(--ink-soft);margin-bottom:1.1rem}
+  .logos{display:flex;align-items:center;justify-content:center;gap:clamp(1.2rem,3.5vw,2.8rem);
+    flex-wrap:wrap;opacity:.7}
+  .logos span{font-family:var(--font-display);font-weight:500;font-size:1.05rem;color:var(--ink)}
+  .logos .sep{color:var(--border-strong);font-size:.8rem}
+  .logos .lg{color:var(--ink-soft);display:flex;flex-direction:column;align-items:center;gap:.5rem;transition:color .2s}
+  .logos .lg svg{width:28px;height:28px;display:block}
+  .logos .lg .lglab{font-size:11.5px;font-weight:500;letter-spacing:.01em}
+  .logos .lg:hover{color:var(--ink)}
 
-  /* ---- sections ---- */
-  section{position:relative;z-index:2}
-  .block{padding-block:clamp(2.5rem,5vw,4rem)}
-  .kicker{margin-bottom:1rem}
+  /* ---- section scaffolding ---- */
+  .block{padding-block:clamp(4rem,8vw,7rem)}
+  .sec-head{max-width:60ch}
+  .sec-head .kicker{font-size:var(--text-xs);font-weight:500;letter-spacing:var(--tracking-eyebrow);
+    text-transform:uppercase;color:var(--ink-soft);display:block;margin-bottom:1rem}
+  .sec-head h2{font-size:var(--text-h2);line-height:1.02;letter-spacing:-.025em;max-width:18ch}
+  .sec-head p{font-size:var(--text-lead);color:var(--ink-soft);margin:1.1rem 0 0;max-width:50ch;line-height:1.5}
 
-  /* problem */
-  .problem p{font-size:clamp(1.1rem,1rem + .6vw,1.5rem);font-family:"Fraunces",serif;font-weight:400;line-height:1.34;color:var(--ink);max-width:24ch}
-  .problem .beat{color:var(--terracotta)}
+  /* ---- use cases ---- */
+  .usecase{display:grid;grid-template-columns:1fr 1fr;gap:clamp(2rem,5vw,4.5rem);align-items:center;
+    padding-block:clamp(2.5rem,5vw,4rem)}
+  .usecase + .usecase{border-top:1px solid var(--border-base)}
+  .usecase.flip .uc-art{order:-1}
+  .uc-art{aspect-ratio:4/3;border-radius:var(--radius-3xl);box-shadow:var(--shadow-card)}
+  .uc-tag{display:inline-block;font-size:var(--text-xs);font-weight:500;color:var(--ink-soft);
+    background:var(--panel);border:1px solid var(--border-base);padding:.35rem .8rem;border-radius:var(--radius-pill);margin-bottom:1.1rem}
+  .uc-copy h3{font-size:clamp(1.5rem,1rem + 1.6vw,2.1rem);line-height:1.05;letter-spacing:-.02em;max-width:16ch}
+  .uc-list{margin:1.6rem 0 0;padding:0;list-style:none;display:grid;gap:1.1rem}
+  .uc-list li{padding-left:1.6rem;position:relative}
+  .uc-list li::before{content:"";position:absolute;left:0;top:.5em;width:9px;height:9px;border-radius:50%;
+    background:var(--terracotta)}
+  .uc-list b{font-family:var(--font-display);font-weight:500;font-size:1.06rem;display:block;margin-bottom:.15rem}
+  .uc-list span{color:var(--ink-soft);font-size:var(--text-sm)}
+  @media(max-width:860px){.usecase{grid-template-columns:1fr;gap:1.8rem}.usecase.flip .uc-art{order:0}}
 
-  /* the dark "turn" — magic vs engineering */
-  .turn{background:var(--obsidian);color:var(--cream);border-radius:28px;overflow:hidden;position:relative;margin-block:clamp(1rem,2vw,2rem)}
-  .turn .inner{padding:clamp(2.4rem,6vw,5rem) clamp(1.5rem,5vw,4.5rem);text-align:center}
-  .turn .eyebrow{color:var(--gold)}
-  .turn h2{color:var(--cream);max-width:20ch;margin:1rem auto 0;font-weight:500}
-  .turn p{color:rgba(244,233,207,.82);max-width:46ch;margin:1.4rem auto 0}
-  .turn .punch{font-family:"Fraunces",serif;font-size:clamp(1.4rem,1rem + 1.6vw,2.1rem);color:#fff;margin-top:1.8rem;font-weight:500;letter-spacing:-.01em}
-  .turn::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.07;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'%3E%3Cpath d='M6 38 V14 H18 V6 H38' fill='none' stroke='%23D6B033' stroke-width='2'/%3E%3C/svg%3E");background-size:88px 88px}
+  /* ---- steps ---- */
+  .steps-sec{background:var(--panel);border-radius:var(--radius-4xl);padding:clamp(2.5rem,5vw,4.5rem)}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1.5rem,3vw,2.5rem);margin-top:2.5rem}
+  .step .num{font-family:var(--font-display);font-weight:500;font-size:1.1rem;color:var(--ink);
+    width:38px;height:38px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;margin-bottom:1rem}
+  .step h4{font-size:1.18rem;line-height:1.2;letter-spacing:-.01em}
+  .step p{color:var(--ink-soft);font-size:var(--text-sm);margin:.5rem 0 0}
+  .steps-foot{display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap;margin-top:2.5rem}
+  .steps-foot .note{font-size:var(--text-sm);color:var(--ink-soft)}
+  @media(max-width:720px){.steps{grid-template-columns:1fr;gap:1.8rem}}
 
-  /* ladder — experience steps, not feature parade */
-  .ladder{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,2.5vw,2rem);margin-top:2.5rem}
-  .step{padding-top:1.4rem;border-top:2px solid var(--terracotta)}
-  .step .n{font-family:"Fraunces",serif;font-size:1.1rem;color:var(--terracotta);font-weight:600}
-  .step h3{margin:.6rem 0 .5rem}
-  .step p{color:var(--ink-soft);font-size:1rem}
-  /* step 02 is the hero — the value the landing is testing */
-  .step.core{background:var(--cream-hi);border:1px solid var(--line);border-top:2px solid var(--terracotta);border-radius:18px;padding:1.4rem 1.4rem 1.6rem;margin-top:-.6rem;box-shadow:0 16px 40px -28px rgba(120,52,20,.5)}
-  .step.core .tag{display:inline-block;font-size:.66rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--terracotta);margin-bottom:.4rem}
-  .step.core p{color:var(--ink)}
-  @media(max-width:720px){.ladder{grid-template-columns:1fr;gap:1.6rem}.step.core{margin-top:0}}
+  /* ---- feature trio (trust pillars) ---- */
+  .trio{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,2.5vw,1.8rem);margin-top:2.5rem}
+  .feat{border:1px solid var(--border-base);border-radius:var(--radius-2xl);padding:1.8rem 1.6rem;background:#fff}
+  .feat .ic{width:42px;height:42px;border-radius:var(--radius-lg);margin-bottom:1.1rem}
+  .feat h4{font-size:1.15rem;letter-spacing:-.01em}
+  .feat p{color:var(--ink-soft);font-size:var(--text-sm);margin:.5rem 0 0}
+  @media(max-width:720px){.trio{grid-template-columns:1fr}}
 
-  /* proof — one trust block: local + your files + open source */
-  .proof-sec{text-align:center}
-  .proof-sec h2{max-width:18ch;margin-inline:auto}
-  .deadpan{font-family:"Fraunces",serif;font-style:italic;font-size:clamp(1.2rem,1rem + 1vw,1.7rem);color:var(--terracotta);margin:1.6rem auto 0}
-  .src{margin:1rem auto 0;font-size:.9rem;color:var(--ink-soft);max-width:52ch}
-  .proofs{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.6rem;text-align:left}
-  .pf{background:var(--cream-hi);border:1px solid var(--line);border-radius:18px;padding:1.3rem 1.4rem}
-  .pf .t{display:flex;align-items:center;gap:.5rem;font-weight:600;font-size:1rem;margin-bottom:.5rem}
-  .pf .t::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--jade);flex:0 0 auto}
-  .pf p{font-size:.92rem;color:var(--ink-soft);max-width:none;margin:0}
-  @media(max-width:720px){.proofs{grid-template-columns:1fr}}
+  /* ---- editorial manifest panel ---- */
+  .editorial{background:var(--obsidian);color:#fff;border-radius:var(--radius-4xl);
+    padding:clamp(3rem,7vw,5.5rem) clamp(1.5rem,5vw,4rem);text-align:center}
+  .editorial .kicker{font-size:var(--text-xs);font-weight:500;letter-spacing:var(--tracking-eyebrow);
+    text-transform:uppercase;color:var(--terracotta-lit)}
+  .editorial h2{color:#fff;font-size:var(--text-h2);letter-spacing:-.025em;max-width:20ch;margin:1rem auto 0;line-height:1.04}
+  .editorial .deadpan{font-family:var(--font-display);font-weight:500;font-size:clamp(1.2rem,1rem + 1vw,1.7rem);
+    color:var(--terracotta-lit);margin:1.5rem auto 0;letter-spacing:-.01em}
+  .editorial p{color:rgba(255,255,255,.72);max-width:52ch;margin:1.2rem auto 0;font-size:var(--text-base);line-height:1.55}
 
-  /* who — concrete cases, now vs Malinche */
-  .who{text-align:center}
-  .who h2{max-width:20ch;margin-inline:auto}
-  .who .sub{margin:1rem auto 0;color:var(--ink-soft);max-width:46ch}
-  .cases{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.6rem;text-align:left}
-  .case{background:var(--cream-hi);border:1px solid var(--line);border-radius:20px;padding:clamp(1.4rem,2.5vw,2rem)}
-  .case .persona{font-family:"Fraunces",serif;font-weight:600;font-size:1.28rem;letter-spacing:-.01em;margin-bottom:1.1rem}
-  .case .row{display:flex;gap:.9rem;padding-block:.8rem}
-  .case .row + .row{border-top:1px solid var(--line)}
-  .case .lab{flex:0 0 auto;width:4.6rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding-top:.2rem}
-  .case .now .lab{color:var(--ink-soft)}
-  .case .with .lab{color:var(--terracotta)}
-  .case .row p{margin:0;font-size:.96rem;max-width:none}
-  .case .now p{color:var(--ink-soft)}
-  .case .with p{color:var(--ink)}
-  @media(max-width:720px){.cases{grid-template-columns:1fr}}
+  /* ---- personas ---- */
+  .personas{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.5rem}
+  .pcard{background:#fff;border:1px solid var(--border-base);border-radius:var(--radius-3xl);padding:clamp(1.5rem,2.5vw,2.1rem)}
+  .pcard .persona{font-family:var(--font-display);font-weight:500;font-size:1.3rem;letter-spacing:-.01em;margin-bottom:1.1rem}
+  .pcard .row{display:flex;gap:.9rem;padding-block:.85rem}
+  .pcard .row + .row{border-top:1px solid var(--border-base)}
+  .pcard .lab{flex:0 0 auto;width:5rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding-top:.2rem}
+  .pcard .now .lab{color:var(--ink-soft)}
+  .pcard .with .lab{color:var(--terracotta)}
+  .pcard .row p{margin:0;font-size:var(--text-sm)}
+  .pcard .now p{color:var(--ink-soft)}
+  .pcard .with p{color:var(--ink)}
+  @media(max-width:760px){.personas{grid-template-columns:1fr}}
 
-  /* own your gear — no new device */
-  .own{text-align:center}
-  .own h2{max-width:18ch;margin-inline:auto}
-  .own p{max-width:48ch;margin:1.3rem auto 0;color:var(--ink-soft)}
-  .own .beat{font-family:"Fraunces",serif;font-size:clamp(1.3rem,1rem + 1.2vw,1.9rem);color:var(--terracotta);font-weight:500;letter-spacing:-.01em;max-width:none;margin:1.8rem auto;line-height:1.1}
-  .own .ink{color:var(--ink)}
+  /* ---- FAQ ---- */
+  .faq{max-width:820px;margin-inline:auto}
+  .faq h2{font-size:var(--text-h2);letter-spacing:-.025em;text-align:center;margin-bottom:2.5rem}
+  details{border-top:1px solid var(--border-base);padding-block:1.3rem}
+  details:last-of-type{border-bottom:1px solid var(--border-base)}
+  summary{display:flex;align-items:center;justify-content:space-between;gap:1.5rem;cursor:pointer;
+    list-style:none;font-family:var(--font-display);font-weight:500;font-size:1.18rem;letter-spacing:-.01em}
+  summary::-webkit-details-marker{display:none}
+  summary .pm{position:relative;width:18px;height:18px;flex:0 0 auto}
+  summary .pm::before,summary .pm::after{content:"";position:absolute;background:var(--ink);transition:transform .25s}
+  summary .pm::before{top:8px;left:0;width:18px;height:2px}
+  summary .pm::after{left:8px;top:0;width:2px;height:18px}
+  details[open] summary .pm::after{transform:scaleY(0)}
+  details p{color:var(--ink-soft);font-size:var(--text-base);line-height:1.55;margin:1rem 0 0;max-width:68ch}
 
-  /* waitlist / cta */
-  .signup{text-align:center;background:var(--cream-hi);border:1px solid var(--line);border-radius:28px;padding:clamp(2.4rem,5vw,4rem) clamp(1.5rem,4vw,3rem);margin-block:clamp(2.5rem,5vw,4rem)}
-  .signup h2{max-width:16ch;margin:0 auto 1rem}
-  .form{display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap;margin-top:1.6rem}
-  .form input{font:inherit;font-size:1rem;padding:.85rem 1.1rem;border-radius:999px;border:1px solid var(--line);background:#fff;min-width:min(320px,82vw);color:var(--ink)}
-  .form input::placeholder{color:#9b8e7f}
-  .badge{display:inline-flex;align-items:center;gap:.45rem;font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--gold);margin-top:1.2rem}
-  .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--gold)}
+  /* ---- big CTA + waitlist ---- */
+  .cta-block{padding-bottom:clamp(4rem,8vw,7rem)}
+  .cta{position:relative;border-radius:var(--radius-4xl);padding:clamp(3rem,7vw,6rem) clamp(1.5rem,5vw,4rem);
+    text-align:center;overflow:hidden}
+  .cta h2{position:relative;z-index:2;font-size:var(--text-h2);letter-spacing:-.03em;color:var(--obsidian);max-width:18ch;margin-inline:auto;line-height:1}
+  .cta p{position:relative;z-index:2;color:#3a3733;margin:1.1rem auto 0;max-width:46ch;font-size:var(--text-lead)}
+  .wl-form{position:relative;z-index:2;display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap;margin-top:2rem}
+  .wl-form input{font:inherit;font-size:var(--text-base);padding:.85rem 1.2rem;border-radius:var(--radius-button);
+    border:1px solid rgba(20,20,20,.25);background:rgba(255,255,255,.85);min-width:min(300px,80vw);color:var(--ink)}
+  .wl-form input:focus{outline:none;border-color:var(--obsidian);background:#fff}
+  .wl-form input::placeholder{color:#6a6760}
+  .cta .thanks{position:relative;z-index:2;font-size:var(--text-sm);color:var(--obsidian);font-weight:600;margin:.9rem 0 0}
+  .cta .note{position:relative;z-index:2;font-size:var(--text-xs);color:#54514c;margin:1.1rem 0 0}
 
-  /* footer */
-  footer{position:relative;z-index:2;border-top:1px solid var(--line);margin-top:clamp(2.5rem,5vw,4rem)}
-  .foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;padding-block:2rem;font-size:.88rem;color:var(--ink-soft)}
-  .foot .brand{font-size:1.05rem;color:var(--ink)}
-  .dot{color:var(--jade)}
+  /* ---- product UI surfaces embedded in the handhold layout ---- */
+  .uc-art.is-ui{aspect-ratio:auto;display:flex;align-items:center;justify-content:center;
+    padding:clamp(1.4rem,3vw,2.4rem);overflow:hidden;
+    background:radial-gradient(120% 120% at 30% 8%, #FAF7F0 0%, var(--paper) 62%);border:1px solid var(--border-base)}
 
-  @media(max-width:600px){
-    .hero-dark h1{max-width:18ch}
-    .hero-dark h1 .accent{display:block}
-    .lead{font-size:1.08rem}
-    .nav-links a[href="#jak"],.nav-links a[href="#zaufanie"]{display:none}
-  }
+  .prod-show{margin-top:clamp(2.5rem,5vw,4.5rem)}
+  .prod-copy{max-width:62ch;margin-bottom:clamp(1.6rem,3vw,2.6rem)}
+  .prod-copy h3{font-size:clamp(1.5rem,1rem + 1.6vw,2.1rem);line-height:1.05;letter-spacing:-.02em;max-width:22ch}
+  .prod-copy .prod-sub{color:var(--ink-soft);font-size:var(--text-lead);margin:1rem 0 0;max-width:56ch;line-height:1.5}
+  .prod-panel{position:relative;border-radius:var(--radius-4xl);overflow:hidden;
+    padding:clamp(1.5rem,4vw,3.5rem) clamp(1rem,3vw,2.5rem);
+    background:radial-gradient(120% 130% at 72% 0%, #FAF7F0 0%, var(--paper) 55%, #FBFAF6 100%);
+    border:1px solid var(--border-base)}
+  .prod-win{max-width:1000px;margin-inline:auto}
+  .prod-note{display:inline-flex;align-items:center;gap:.5rem;margin:clamp(1.4rem,3vw,2rem) auto 0;
+    font-size:var(--text-sm);color:var(--ink-soft);justify-content:center;width:100%}
+  .prod-note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--terracotta);flex:0 0 auto}
+
+  /* section 01 flow illustration */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0;width:100%;max-width:360px;margin-inline:auto}
+  .flow-row{display:flex;gap:.6rem;justify-content:center;width:100%}
+  .flow .src{flex:1;display:flex;flex-direction:column;align-items:center;gap:.5rem;
+    background:#fff;border:1px solid var(--border-base);border-radius:14px;padding:.9rem .5rem;box-shadow:var(--shadow-chip)}
+  .flow .src svg{width:22px;height:22px;color:var(--ink-soft)}
+  .flow .src span{font-size:11.5px;color:var(--ink-soft);font-weight:500}
+  .flow-link{width:2px;height:22px;border-radius:2px;margin-block:3px;position:relative;
+    background:linear-gradient(var(--terracotta),rgba(194,64,16,.28))}
+  .flow-link::after{content:"";position:absolute;left:50%;bottom:-1px;transform:translateX(-50%);
+    border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--terracotta)}
+  .flow-node{display:flex;align-items:center;gap:.7rem;background:#fff;border:1px solid var(--border-base);
+    border-radius:14px;padding:.72rem .9rem;width:100%;box-shadow:var(--shadow-card)}
+  .flow-node .fn-ic{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;
+    background:var(--panel);color:var(--terracotta);flex:0 0 auto}
+  .flow-node .fn-ic svg{width:16px;height:13px}
+  .flow-node b{font-size:13px;font-weight:600;color:var(--ink);display:block}
+  .flow-node .fn-tx span{font-size:11.5px;color:var(--ink-soft)}
+  .flow-trs{display:flex;flex-direction:column;gap:.4rem;width:100%}
+  .flow .ftr{display:flex;align-items:center;gap:.55rem;background:#fff;border:1px solid var(--border-base);
+    border-radius:11px;padding:.52rem .7rem}
+  .flow .ftr .wv{color:var(--terracotta);flex:0 0 auto;display:grid;place-items:center}
+  .flow .ftr .wv svg{width:13px;height:11px}
+  .flow .ftr .nm{flex:1;font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .flow .ftr .tg{font-family:var(--font-mono);font-size:10px;color:var(--terracotta);flex:0 0 auto}
+  .flow-insight{display:flex;align-items:center;gap:.65rem;background:var(--obsidian);color:#fff;
+    border-radius:14px;padding:.72rem 1rem;width:100%;box-shadow:var(--shadow-card)}
+  .flow-insight .bloom{width:18px;height:18px;border-radius:50%;flex:0 0 auto;
+    background:radial-gradient(circle at 50% 45%, #FFFBF0 0 18%, #F4DD8E 42%, #D6B033 72%, rgba(214,176,51,0) 100%);
+    box-shadow:0 0 10px 2px rgba(244,221,142,.55)}
+  .flow-insight .fi-tx{font-size:12.5px;font-weight:500}
+
+  /* ---- footer ---- */
+  footer{border-top:1px solid var(--border-base);padding-block:3rem}
+  .foot-grid{display:flex;justify-content:space-between;gap:2rem;flex-wrap:wrap;align-items:flex-start}
+  .foot-links{display:flex;gap:3rem;flex-wrap:wrap;font-size:var(--text-sm)}
+  .foot-col h5{font-size:var(--text-xs);letter-spacing:var(--tracking-eyebrow);text-transform:uppercase;
+    color:var(--ink-soft);margin:0 0 .9rem;font-weight:500;font-family:var(--font-body)}
+  .foot-col a{display:block;color:var(--ink-soft);margin-bottom:.55rem}
+  .foot-col a:hover{color:var(--ink)}
+  .foot-base{margin-top:2.5rem;font-size:var(--text-xs);color:var(--ink-soft)}
 </style>
 </head>
+
 <body>
-<header>
+<header id="top">
   <div class="wrap">
     <nav>
-      <div class="brand">
-        <span class="chip" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
-            <g fill="#C24010">
-              <rect x="1"  y="9"  width="1.4" height="4"  rx=".2"/>
-              <rect x="3"  y="6.5" width="1.4" height="9"  rx=".2"/>
-              <rect x="5"  y="8"  width="1.4" height="6"  rx=".2"/>
-              <rect x="7"  y="4.5" width="1.4" height="13" rx=".2"/>
-              <rect x="9"  y="3"  width="1.4" height="16" rx=".2"/>
-              <rect x="11" y="2.2" width="1.4" height="17.6" rx=".2"/>
-              <rect x="13" y="3"  width="1.4" height="16" rx=".2"/>
-              <rect x="15" y="4.5" width="1.4" height="13" rx=".2"/>
-              <rect x="17" y="8"  width="1.4" height="6"  rx=".2"/>
-              <rect x="19" y="6.5" width="1.4" height="9"  rx=".2"/>
-            </g>
-          </svg>
-        </span>
+      <a class="brand" href="#top">
+        <span class="mark grain mesh-a" aria-hidden="true"></span>
         Malinche
-      </div>
-      <div class="nav-links">
+      </a>
+      <div class="nav-mid">
         <a href="#jak">Jak działa</a>
-        <a href="#zaufanie">Zaufanie</a>
         <a href="#dlakogo">Dla kogo</a>
-        <a href="https://github.com/radektar/malinche">GitHub</a>
+        <a href="#zaufanie">Zaufanie</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <div class="nav-end">
+        <a class="ghost" href="https://github.com/radektar/malinche">GitHub</a>
+        <a class="btn btn-dark" href="#zapis">Zapisz się <span class="arr">→</span></a>
       </div>
     </nav>
   </div>
 </header>
 
 <main>
-  <section class="hero-dark">
-    <div id="hero-graph"></div>
-    <div class="hero-scrim"></div>
-    <div class="hero-greca" aria-hidden="true"></div>
+  <section class="hero" id="hero" data-screen-label="Hero — graf wiedzy">
+    <div class="gcanvas" id="heroGraph"></div>
+    <div class="bleed-scrim" aria-hidden="true"></div>
     <div class="wrap hero-inner">
       <div class="hero-copy">
-        <span class="eyebrow">Jeden system, nie stos plików</span>
         <h1>Masz transkrypty wszystkiego. <span class="accent">I nic z nich nie wynika.</span></h1>
-        <p class="lead">Leżą w folderze i udają system. Malinche czyta je razem — łączy, zestawia i podsuwa to, czego sam już nie pamiętasz. Lokalnie, na Twoim Macu.</p>
-        <div class="cta-row">
-          <a class="btn btn-primary" href="#lista">Zapisz się na listę</a>
-          <a class="btn btn-ghost-dark" href="https://github.com/radektar/malinche">Zobacz na GitHubie</a>
+        <p class="lead">Leżą w folderze i udają system. Malinche czyta je razem — łączy, zestawia i podsuwa to, czego sam już nie pamiętasz.</p>
+        <div class="hero-cta">
+          <a class="btn btn-dark btn-lg" href="#zapis">Zapisz się na listę <span class="arr">→</span></a>
+          <a class="btn btn-light btn-lg" href="https://github.com/radektar/malinche">Zobacz na GitHubie</a>
         </div>
-        <div class="local">Działa lokalnie — audio nie opuszcza Maca</div>
       </div>
     </div>
-    <div class="hero-concl" id="hero-concl">
-      <div class="h">Hipoteza, którą system wysuwa</div>
-      <div class="t">„Priorytet przesunął się z ceny na termin — między styczniem a majem. Twoja teza wymaga rewizji."</div>
-    </div>
   </section>
 
-  <div class="wrap"><div class="frieze" aria-hidden="true"></div></div>
-
-  <section class="block problem">
-    <div class="wrap">
-      <p>Idziesz na spacer i przychodzi myśl. Dobra myśl. Notujesz ją w głowie — i tyle ją widziałeś.</p>
-      <p style="margin-top:1.6rem">A nawet jak nagrasz, surowy transkrypt to ściana tekstu, do której nigdy nie wracasz. <span class="beat">Trzy miesiące później wymyślasz tę samą myśl od nowa.</span></p>
+  <div class="wrap">
+    <div class="marquee">
+      <div class="lbl">Działa z tym, co już masz</div>
+      <div class="logos">
+        <span class="lg" title="Dyktafon" aria-label="Dyktafon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="3" width="9" height="18" rx="3"></rect><circle cx="12" cy="8" r="2.3"></circle><line x1="9.5" y1="14" x2="14.5" y2="14"></line><line x1="9.5" y1="16.5" x2="14.5" y2="16.5"></line></svg><span class="lglab">Dyktafon</span></span>
+        <span class="lg" title="Telefon" aria-label="Telefon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"></line></svg><span class="lglab">Telefon</span></span>
+        <span class="lg" title="Karta SD" aria-label="Karta SD"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 3 h6 l3 3 v14 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-16 a1 1 0 0 1 1 -1 z"></path><line x1="9.5" y1="4.5" x2="9.5" y2="7" stroke-linecap="round"></line><line x1="11.5" y1="4.5" x2="11.5" y2="7" stroke-linecap="round"></line><line x1="13.5" y1="5.5" x2="13.5" y2="7" stroke-linecap="round"></line></svg><span class="lglab">Karta SD</span></span>
+        <span class="lg" title="Markdown" aria-label="Markdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2"></rect><path d="M6 15.5 V9.5 l3 3 3-3 V15.5"></path><path d="M17 9.5 V15 M17 15 l-2-2 M17 15 l2-2"></path></svg><span class="lglab">Markdown</span></span>
+        <span class="lg" title="Obsidian" aria-label="Obsidian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 L19 8 16.5 20 7.5 20 5 8 Z"></path><path d="M12 2.5 V20 M5 8 H19"></path></svg><span class="lglab">Obsidian</span></span>
+        <span class="lg" title="macOS" aria-label="macOS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5" width="15" height="10" rx="1.5"></rect><path d="M2.5 18.5 h19"></path></svg><span class="lglab">macOS</span></span>
+      </div>
     </div>
-  </section>
+  </div>
 
   <section class="block" id="jak">
     <div class="wrap">
-      <span class="eyebrow kicker">Jak to działa</span>
-      <h2>Z osobnych nagrań — jeden zbiór, który coś z siebie składa.</h2>
-      <div class="ladder">
-        <div class="step">
-          <div class="n">01</div>
-          <h3>Wrzucasz, co masz</h3>
-          <p>Dyktafon, karta, nagranie z telefonu. Przepisane lokalnie, otagowane, w jednym miejscu. Twoja rola się tu kończy.</p>
+      <div class="sec-head">
+        <span class="kicker">Jak to działa</span>
+        <h2>Z osobnych nagrań — jeden zbiór, który coś z siebie składa.</h2>
+        <p>Trzy ruchy: wrzucasz, co masz; Malinche zestawia wszystko naraz; a potem samo podsuwa to, co warto rozwinąć.</p>
+      </div>
+
+      <div class="usecase">
+        <div class="uc-copy">
+          <h3>Wrzucasz, co już masz.</h3>
+          <ul class="uc-list">
+            <li><b>Dowolne źródło</b><span>Dyktafon, karta, nagranie z telefonu — wszystko ląduje w jednym miejscu.</span></li>
+            <li><b>Przepisane lokalnie</b><span>whisper.cpp na Twoim Macu. Audio nie wychodzi do żadnej chmury.</span></li>
+            <li><b>Otagowane i gotowe</b><span>Każde nagranie z datą i kontekstem, od razu przeszukiwalne.</span></li>
+          </ul>
         </div>
-        <div class="step core">
-          <span class="tag">Sedno</span>
-          <div class="n">02</div>
-          <h3>Zestawia i łączy</h3>
-          <p>Pytasz cały zbiór naraz, nie plik po pliku. Pokazuje wspólne wątki — i sprzeczności, których sam nie złapałbyś między dwoma nagraniami sprzed miesięcy.</p>
+        <div class="uc-art is-ui p-reveal">
+          <div class="flow">
+            <div class="flow-row">
+              <div class="src"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="3" width="9" height="18" rx="3"></rect><circle cx="12" cy="8" r="2.3"></circle><line x1="9.5" y1="14" x2="14.5" y2="14"></line><line x1="9.5" y1="16.5" x2="14.5" y2="16.5"></line></svg><span>Dyktafon</span></div>
+              <div class="src"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 3 h6 l3 3 v14 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-16 a1 1 0 0 1 1 -1 z"></path><line x1="9.5" y1="4.5" x2="9.5" y2="7" stroke-linecap="round"></line><line x1="11.5" y1="4.5" x2="11.5" y2="7" stroke-linecap="round"></line><line x1="13.5" y1="5.5" x2="13.5" y2="7" stroke-linecap="round"></line></svg><span>Karta SD</span></div>
+              <div class="src"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"></line></svg><span>Telefon</span></div>
+            </div>
+            <div class="flow-link"></div>
+            <div class="flow-node">
+              <span class="fn-ic"><svg viewBox="0 0 16 13" fill="currentColor"><rect x="0" y="5" width="1.6" height="3" rx=".8"></rect><rect x="3" y="2.5" width="1.6" height="8" rx=".8"></rect><rect x="6" y="0.5" width="1.6" height="12" rx=".8"></rect><rect x="9" y="3.5" width="1.6" height="6" rx=".8"></rect><rect x="12" y="5" width="1.6" height="3" rx=".8"></rect></svg></span>
+              <div class="fn-tx"><b>Transkrypcja lokalnie</b><span>whisper.cpp · na Twoim Macu</span></div>
+            </div>
+            <div class="flow-link"></div>
+            <div class="flow-trs">
+              <div class="ftr"><span class="wv"><svg viewBox="0 0 16 13" fill="currentColor"><rect x="0" y="5" width="1.6" height="3" rx=".8"></rect><rect x="3" y="2.5" width="1.6" height="8" rx=".8"></rect><rect x="6" y="0.5" width="1.6" height="12" rx=".8"></rect><rect x="9" y="3.5" width="1.6" height="6" rx=".8"></rect><rect x="12" y="5" width="1.6" height="3" rx=".8"></rect></svg></span><span class="nm">Spacer — pomysł na tekst</span><span class="tg">#idea</span></div>
+              <div class="ftr"><span class="wv"><svg viewBox="0 0 16 13" fill="currentColor"><rect x="0" y="5" width="1.6" height="3" rx=".8"></rect><rect x="3" y="2.5" width="1.6" height="8" rx=".8"></rect><rect x="6" y="0.5" width="1.6" height="12" rx=".8"></rect><rect x="9" y="3.5" width="1.6" height="6" rx=".8"></rect><rect x="12" y="5" width="1.6" height="3" rx=".8"></rect></svg></span><span class="nm">Rozmowa z konstruktorem</span><span class="tg">#projekt</span></div>
+            </div>
+            <div class="flow-link"></div>
+            <div class="flow-insight">
+              <span class="bloom"></span>
+              <span class="fi-tx">Insight — Malinche łączy wątki</span>
+            </div>
+          </div>
         </div>
-        <div class="step">
-          <div class="n">03</div>
-          <h3>Samo podsuwa</h3>
-          <p>„Te trzy nagrania się łączą. Zrobisz z tym coś?" Podsuwa powiązanie i pomaga rozwinąć je w tekst — nie każe. Pomyłkę odrzucasz kliknięciem.</p>
+      </div>
+
+      <div class="prod-show" id="konstelacja">
+        <div class="prod-copy">
+          <h3>Zestawia cały zbiór naraz — w jednym oknie.</h3>
+          <p class="prod-sub">Konstelacja: po lewej połączenia, które Malinche wychwyciła; po prawej czytnik z tezą, zacytowanym dowodem i kierunkami do rozwinięcia. To żywy interfejs — przełącz połączenie, zaznacz kierunki, rozwiń dowód.</p>
+        </div>
+        <div class="prod-panel grain p-reveal">
+          <div class="prod-win" id="konstelacjaHost"></div>
+          <p class="prod-note">Pytasz cały korpus naraz — wspólne wątki i sprzeczności w jednym miejscu.</p>
+        </div>
+      </div>
+
+      <div class="usecase flip" style="margin-top:clamp(2.5rem,5vw,4rem)">
+        <div class="uc-copy">
+          <h3>Samo wysuwa hipotezy.</h3>
+          <ul class="uc-list">
+            <li><b>Proponuje powiązania</b><span>„Te trzy nagrania się łączą. Zrobisz z tym coś?"</span></li>
+            <li><b>Pomaga rozwinąć w tekst</b><span>Z luźnych myśli do szkicu — nie każe, podsuwa.</span></li>
+            <li><b>Pomyłkę odrzucasz kliknięciem</b><span>Ty decydujesz, co zostaje. Zawsze.</span></li>
+          </ul>
+        </div>
+        <div class="uc-art is-ui p-reveal">
+          <div class="ui-handoff" id="handoffHost" style="width:100%"></div>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="block">
+  <section class="block" style="padding-top:0">
     <div class="wrap">
-      <div class="turn">
-        <div class="inner">
-          <span class="eyebrow">To nie magia. To inżynieria.</span>
-          <h2>Przez lata mieli rację.</h2>
-          <p>Inżynierowie poprawiali każdego, kto mówił, że coś działa „magicznie". To nie magia — to inżynieria. I trudno było się nie zgodzić.</p>
-          <p>A teraz Twoja własna myśl sprzed pół roku wraca do Ciebie dokładnie wtedy, kiedy jest potrzebna. I nie do końca wiadomo, jak.</p>
-          <div class="punch">Może jednak to magia.</div>
+      <div class="steps-sec">
+        <div class="sec-head">
+          <span class="kicker">Zacznij w kilka minut</span>
+          <h2>Otwarty rdzeń działa już dziś.</h2>
+        </div>
+        <div class="steps">
+          <div class="step">
+            <div class="num">1</div>
+            <h4>Pobierz Malinche</h4>
+            <p>Sklonuj repo albo pobierz build. Open source na licencji MIT — bez konta.</p>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <h4>Wskaż folder z nagraniami</h4>
+            <p>Malinche przepisuje je lokalnie, taguje i porządkuje — partiami, w tle.</p>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <h4>Pytaj i pisz</h4>
+            <p>Zadaj pytanie całemu zbiorowi albo daj się poprowadzić do gotowego tekstu.</p>
+          </div>
+        </div>
+        <div class="steps-foot">
+          <a class="btn btn-dark btn-lg" href="https://github.com/radektar/malinche">Zobacz na GitHubie <span class="arr">→</span></a>
+          <span class="note">100% lokalnie · bez konta, bez kluczy do nas</span>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="block proof-sec" id="zaufanie">
+  <section class="block" id="zaufanie" style="padding-top:0">
     <div class="wrap">
-      <span class="eyebrow kicker">Dlaczego można zaufać</span>
-      <h2>Nie zgubimy tego, czego nigdy nie mieliśmy.</h2>
-      <p class="deadpan">Twoje myśli zostają tam, gdzie powinny.</p>
-      <p class="src">Pewne narzędzie, które miało pamiętać za Ciebie, w grudniu 2025 skasowało dane użytkownikom w Europie. Malinche nie może zgubić ani skasować Twoich danych — bo nigdy ich nie trzyma.</p>
-      <div class="proofs">
-        <div class="pf">
-          <div class="t">Lokalnie</div>
-          <p>Transkrypcja idzie na Twoim Macu (whisper.cpp). Audio nie wychodzi do żadnej chmury — nawet na sekundę.</p>
+      <div class="sec-head">
+        <span class="kicker">Dlaczego można zaufać</span>
+        <h2>Twoje myśli zostają tam, gdzie powinny.</h2>
+      </div>
+      <div class="trio">
+        <div class="feat">
+          <div class="ic grain mesh-c" aria-hidden="true"></div>
+          <h4>Lokalnie</h4>
+          <p>Transkrypcja idzie na Twoim Macu (whisper.cpp). Audio nie wychodzi do chmury — nawet na sekundę.</p>
         </div>
-        <div class="pf">
-          <div class="t">Twoje pliki</div>
-          <p>Notatki to czysty Markdown w folderze, który posiadasz — Obsidian, dysk, eksport kiedy chcesz. Żadnego zamknięcia w cudzym systemie.</p>
+        <div class="feat">
+          <div class="ic grain mesh-b" aria-hidden="true"></div>
+          <h4>Twoje pliki</h4>
+          <p>Notatki to czysty Markdown w folderze, który posiadasz. Obsidian, dysk, eksport — kiedy chcesz.</p>
         </div>
-        <div class="pf">
-          <div class="t">Otwarty kod</div>
-          <p>Rdzeń jest open source (MIT). Możesz zajrzeć, sprawdzić, uruchomić u siebie. Bez konta, bez kluczy do nas.</p>
+        <div class="feat">
+          <div class="ic grain mesh-a" aria-hidden="true"></div>
+          <h4>Otwarty kod</h4>
+          <p>Rdzeń jest open source (MIT). Zajrzyj, sprawdź, uruchom u siebie. Bez konta, bez kluczy do nas.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="block who" id="dlakogo">
+  <section class="block" style="padding-top:0">
     <div class="wrap">
-      <span class="eyebrow kicker">Dla kogo</span>
-      <h2>Dla ludzi, którzy myślą na głos — i mają tego dużo.</h2>
-      <p class="sub">Masz dyktafon i system notatek? Oto jak wygląda dzień teraz — i z Malinche.</p>
-      <div class="cases">
+      <div class="editorial">
+        <span class="kicker">Nie zgubimy tego, czego nigdy nie mieliśmy</span>
+        <h2>Bo nigdy nie trzymamy Twoich danych.</h2>
+        <p class="deadpan">Twoje myśli zostają tam, gdzie powinny.</p>
+        <p>Pewne narzędzie, które miało pamiętać za Ciebie, w grudniu 2025 skasowało dane użytkownikom w Europie. Malinche nie może zgubić ani skasować Twoich danych — bo one nigdy nie opuszczają Twojego Maca.</p>
+      </div>
+    </div>
+  </section>
 
-        <div class="case">
+  <section class="block" id="dlakogo" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="kicker">Dla kogo</span>
+        <h2>Dla ludzi, którzy myślą na głos — i mają tego dużo.</h2>
+        <p>Masz dyktafon i system notatek? Oto jak wygląda dzień teraz — i z Malinche.</p>
+      </div>
+      <div class="personas">
+        <div class="pcard">
           <div class="persona">Dziennikarze i reporterzy</div>
-          <div class="row now">
-            <span class="lab">Teraz</span>
-            <p>Wracasz z terenu z sześcioma godzinami wywiadów na dyktafonie. Przepisujesz ręcznie albo wrzucasz źródła do cudzej chmury. Cytat sprzed trzech rozmów po prostu przepada.</p>
-          </div>
-          <div class="row with">
-            <span class="lab">Malinche</span>
-            <p>Każdy wywiad przepisany lokalnie i otagowany. Pytasz „kto mówił o X?" i dostajesz cytat z datą i nagraniem — a źródła nie opuszczają Twojego Maca.</p>
-          </div>
+          <div class="row now"><span class="lab">Teraz</span><p>Wracasz z terenu z sześcioma godzinami wywiadów. Przepisujesz ręcznie albo wrzucasz źródła do cudzej chmury. Cytat sprzed trzech rozmów przepada.</p></div>
+          <div class="row with"><span class="lab">Malinche</span><p>Każdy wywiad przepisany lokalnie i otagowany. Pytasz „kto mówił o X?" i masz cytat z datą — a źródła nie opuszczają Maca.</p></div>
         </div>
-
-        <div class="case">
+        <div class="pcard">
           <div class="persona">Prawnicy i dyktujący</div>
-          <div class="row now">
-            <span class="lab">Teraz</span>
-            <p>Dyktujesz pismo i oddajesz nagranie do przepisania — poufne treści krążą przez sekretariat albo chmurę. Starych dyktand i tak nie da się przeszukać.</p>
-          </div>
-          <div class="row with">
-            <span class="lab">Malinche</span>
-            <p>Dyktando przepisane na Twoim Macu, nic nie wychodzi na zewnątrz. Pytasz „co ustaliłem w sprawie Kowalski?" i masz odpowiedź z własnego, prywatnego archiwum.</p>
-          </div>
+          <div class="row now"><span class="lab">Teraz</span><p>Dyktujesz pismo i oddajesz nagranie do przepisania — poufne treści krążą przez sekretariat albo chmurę. Starych dyktand i tak nie przeszukasz.</p></div>
+          <div class="row with"><span class="lab">Malinche</span><p>Dyktando przepisane na Twoim Macu, nic nie wychodzi. Pytasz „co ustaliłem w sprawie Kowalski?" i masz odpowiedź z prywatnego archiwum.</p></div>
         </div>
-
-        <div class="case">
+        <div class="pcard">
           <div class="persona">Badacze w terenie</div>
-          <div class="row now">
-            <span class="lab">Teraz</span>
-            <p>Karta SD pełna godzin rozmów i obserwacji. Ręczne przepisywanie zżera tygodnie, a analiza zaczyna się dopiero, kiedy wszystko jest spisane.</p>
-          </div>
-          <div class="row with">
-            <span class="lab">Malinche</span>
-            <p>Wrzucasz kartę — partia nagrań przepisana i skatalogowana w nocy. Rano pytasz cały korpus o motywy, zamiast przekopywać pliki po kolei.</p>
-          </div>
+          <div class="row now"><span class="lab">Teraz</span><p>Karta SD pełna godzin rozmów i obserwacji. Ręczne przepisywanie zżera tygodnie, a analiza zaczyna się dopiero, gdy wszystko jest spisane.</p></div>
+          <div class="row with"><span class="lab">Malinche</span><p>Wrzucasz kartę — partia nagrań przepisana w nocy. Rano pytasz cały korpus o motywy, zamiast przekopywać pliki po kolei.</p></div>
         </div>
-
-        <div class="case">
+        <div class="pcard">
           <div class="persona">Podcasterzy i twórcy</div>
-          <div class="row now">
-            <span class="lab">Teraz</span>
-            <p>Surowe tracki z rejestratora, transkrypt to ściana tekstu. Tego jednego dobrego fragmentu szukasz ręcznie, przewijając nagranie.</p>
-          </div>
-          <div class="row with">
-            <span class="lab">Malinche</span>
-            <p>Każdy take przepisany i przeszukiwalny. „Gdzie mówiłem o Y?" — znajdujesz w sekundę. Show notes i wątki na kolejny odcinek z własnego materiału.</p>
-          </div>
+          <div class="row now"><span class="lab">Teraz</span><p>Surowe tracki z rejestratora, transkrypt to ściana tekstu. Tego jednego dobrego fragmentu szukasz ręcznie, przewijając nagranie.</p></div>
+          <div class="row with"><span class="lab">Malinche</span><p>Każdy take przepisany i przeszukiwalny. „Gdzie mówiłem o Y?" — znajdujesz w sekundę. Show notes z własnego materiału.</p></div>
         </div>
-
       </div>
     </div>
   </section>
 
-  <section class="block own">
-    <div class="wrap">
-      <span class="eyebrow kicker">Bez nowego gadżetu</span>
-      <h2>Masz już dyktafon. Albo telefon. Tyle wystarczy.</h2>
-      <p>Żeby nagrania zaczęły coś znaczyć, niektórzy każą ci najpierw kupić ich dyktafon — sto dwadzieścia dziewięć dolarów. A potem płacić abonament, co miesiąc, w nieskończoność — do dwustu czterdziestu dolarów rocznie — żeby to samo urządzenie przepisało, co nagrałeś.</p>
-      <p class="beat">Twój telefon nagrywa od dekady.</p>
-      <p>Malinche nie sprzedaje ci pudełka. Bierze dyktafon, kartę albo nagranie z telefonu, które już masz, i <span class="ink">ożywia to, co już nagrałeś</span> — raz, lokalnie, u ciebie.</p>
+  <section class="block" id="faq" style="padding-top:0">
+    <div class="wrap faq">
+      <h2>Najczęstsze pytania</h2>
+      <details open>
+        <summary>Czy naprawdę działa lokalnie?<span class="pm"></span></summary>
+        <p>Tak. Transkrypcja (whisper.cpp) odbywa się na Twoim Macu. Audio nie jest wysyłane do żadnej chmury — ani na chwilę.</p>
+      </details>
+      <details>
+        <summary>Gdzie trzymane są moje notatki?<span class="pm"></span></summary>
+        <p>W folderze, który posiadasz, jako czysty Markdown. Działa z Obsidianem; backup i eksport są całkowicie po Twojej stronie. Żadnego zamknięcia w cudzym systemie.</p>
+      </details>
+      <details>
+        <summary>Czy to open source?<span class="pm"></span></summary>
+        <p>Rdzeń tak, na licencji MIT. Możesz przejrzeć kod, sprawdzić, jak działa, i uruchomić u siebie — bez konta i bez kluczy do nas.</p>
+      </details>
+      <details>
+        <summary>Jaki sprzęt jest potrzebny?<span class="pm"></span></summary>
+        <p>Mac z Apple Silicon. Modele transkrypcji działają na nim wydajnie lokalnie, bez sięgania do serwerów.</p>
+      </details>
+      <details>
+        <summary>Jakie nagrania obsługuje?<span class="pm"></span></summary>
+        <p>Pliki z dyktafonu, telefonu czy karty SD — typowe formaty audio. Wrzucasz partię, Malinche przepisuje i kataloguje w tle.</p>
+      </details>
+      <details>
+        <summary>Czy moje dane mogą zniknąć?<span class="pm"></span></summary>
+        <p>Nie możemy ich zgubić ani skasować — bo nigdy ich nie trzymamy. Wszystko zostaje na Twoim dysku, pod Twoją kontrolą.</p>
+      </details>
     </div>
   </section>
 
-  <section class="block" id="lista">
+  <section class="cta-block">
     <div class="wrap">
-      <div class="signup">
+      <div class="cta grain mesh-d" id="zapis">
         <h2>Bądź pierwszy, gdy ruszy.</h2>
-        <p class="muted" style="margin-inline:auto">Otwarty rdzeń — lokalna transkrypcja do Twoich plików — działa już dziś. Zapisz się po wersję, która sama odnajduje w archiwum, podsuwa powiązania i pomaga rozwinąć je w gotowy tekst.</p>
-        <form class="form" onsubmit="return false">
-          <input type="email" placeholder="twój@email.pl" aria-label="Adres e-mail" />
-          <button class="btn btn-primary" type="submit">Zapisz mnie</button>
+        <p>Otwarty rdzeń — lokalna transkrypcja do Twoich plików — działa już dziś. Zapisz się po wersję, która sama odnajduje w archiwum i podsuwa powiązania.</p>
+        <form class="wl-form" id="wlForm">
+          <input type="email" placeholder="twój@email.pl" aria-label="Adres e-mail" required>
+          <button class="btn btn-dark btn-lg" type="submit">Zapisz mnie <span class="arr">→</span></button>
         </form>
-        <span class="badge">Wczesny dostęp</span>
+        <p class="thanks" id="wlThanks" style="display:none">Dzięki — odezwiemy się, gdy ruszymy.</p>
+        <p class="note">Wczesny dostęp · bez spamu, tylko jedna wiadomość gdy wystartujemy</p>
       </div>
     </div>
   </section>
@@ -419,239 +580,100 @@
 
 <footer>
   <div class="wrap">
-    <div class="foot">
-      <div class="brand">
-        <span class="chip" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><g fill="#C24010">
-            <rect x="1" y="9" width="1.4" height="4" rx=".2"/><rect x="3" y="6.5" width="1.4" height="9" rx=".2"/><rect x="5" y="8" width="1.4" height="6" rx=".2"/><rect x="7" y="4.5" width="1.4" height="13" rx=".2"/><rect x="9" y="3" width="1.4" height="16" rx=".2"/><rect x="11" y="2.2" width="1.4" height="17.6" rx=".2"/><rect x="13" y="3" width="1.4" height="16" rx=".2"/><rect x="15" y="4.5" width="1.4" height="13" rx=".2"/><rect x="17" y="8" width="1.4" height="6" rx=".2"/><rect x="19" y="6.5" width="1.4" height="9" rx=".2"/>
-          </g></svg>
-        </span>
-        Malinche
+    <div class="foot-grid">
+      <a class="brand" href="#top"><span class="mark grain mesh-a" aria-hidden="true"></span> Malinche</a>
+      <div class="foot-links">
+        <div class="foot-col">
+          <h5>Produkt</h5>
+          <a href="#jak">Jak działa</a><a href="#dlakogo">Dla kogo</a><a href="#zaufanie">Zaufanie</a><a href="#faq">FAQ</a>
+        </div>
+        <div class="foot-col">
+          <h5>Projekt</h5>
+          <a href="https://github.com/radektar/malinche">GitHub</a><a href="#">Licencja MIT</a><a href="#">Kontakt</a>
+        </div>
+        <div class="foot-col">
+          <h5>Prawne</h5>
+          <a href="#">Prywatność</a><a href="#">Warunki</a>
+        </div>
       </div>
-      <div>Mówisz, reszta zostaje. <span class="dot">●</span> macOS · Apple Silicon · MIT</div>
     </div>
+    <div class="foot-base">© 2026 Malinche · Mówisz, reszta zostaje · macOS · Apple Silicon · MIT</div>
   </div>
 </footer>
-<script>
-  // nav theme switches when we scroll out of the dark hero
-  (function(){
-    var h=document.querySelector("header");
-    var hero=document.querySelector(".hero-dark");
-    function onScroll(){ var thr=hero?hero.offsetHeight-72:8; h.classList.toggle("stuck",window.scrollY>thr); }
-    addEventListener("scroll",onScroll,{passive:true});
-    addEventListener("resize",onScroll,{passive:true});
-    onScroll();
-  })();
-</script>
 
 <script src="vendor/force-graph.min.js"></script>
+<script src="hero-graph-engine.js"></script>
+<script>window.LP_KONSTELACJA_NOAUTO = true;</script>
+<script src="landing-konstelacja.js"></script>
 <script>
-  // ---- hero: live force-directed knowledge graph (Obsidian-style) ----
-  (function(){
-    if(typeof ForceGraph==="undefined") return;
-    var heroEl=document.querySelector(".hero-dark");
-    var el=document.getElementById("hero-graph");
-    if(!heroEl||!el) return;
-    function dims(){ return {w:el.clientWidth||1200, h:el.clientHeight||760}; }
-    var d0=dims(), W=d0.w, H=d0.h;
-    var prefersReduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* Static boot — replaces the Design Canvas DCLogic component.
+   Waits for the graph engine + product builder, then wires nav,
+   the hero knowledge-graph, the live Konstelacja window, and the form. */
+(function () {
+  var tries = 0, waiter = null;
 
-    var seed=20260621;
-    function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+  function ready() { return (typeof MalincheGraph === 'function') && window.LPKonstelacja; }
 
-    var CONTENT=[
-      {d:"8 sty", src:"wywiad — uczestnik A",  t:"„Decyduje cena. Reszta się nie liczy."},
-      {d:"22 lut",src:"wywiad — uczestnik B",  t:"„Budżet jest święty — najtaniej, jak się da."},
-      {d:"30 mar",src:"nagranie — warsztat",   t:"„Nagle wszyscy mówią o terminie, nie o cenie."},
-      {d:"14 maj",src:"dyktando — podsumowanie",t:"„Założenie o cenie chyba upadło. Liczy się czas."}
-    ];
-    var COMMP=[
-      {fx:-80, fy:-150, ci:0,  igniteT:3700},
-      {fx: 175,fy:-128, ci:1,  igniteT:4320},
-      {fx:  6, fy:  46, ci:2,  igniteT:4940},
-      {fx: 212,fy:  -6, ci:3,  igniteT:5560},
-      {fx:  64,fy: -96, ci:-1, igniteT:4150},
-      {fx: 150,fy: -44, ci:-1, igniteT:4820}
-    ];
+  function whenReady() {
+    if (ready()) { boot(); return; }
+    waiter = setInterval(function () {
+      tries++;
+      if (ready()) { clearInterval(waiter); waiter = null; boot(); }
+      else if (tries > 200) { clearInterval(waiter); waiter = null; boot(); }
+    }, 50);
+  }
 
-    var GX=0, GY=0;
-    var nodes=[], links=[], commNodes=[];
-    for(var i=0;i<COMMP.length;i++){ var c=COMMP[i];
-      var n={id:"c"+i, kind:"comm", ci:c.ci, igniteT:c.igniteT, fx:c.fx, fy:c.fy, x:c.fx, y:c.fy, _hover:false};
-      nodes.push(n); commNodes.push(n);
-    }
-    var MASS=496, hubCount=8, hubs=[];
-    for(var i=0;i<MASS;i++){ var ang=rnd()*6.2832, rad=Math.sqrt(rnd())*360;
-      nodes.push({id:"m"+i, kind:"mass", deg:0, x:GX+Math.cos(ang)*rad, y:GY+Math.sin(ang)*rad}); }
-    var taken={};
-    while(hubs.length<hubCount){ var hh=Math.floor(rnd()*MASS); if(!taken[hh]){taken[hh]=1;hubs.push(hh);} }
-    for(var k=0;k<MASS;k++){ if(taken[k]) continue; var u=rnd();
-      if(u<0.48){ var hb=hubs[Math.floor(rnd()*hubs.length)]; links.push({source:"m"+k,target:"m"+hb}); }
-      else if(u<0.63){ var tgt=Math.floor(rnd()*MASS); if(tgt!==k&&!taken[tgt]) links.push({source:"m"+k,target:"m"+tgt}); } }
-    for(var a=0;a<hubs.length;a++){ for(var b=a+1;b<hubs.length;b++){ if(rnd()<0.18) links.push({source:"m"+hubs[a],target:"m"+hubs[b]}); } }
-    for(var cl=0;cl<4;cl++){ var anchor=Math.floor(rnd()*MASS), members=[anchor];
-      for(var m=0;m<3;m++){ var mm=Math.floor(rnd()*MASS); if(mm!==anchor){ members.push(mm); links.push({source:"m"+anchor,target:"m"+mm}); } }
-      for(var p=1;p<members.length;p++){ if(rnd()<0.5) links.push({source:"m"+members[p],target:"m"+members[(p%(members.length-1))+1]}); } }
-    var degById={};
-    links.forEach(function(l){ degById[l.source]=(degById[l.source]||0)+1; degById[l.target]=(degById[l.target]||0)+1; });
-    nodes.forEach(function(n){ if(n.kind==="mass") n.deg=degById[n.id]||0; });
-    var adj={};
-    links.forEach(function(l){ (adj[l.source]=adj[l.source]||{})[l.target]=1; (adj[l.target]=adj[l.target]||{})[l.source]=1; });
+  function boot() { initNav(); initHero(); mountProduct(); initForm(); }
 
-    function gravity(cx,cy,strength){ var ns;
-      function f(alpha){ for(var i=0;i<ns.length;i++){ var n=ns[i]; if(n.fx!=null) continue;
-        n.vx+=(cx-n.x)*strength*alpha; n.vy+=(cy-n.y)*strength*alpha; } }
-      f.initialize=function(_){ ns=_; }; return f; }
-    function camX(){ return W>=980?-140:0; }
-    function lockCam(){ try{ graph.zoom(1,0); graph.centerAt(camX(),0,0); }catch(e){} }
-    function clampTick(){
-      for(var i=0;i<nodes.length;i++){ var n=nodes[i]; if(n.fx!=null) continue;
-        if(n.x<-360)n.x=-360; else if(n.x>360)n.x=360;
-        if(n.y<-320)n.y=-320; else if(n.y>320)n.y=320; }
-      if(Math.abs(graph.zoom()-1)>0.0005) lockCam();
-    }
+  function initNav() {
+    var h = document.getElementById('top');
+    if (!h) return;
+    var onScroll = function () { h.classList.toggle('stuck', window.scrollY > 8); };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  }
 
-    var START=(typeof performance!=="undefined"?performance.now():0);
-    if(prefersReduce) START-=100000;
-    function T(){ return (typeof performance!=="undefined"?performance.now():0)-START; }
-    function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
-    function ease(p){ return p<0?0:(p>1?1:(p*p*(3-2*p))); }
-    var T_BLOOM=6700, T_CONCL=7100, T_AUTOCARD=7700;
+  function initHero() {
+    if (typeof MalincheGraph !== 'function') return;
+    var section = document.getElementById('hero');
+    var canvas = document.getElementById('heroGraph');
+    if (!section || !canvas) return;
+    var GOLD = {
+      commCore: '#C9943A', commRing: '201,148,58',
+      commGlow: ['rgba(201,148,58,0.34)', 'rgba(201,148,58,0.12)', 'rgba(201,148,58,0)'],
+      arc: '201,148,58', arcShadow: 'rgba(201,148,58,0.22)'
+    };
+    var inst = MalincheGraph({
+      host: section, canvasEl: canvas, theme: 'light',
+      mass: 560, nodeSizeScale: 0.95, zoom: 0.94, camX: -150, camY: 0,
+      cards: 'tracked', seed: 20260714,
+      themeOverrides: Object.assign({ massBaseA: 0.07, linkA: 0.07 }, GOLD)
+    });
+    if (inst) inst.reveal();
+  }
 
-    var hoverNode=null;
-    function onHover(node){ hoverNode=node;
-      commNodes.forEach(function(n){ n._hover=false; });
-      if(node&&node.kind==="comm"&&node.ci>=0) node._hover=true;
-      document.body.style.cursor=node?"pointer":"default";
-    }
+  function mountProduct() {
+    try {
+      if (window.LPKonstelacja && typeof window.LPKonstelacja.mount === 'function') {
+        window.LPKonstelacja.mount();
+      }
+    } catch (e) {}
+  }
 
-    var graph=ForceGraph()(el)
-      .width(W).height(H)
-      .backgroundColor("rgba(0,0,0,0)")
-      .nodeLabel("")
-      .enableZoomInteraction(false).enablePanInteraction(false).enableNodeDrag(false)
-      .cooldownTime(prefersReduce?0:17000)
-      .warmupTicks(prefersReduce?420:0)
-      .d3VelocityDecay(0.42)
-      .nodeCanvasObject(drawNode)
-      .nodePointerAreaPaint(function(node,color,ctx,scale){ ctx.fillStyle=color;
-        var r=(node.kind==="comm"?15:4.5)/scale; ctx.beginPath(); ctx.arc(node.x,node.y,r,0,6.2832); ctx.fill(); })
-      .linkCanvasObject(drawLink)
-      .onRenderFramePost(overlay)
-      .onEngineTick(clampTick)
-      .onEngineStop(lockCam)
-      .onNodeHover(onHover);
+  function initForm() {
+    var f = document.getElementById('wlForm');
+    var thanks = document.getElementById('wlThanks');
+    if (!f) return;
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (thanks) thanks.style.display = 'block';
+      if (f.reset) f.reset();
+    });
+  }
 
-    graph.d3Force("center", null);
-    graph.d3Force("charge").strength(-42).distanceMax(340);
-    graph.d3Force("link").distance(17).strength(0.08);
-    graph.d3Force("gravity", gravity(GX,GY,0.135));
-    graph.graphData({nodes:nodes, links:links});
-    lockCam();
-
-    var rT;
-    addEventListener("resize",function(){ clearTimeout(rT); rT=setTimeout(function(){
-      var d=dims(); W=d.w; H=d.h; graph.width(W).height(H); lockCam(); },180); },{passive:true});
-
-    function drawNode(node,ctx,scale){
-      if(node.kind==="comm"){ drawComm(node,ctx,scale); return; }
-      var deg=node.deg||0;
-      var r=(2.0+Math.min(deg,6)*0.7)/scale;
-      var a=0.30+Math.min(deg,6)*0.085;
-      if(hoverNode){ if(node===hoverNode) a=Math.min(a+0.6,0.97);
-        else if(adj[hoverNode.id]&&adj[hoverNode.id][node.id]) a=Math.min(a+0.4,0.85); }
-      ctx.beginPath(); ctx.arc(node.x,node.y,r,0,6.2832);
-      ctx.fillStyle="rgba(152,142,128,"+a.toFixed(3)+")"; ctx.fill();
-    }
-    function drawComm(node,ctx,scale){
-      var t=T(); var prog=ease((t-node.igniteT)/620);
-      if(prog<=0){ ctx.beginPath(); ctx.arc(node.x,node.y,2.6/scale,0,6.2832);
-        ctx.fillStyle="rgba(152,142,128,0.42)"; ctx.fill(); return; }
-      var breath=1+0.11*Math.sin(t/680+node.x);
-      var base=(node.ci>=0?5.4:4.2), r=base*breath/scale;
-      ctx.save(); ctx.globalAlpha=prog;
-      var gr=ctx.createRadialGradient(node.x,node.y,0,node.x,node.y,base*3.0/scale);
-      gr.addColorStop(0,"rgba(217,84,42,0.55)"); gr.addColorStop(0.5,"rgba(194,64,16,0.20)"); gr.addColorStop(1,"rgba(194,64,16,0)");
-      ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(node.x,node.y,base*3.0/scale,0,6.2832); ctx.fill();
-      ctx.strokeStyle="rgba(217,84,42,"+(0.5*prog)+")"; ctx.lineWidth=1.1/scale;
-      ctx.beginPath(); ctx.arc(node.x,node.y,(base+4)*breath/scale,0,6.2832); ctx.stroke();
-      ctx.fillStyle="#C24010"; ctx.beginPath(); ctx.arc(node.x,node.y,r,0,6.2832); ctx.fill();
-      ctx.fillStyle="#FAF3E2"; ctx.beginPath(); ctx.arc(node.x,node.y,r*0.42,0,6.2832); ctx.fill();
-      ctx.restore();
-    }
-    function drawLink(link,ctx,scale){
-      var a=0.085; if(hoverNode&&(link.source===hoverNode||link.target===hoverNode)) a=0.4;
-      ctx.beginPath(); ctx.moveTo(link.source.x,link.source.y); ctx.lineTo(link.target.x,link.target.y);
-      ctx.strokeStyle="rgba(124,112,98,"+a+")"; ctx.lineWidth=(a>0.2?1.0:0.7)/scale; ctx.stroke();
-    }
-
-    var ARCS=[
-      {a:0,b:4,start:4300},{a:4,b:1,start:4500},
-      {a:1,b:5,start:5050},{a:5,b:2,start:5250},
-      {a:2,b:3,start:5650},{a:0,b:2,start:5900}
-    ];
-    function qbezPartial(ctx,x0,y0,cx,cy,x1,y1,p){
-      var steps=26,last=Math.max(1,Math.ceil(steps*p)); ctx.beginPath();
-      for(var i=0;i<=last;i++){ var u=i/steps; if(u>p)u=p; var mu=1-u;
-        var x=mu*mu*x0+2*mu*u*cx+u*u*x1, y=mu*mu*y0+2*mu*u*cy+u*u*y1;
-        if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
-      ctx.stroke();
-    }
-
-    var cardEls=[];
-    CONTENT.forEach(function(c){ var x=document.createElement("div"); x.className="hero-card";
-      x.innerHTML='<div class="d">'+c.d+' · <span>'+c.src+'</span></div><div class="t">'+c.t+'</div>';
-      heroEl.appendChild(x); cardEls.push(x); });
-    var conclEl=document.getElementById("hero-concl");
-
-    function overlay(ctx, scale){
-      scale=scale||1; var SC=1/scale; var t=T();
-      var ccx=0,ccy=0; for(var i=0;i<commNodes.length;i++){ ccx+=commNodes[i].x; ccy+=commNodes[i].y; }
-      ccx/=commNodes.length; ccy/=commNodes.length;
-      var bgx=clamp(ccx,-40,300), bgy=clamp(ccy-150,-320,-90);
-
-      ctx.save(); ctx.lineCap="round";
-      ctx.shadowColor="rgba(194,64,16,0.6)"; ctx.shadowBlur=9;
-      for(var i=0;i<ARCS.length;i++){ var arc=ARCS[i]; var p=ease((t-arc.start)/640); if(p<=0) continue;
-        var A=commNodes[arc.a], B=commNodes[arc.b];
-        var mx=(A.x+B.x)/2, my=(A.y+B.y)/2;
-        var cx=mx+(bgx-mx)*0.32, cy=my+(bgy-my)*0.32;
-        ctx.strokeStyle="rgba(217,84,42,"+(0.92*p).toFixed(3)+")"; ctx.lineWidth=2.0*SC;
-        qbezPartial(ctx,A.x,A.y,cx,cy,B.x,B.y,p); }
-      ctx.restore();
-
-      var bp=ease((t-T_BLOOM)/950);
-      if(bp>0){ ctx.save(); ctx.globalAlpha=bp; ctx.lineCap="round";
-        ctx.strokeStyle="rgba(214,176,51,"+(0.5*bp)+")"; ctx.lineWidth=1.3*SC;
-        [2,3].forEach(function(idx){ var nn=commNodes[idx]; ctx.beginPath(); ctx.moveTo(nn.x,nn.y); ctx.lineTo(bgx,bgy); ctx.stroke(); });
-        var g=ctx.createRadialGradient(bgx,bgy,0,bgx,bgy,50*SC);
-        g.addColorStop(0,"rgba(244,221,142,0.92)"); g.addColorStop(0.5,"rgba(214,176,51,0.32)"); g.addColorStop(1,"rgba(214,176,51,0)");
-        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(bgx,bgy,50*SC,0,6.2832); ctx.fill();
-        ctx.strokeStyle="rgba(214,176,51,"+(0.5*bp)+")"; ctx.lineWidth=1.3*SC;
-        ctx.beginPath(); ctx.arc(bgx,bgy,34*bp*SC,0,6.2832); ctx.stroke();
-        ctx.strokeStyle="rgba(214,176,51,"+(0.2*bp)+")";
-        ctx.beginPath(); ctx.arc(bgx,bgy,50*bp*SC,0,6.2832); ctx.stroke();
-        ctx.fillStyle="#F4DD8E"; ctx.beginPath(); ctx.arc(bgx,bgy,6.0*bp*SC,0,6.2832); ctx.fill();
-        ctx.fillStyle="#FFFBF0"; ctx.beginPath(); ctx.arc(bgx,bgy,2.6*bp*SC,0,6.2832); ctx.fill();
-        ctx.restore(); }
-
-      if(W<980) return;   // overlay cards desktop-only
-      var activeCi=-1, hov=null;
-      for(var i=0;i<commNodes.length;i++){ if(commNodes[i]._hover&&commNodes[i].ci>=0){ hov=commNodes[i]; break; } }
-      if(hov) activeCi=hov.ci; else if(t>=T_AUTOCARD) activeCi=3;
-      for(var ci=0;ci<CONTENT.length;ci++){ var elc=cardEls[ci];
-        if(ci===activeCi){ var cn=null; for(var k=0;k<commNodes.length;k++){ if(commNodes[k].ci===ci){ cn=commNodes[k]; break; } }
-          if(cn){ var sp=graph.graph2ScreenCoords(cn.x,cn.y), cw=248;
-            elc.style.left=clamp(sp.x-cw/2, 540, W-cw-14)+"px";
-            elc.style.top =clamp(sp.y+16, 96, H-120)+"px";
-            elc.classList.add("show"); } }
-        else elc.classList.remove("show"); }
-      if(t>=T_CONCL){ var bs=graph.graph2ScreenCoords(bgx,bgy);
-        conclEl.style.left=clamp(bs.x+62, 560, W-290-16)+"px";
-        conclEl.style.top =clamp(bs.y+18, 70, 250)+"px";
-        conclEl.classList.add("show"); }
-    }
-  })();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', whenReady);
+  else whenReady();
+})();
 </script>
 </body>
 </html>
