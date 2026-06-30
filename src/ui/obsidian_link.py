@@ -1,9 +1,14 @@
-"""Open vault files in Obsidian via the ``obsidian://`` URL scheme.
+"""Open vault notes in the user's markdown app — Obsidian, Pile, Finder, or the
+system default — not Obsidian by assumption.
 
-Kept AppKit-free and config-light so URL building and path resolution stay
-unit-testable on their own; only :func:`open_url` touches the OS. Malinche is a
-lens over the vault, not a second reader — clicking a note or transcript hands
-off to Obsidian rather than rendering it in-app.
+Notes are plain markdown files, so the opener is a configurable strategy
+(``note_opener`` setting / ``Config.NOTE_OPENER``): the ``obsidian://`` deep link
+is one option among several, and stays the default for existing users.
+
+Kept AppKit-free; URL/argv building and path resolution stay config-free and
+unit-testable on their own — only the ``open_*`` helpers touch the OS. Malinche
+is a lens over the vault, not a second reader: clicking a note hands off to the
+chosen app rather than rendering it in-app.
 """
 
 from __future__ import annotations
@@ -60,32 +65,68 @@ def _normalize(name: str) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def open_url(url: str) -> bool:
-    """Open a URL via the macOS ``open`` command. Best-effort; logs on failure."""
+def _run_open(argv: list, what: str) -> bool:
+    """Run ``open …`` best-effort via the macOS ``open`` command; log on failure."""
     try:
-        subprocess.run(["open", url], check=True)
+        subprocess.run(argv, check=True)
         return True
     except (OSError, subprocess.CalledProcessError) as exc:
-        logger.warning("could not open Obsidian URL (%s): %s", url, exc)
+        logger.warning("could not open %r (%s): %s", what, argv, exc)
         return False
 
 
-def open_path(path: Path) -> bool:
-    """Resolve and open an absolute vault file path in Obsidian."""
-    return open_url(obsidian_url(path))
+def file_open_argv(path: Path, opener: str = "obsidian") -> list:
+    """Build the ``open`` argv to open ``path`` per the chosen markdown app.
+
+    Strategies (the ``note_opener`` setting):
+
+    - ``"obsidian"`` — ``obsidian://open?path=…`` deep link (default, legacy)
+    - ``"finder"``   — reveal the file in Finder (``open -R``)
+    - ``"default"``  — hand to the system default ``.md`` handler (``open``)
+    - ``"app:<Name>"`` — open with a named app (``open -a <Name>``), e.g.
+      ``"app:Pile"`` or ``"app:Typora"``
+
+    Notes are plain files, so every strategy works on any vault — Obsidian is
+    one option, not an assumption.
+    """
+    abs_path = str(Path(path).expanduser().resolve())
+    if opener == "finder":
+        return ["open", "-R", abs_path]
+    if opener and opener.startswith("app:"):
+        app = opener[4:].strip()
+        if app:
+            return ["open", "-a", app, abs_path]
+    if opener in ("default", "system"):
+        return ["open", abs_path]
+    # "obsidian" or unknown → Obsidian deep link (preserves legacy behaviour).
+    return ["open", obsidian_url(Path(abs_path))]
 
 
-def open_note(basename: str, vault_dir: Path) -> bool:
-    """Resolve a bare note basename inside ``vault_dir`` and open it in Obsidian.
+def open_url(url: str) -> bool:
+    """Open a URL (e.g. an ``obsidian://`` deep link) via macOS ``open``."""
+    return _run_open(["open", url], url)
 
-    Falls back to an ``obsidian://search`` so a click never silently does
-    nothing when the exact file can't be located (e.g. a renamed note).
+
+def open_path(path: Path, opener: str = "obsidian") -> bool:
+    """Open an absolute vault file path in the configured markdown app."""
+    return _run_open(file_open_argv(path, opener), str(path))
+
+
+def open_note(basename: str, vault_dir: Path, opener: str = "obsidian") -> bool:
+    """Resolve a bare note basename inside ``vault_dir`` and open it.
+
+    When the file can't be located and the opener is Obsidian, falls back to an
+    ``obsidian://search`` so a click never silently does nothing. Other openers
+    have no search equivalent, so a miss just logs (best-effort).
     """
     path = resolve_note_path(basename, vault_dir)
     if path is not None:
-        return open_path(path)
+        return open_path(path, opener)
     query = (basename or "").strip().strip("[]").strip()
     if not query:
         return False
-    logger.debug("note %r not found on disk — falling back to Obsidian search", query)
-    return open_url("obsidian://search?query=" + quote(query, safe=""))
+    if opener in (None, "", "obsidian"):
+        logger.debug("note %r not found on disk — falling back to Obsidian search", query)
+        return open_url("obsidian://search?query=" + quote(query, safe=""))
+    logger.debug("note %r not found on disk (opener=%r) — no-op", query, opener)
+    return False

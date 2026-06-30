@@ -270,6 +270,14 @@ tags: [{tags}]
             self._user_settings, "ai_handoff_tool", "claude"
         ) or "claude"
 
+        # How note/transcript clicks open files: Obsidian deep link by default,
+        # but configurable so Malinche doesn't assume Obsidian (see
+        # ui/obsidian_link.file_open_argv). "obsidian" | "finder" | "default" |
+        # "app:<Name>".
+        self.NOTE_OPENER = getattr(
+            self._user_settings, "note_opener", "obsidian"
+        ) or "obsidian"
+
         # AI summaries run whenever a usable LLM backend is configured: Ollama
         # needs no key; cloud providers need an API key. Key presence is the
         # single control — it matches the Settings copy ("without a key … skips
