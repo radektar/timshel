@@ -77,6 +77,20 @@
     -webkit-mask:var(--logo-sygnet) center/contain no-repeat;mask:var(--logo-sygnet) center/contain no-repeat}
   .nav-mid{display:flex;align-items:center;gap:2rem;font-size:var(--text-sm);color:var(--ink-soft)}
   .nav-mid a:hover{color:var(--ink)}
+  .nav-drop{position:relative}
+  .nav-drop>.nav-drop-trigger{display:inline-flex;align-items:center;gap:.35rem;cursor:pointer}
+  .nav-drop>.nav-drop-trigger .caret{font-size:.7em;transition:transform .18s ease;color:var(--ink-soft)}
+  .nav-drop:hover>.nav-drop-trigger .caret{transform:rotate(180deg)}
+  .nav-drop-menu{position:absolute;top:100%;left:50%;transform:translate(-50%,6px);
+    min-width:208px;padding:.4rem;background:var(--paper);border:1px solid var(--line,rgba(26,26,26,.12));
+    border-radius:12px;box-shadow:0 16px 40px -16px rgba(26,26,26,.28);
+    display:flex;flex-direction:column;gap:.1rem;
+    opacity:0;visibility:hidden;pointer-events:none;transition:opacity .16s ease,transform .16s ease;z-index:60}
+  .nav-drop-menu::before{content:"";position:absolute;left:0;right:0;top:-12px;height:12px}
+  .nav-drop:hover .nav-drop-menu,.nav-drop:focus-within .nav-drop-menu{opacity:1;visibility:visible;pointer-events:auto;transform:translate(-50%,8px)}
+  .nav-drop-menu a{display:block;padding:.5rem .7rem;border-radius:8px;color:var(--ink-soft);white-space:nowrap}
+  .nav-drop-menu a:hover{color:var(--ink);background:var(--panel)}
+  .nav-drop-menu a small{display:block;font-size:.78em;color:var(--ink-soft);opacity:.7;margin-top:1px}
   .nav-end{display:flex;align-items:center;gap:1.1rem;font-size:var(--text-sm)}
   .nav-end .ghost{color:var(--ink-soft)}
   .nav-end .ghost:hover{color:var(--ink)}
@@ -107,9 +121,10 @@
     color:var(--ink-soft);background:var(--panel);border:1px solid var(--border-base);
     padding:.4rem .8rem;border-radius:var(--radius-pill);margin-bottom:1.6rem}
   .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--grad-jade)}
-  .hero h1{font-size:calc(0.82 * var(--text-h1));line-height:1.0;letter-spacing:-.032em;max-width:18ch}
+  .hero h1{font-size:calc(0.82 * var(--text-h1));line-height:1.08;letter-spacing:-.032em;max-width:18ch;text-wrap:balance}
   .hero h1 .accent{color:var(--terracotta)}
-  .hero .lead{font-size:var(--text-lead);color:var(--ink-soft);max-width:44ch;margin:1.5rem 0 0;line-height:1.5}
+  .hero h1 .hl2{display:block;color:var(--terracotta);font-weight:700;margin-top:.16em}
+  .hero .lead{font-size:var(--text-lead);color:var(--ink-soft);max-width:42ch;margin:1.9rem 0 0;line-height:1.55}
   .hero-cta{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:2rem}
   .trust{margin-top:1.7rem;font-size:var(--text-sm);color:var(--ink-soft)}
 
@@ -141,14 +156,21 @@
   .marquee{border-block:1px solid var(--border-base);padding-block:1.6rem;margin-top:clamp(2rem,4vw,3.5rem)}
   .marquee .lbl{text-align:center;font-size:var(--text-xs);letter-spacing:var(--tracking-eyebrow);
     text-transform:uppercase;color:var(--ink-soft);margin-bottom:1.1rem}
-  .logos{display:flex;align-items:center;justify-content:center;gap:clamp(1.2rem,3.5vw,2.8rem);
+  .logos{display:flex;align-items:flex-start;justify-content:center;gap:clamp(1.2rem,3.5vw,2.8rem);
     flex-wrap:wrap;opacity:.7}
   .logos span{font-family:var(--font-display);font-weight:500;font-size:1.05rem;color:var(--ink)}
   .logos .sep{color:var(--border-strong);font-size:.8rem}
-  .logos .lg{color:var(--ink-soft);display:flex;flex-direction:column;align-items:center;gap:.5rem;transition:color .2s}
+  .logos .lg{color:var(--ink-soft);display:flex;flex-direction:column;align-items:center;gap:.45rem;transition:color .2s;min-width:62px}
+  .logos .lg svg{margin-bottom:.05rem}
   .logos .lg svg{width:28px;height:28px;display:block}
   .logos .lg .lglab{font-size:11.5px;font-weight:500;letter-spacing:.01em}
   .logos .lg:hover{color:var(--ink)}
+  .logos .lg{position:relative}
+  .logos .lg .soon{font-family:var(--font-body,inherit);font-size:8.5px;line-height:1;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--accent-terracotta,#C24010);
+    border:1px solid color-mix(in srgb,var(--accent-terracotta,#C24010) 35%,transparent);
+    background:color-mix(in srgb,var(--accent-terracotta,#C24010) 8%,transparent);
+    padding:2px 5px;border-radius:999px;margin-top:1px}
 
   /* ---- section scaffolding ---- */
   .block{padding-block:clamp(4rem,8vw,7rem)}
@@ -206,8 +228,11 @@
 
   /* ---- personas ---- */
   .personas{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(1rem,2vw,1.4rem);margin-top:2.5rem}
-  .pcard{background:#fff;border:1px solid var(--border-base);border-radius:var(--radius-3xl);padding:clamp(1.5rem,2.5vw,2.1rem)}
-  .pcard .persona{font-family:var(--font-display);font-weight:500;font-size:1.3rem;letter-spacing:-.01em;margin-bottom:1.1rem}
+  .pcard{background:#fff;border:1px solid var(--border-base);border-radius:var(--radius-3xl);padding:clamp(1.5rem,2.5vw,2.1rem);display:block;color:inherit;text-decoration:none;transition:border-color .2s,box-shadow .2s,transform .2s}
+  a.pcard:hover{border-color:var(--border-strong,rgba(26,26,26,.22));box-shadow:0 14px 34px -18px rgba(26,26,26,.25);transform:translateY(-2px)}
+  .pcard .persona{font-family:var(--font-display);font-weight:500;font-size:1.3rem;letter-spacing:-.01em;margin-bottom:1.1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .pcard .persona .go{font-size:1rem;color:var(--ink-soft);transition:transform .2s,color .2s}
+  a.pcard:hover .persona .go{color:var(--terracotta);transform:translateX(3px)}
   .pcard .row{display:flex;gap:.9rem;padding-block:.85rem}
   .pcard .row + .row{border-top:1px solid var(--border-base)}
   .pcard .lab{flex:0 0 auto;width:5rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding-top:.2rem}
@@ -245,7 +270,7 @@
   .wl-form input:focus{outline:none;border-color:var(--obsidian);background:#fff}
   .wl-form input::placeholder{color:#6a6760}
   .cta .thanks{position:relative;z-index:2;font-size:var(--text-sm);color:var(--obsidian);font-weight:600;margin:.9rem 0 0}
-  .cta .note{position:relative;z-index:2;font-size:var(--text-xs);color:#54514c;margin:1.1rem 0 0}
+  .cta .note{position:relative;z-index:2;font-size:var(--text-xs);color:#54514c;margin:1.1rem auto 0}
 
   /* ---- product UI surfaces embedded in the handhold layout ---- */
   .uc-art.is-ui{aspect-ratio:auto;display:flex;align-items:center;justify-content:center;
@@ -319,12 +344,19 @@
       </a>
       <div class="nav-mid">
         <a href="#jak">Jak działa</a>
-        <a href="#dlakogo">Dla kogo</a>
+        <div class="nav-drop" tabindex="0">
+          <a class="nav-drop-trigger" href="#dlakogo">Dla kogo <span class="caret" aria-hidden="true">▾</span></a>
+          <div class="nav-drop-menu">
+            <a href="cases/lekarz/index.html">Dla lekarzy</a>
+            <a href="cases/dziennikarz/index.html">Dla dziennikarzy</a>
+            <a href="#dlakogo">Dla prawników</a>
+            <a href="#dlakogo">Dla badaczy</a>
+          </div>
+        </div>
         <a href="#zaufanie">Zaufanie</a>
         <a href="#faq">FAQ</a>
       </div>
       <div class="nav-end">
-        <a class="ghost" href="https://github.com/radektar/malinche">GitHub</a>
         <a class="btn btn-dark" href="#zapis">Zapisz się <span class="arr">→</span></a>
       </div>
     </nav>
@@ -337,11 +369,10 @@
     <div class="bleed-scrim" aria-hidden="true"></div>
     <div class="wrap hero-inner">
       <div class="hero-copy">
-        <h1>Masz transkrypty wszystkiego. <span class="accent">I nic z nich nie wynika.</span></h1>
+        <h1>Masz transkrypty wszystkiego. <span class="hl2">I nic z nich nie wynika.</span></h1>
         <p class="lead">Leżą w folderze i udają system. Malinche czyta je razem — łączy, zestawia i podsuwa to, czego sam już nie pamiętasz.</p>
         <div class="hero-cta">
           <a class="btn btn-dark btn-lg" href="#zapis">Zapisz się na listę <span class="arr">→</span></a>
-          <a class="btn btn-light btn-lg" href="https://github.com/radektar/malinche">Zobacz na GitHubie</a>
         </div>
       </div>
     </div>
@@ -352,11 +383,12 @@
       <div class="lbl">Działa z tym, co już masz</div>
       <div class="logos">
         <span class="lg" title="Dyktafon" aria-label="Dyktafon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="3" width="9" height="18" rx="3"></rect><circle cx="12" cy="8" r="2.3"></circle><line x1="9.5" y1="14" x2="14.5" y2="14"></line><line x1="9.5" y1="16.5" x2="14.5" y2="16.5"></line></svg><span class="lglab">Dyktafon</span></span>
-        <span class="lg" title="Telefon" aria-label="Telefon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"></line></svg><span class="lglab">Telefon</span></span>
         <span class="lg" title="Karta SD" aria-label="Karta SD"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 3 h6 l3 3 v14 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-16 a1 1 0 0 1 1 -1 z"></path><line x1="9.5" y1="4.5" x2="9.5" y2="7" stroke-linecap="round"></line><line x1="11.5" y1="4.5" x2="11.5" y2="7" stroke-linecap="round"></line><line x1="13.5" y1="5.5" x2="13.5" y2="7" stroke-linecap="round"></line></svg><span class="lglab">Karta SD</span></span>
-        <span class="lg" title="Markdown" aria-label="Markdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2"></rect><path d="M6 15.5 V9.5 l3 3 3-3 V15.5"></path><path d="M17 9.5 V15 M17 15 l-2-2 M17 15 l2-2"></path></svg><span class="lglab">Markdown</span></span>
-        <span class="lg" title="Obsidian" aria-label="Obsidian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 L19 8 16.5 20 7.5 20 5 8 Z"></path><path d="M12 2.5 V20 M5 8 H19"></path></svg><span class="lglab">Obsidian</span></span>
-        <span class="lg" title="macOS" aria-label="macOS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5" width="15" height="10" rx="1.5"></rect><path d="M2.5 18.5 h19"></path></svg><span class="lglab">macOS</span></span>
+        <span class="lg" title="Komputer" aria-label="Komputer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5" width="15" height="10" rx="1.5"></rect><path d="M2.5 18.5 h19"></path></svg><span class="lglab">Komputer</span></span>
+        <span class="lg" title="Telefon" aria-label="Telefon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"></line></svg><span class="lglab">Telefon</span><span class="soon">Soon</span></span>
+        <span class="lg" title="Google Meet" aria-label="Google Meet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.5" width="12" height="11" rx="2"></rect><path d="M15 10 l5.5 -3 v10 l-5.5 -3 z"></path></svg><span class="lglab">Google Meet</span><span class="soon">Soon</span></span>
+        <span class="lg" title="Microsoft Teams" aria-label="Microsoft Teams"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7.5" r="2.6"></circle><circle cx="16.5" cy="8.5" r="1.9"></circle><path d="M4 19 v-2 a4 4 0 0 1 4 -4 h2 a4 4 0 0 1 4 4 v2"></path><path d="M16 19 v-2.5 a3 3 0 0 0 -1.4 -2.5 h2.4 a3 3 0 0 1 3 3 V19"></path></svg><span class="lglab">MS Teams</span><span class="soon">Soon</span></span>
+        <span class="lg" title="Zoom" aria-label="Zoom"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.5" width="12" height="11" rx="2.5"></rect><path d="M15 10 l5.5 -3 v10 l-5.5 -3 z"></path></svg><span class="lglab">Zoom</span><span class="soon">Soon</span></span>
       </div>
     </div>
   </div>
@@ -364,7 +396,6 @@
   <section class="block" id="jak">
     <div class="wrap">
       <div class="sec-head">
-        <span class="kicker">Jak to działa</span>
         <h2>Z osobnych nagrań — jeden zbiór, który coś z siebie składa.</h2>
         <p>Trzy ruchy: wrzucasz, co masz; Malinche zestawia wszystko naraz; a potem samo podsuwa to, co warto rozwinąć.</p>
       </div>
@@ -411,7 +442,6 @@
         </div>
         <div class="prod-panel grain p-reveal">
           <div class="prod-win" id="konstelacjaHost"></div>
-          <p class="prod-note">Pytasz cały korpus naraz — wspólne wątki i sprzeczności w jednym miejscu.</p>
         </div>
       </div>
 
@@ -435,14 +465,13 @@
     <div class="wrap">
       <div class="steps-sec">
         <div class="sec-head">
-          <span class="kicker">Zacznij w kilka minut</span>
           <h2>Otwarty rdzeń działa już dziś.</h2>
         </div>
         <div class="steps">
           <div class="step">
             <div class="num">1</div>
             <h4>Pobierz Malinche</h4>
-            <p>Sklonuj repo albo pobierz build. Open source na licencji MIT — bez konta.</p>
+            <p>Pobierz build. Open source na licencji MIT — bez konta.</p>
           </div>
           <div class="step">
             <div class="num">2</div>
@@ -456,7 +485,7 @@
           </div>
         </div>
         <div class="steps-foot">
-          <a class="btn btn-dark btn-lg" href="https://github.com/radektar/malinche">Zobacz na GitHubie <span class="arr">→</span></a>
+          <a class="btn btn-dark btn-lg" href="#zapis">Zapisz się na listę <span class="arr">→</span></a>
           <span class="note">100% lokalnie · bez konta, bez kluczy do nas</span>
         </div>
       </div>
@@ -466,7 +495,6 @@
   <section class="block" id="zaufanie" style="padding-top:0">
     <div class="wrap">
       <div class="sec-head">
-        <span class="kicker">Dlaczego można zaufać</span>
         <h2>Twoje myśli zostają tam, gdzie powinny.</h2>
       </div>
       <div class="trio">
@@ -492,7 +520,6 @@
   <section class="block" style="padding-top:0">
     <div class="wrap">
       <div class="editorial">
-        <span class="kicker">Nie zgubimy tego, czego nigdy nie mieliśmy</span>
         <h2>Bo nigdy nie trzymamy Twoich danych.</h2>
         <p class="deadpan">Twoje myśli zostają tam, gdzie powinny.</p>
         <p>Pewne narzędzie, które miało pamiętać za Ciebie, w grudniu 2025 skasowało dane użytkownikom w Europie. Malinche nie może zgubić ani skasować Twoich danych — bo one nigdy nie opuszczają Twojego Maca.</p>
@@ -503,16 +530,15 @@
   <section class="block" id="dlakogo" style="padding-top:0">
     <div class="wrap">
       <div class="sec-head">
-        <span class="kicker">Dla kogo</span>
         <h2>Dla ludzi, którzy myślą na głos — i mają tego dużo.</h2>
         <p>Masz dyktafon i system notatek? Oto jak wygląda dzień teraz — i z Malinche.</p>
       </div>
       <div class="personas">
-        <div class="pcard">
-          <div class="persona">Dziennikarze i reporterzy</div>
+        <a class="pcard" href="cases/dziennikarz/index.html">
+          <div class="persona">Dziennikarze i reporterzy<span class="go" aria-hidden="true">→</span></div>
           <div class="row now"><span class="lab">Teraz</span><p>Wracasz z terenu z sześcioma godzinami wywiadów. Przepisujesz ręcznie albo wrzucasz źródła do cudzej chmury. Cytat sprzed trzech rozmów przepada.</p></div>
           <div class="row with"><span class="lab">Malinche</span><p>Każdy wywiad przepisany lokalnie i otagowany. Pytasz „kto mówił o X?" i masz cytat z datą — a źródła nie opuszczają Maca.</p></div>
-        </div>
+        </a>
         <div class="pcard">
           <div class="persona">Prawnicy i dyktujący</div>
           <div class="row now"><span class="lab">Teraz</span><p>Dyktujesz pismo i oddajesz nagranie do przepisania — poufne treści krążą przez sekretariat albo chmurę. Starych dyktand i tak nie przeszukasz.</p></div>
@@ -589,7 +615,7 @@
         </div>
         <div class="foot-col">
           <h5>Projekt</h5>
-          <a href="https://github.com/radektar/malinche">GitHub</a><a href="#">Licencja MIT</a><a href="#">Kontakt</a>
+          <a href="#">Licencja MIT</a><a href="#">Kontakt</a>
         </div>
         <div class="foot-col">
           <h5>Prawne</h5>

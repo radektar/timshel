@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Malinche — osobne wizyty i badania, jedna historia choroby</title>
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../../tokens.css">
+<link rel="stylesheet" href="../case.css">
+<link rel="stylesheet" href="../../landing-konstelacja.css">
+</head>
+<body>
+
+<!-- shared aztec motif patterns (greca xicalcoliuhqui + stepped merlons) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <pattern id="pGreca" width="48" height="48" patternUnits="userSpaceOnUse" patternTransform="translate(0 9)">
+      <path d="M0 42 H48 M6 42 V6 H42 V30 H18 V18 H30" fill="none" stroke="var(--terracotta)" stroke-width="3.5" stroke-linecap="square" stroke-linejoin="miter"/>
+    </pattern>
+    <pattern id="pMerlon" width="48" height="24" patternUnits="userSpaceOnUse">
+      <path d="M0 24 L0 18 L6 18 L6 12 L12 12 L12 6 L18 6 L18 0 L30 0 L30 6 L36 6 L36 12 L42 12 L42 18 L48 18 L48 24 Z" fill="var(--terracotta)" opacity="0.9"/>
+    </pattern>
+  </defs>
+</svg>
+
+<header>
+  <div class="wrap">
+    <nav>
+      <a class="brand" href="../../index.html">
+        <span class="chip" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 22 22" fill="none"><g fill="#C24010">
+            <rect x="1" y="9" width="1.4" height="4" rx=".2"/><rect x="3" y="6.5" width="1.4" height="9" rx=".2"/><rect x="5" y="8" width="1.4" height="6" rx=".2"/><rect x="7" y="4.5" width="1.4" height="13" rx=".2"/><rect x="9" y="3" width="1.4" height="16" rx=".2"/><rect x="11" y="2.2" width="1.4" height="17.6" rx=".2"/><rect x="13" y="3" width="1.4" height="16" rx=".2"/><rect x="15" y="4.5" width="1.4" height="13" rx=".2"/><rect x="17" y="8" width="1.4" height="6" rx=".2"/><rect x="19" y="6.5" width="1.4" height="9" rx=".2"/>
+          </g></svg>
+        </span>
+        Malinche
+      </a>
+      <div class="nav-mid">
+        <a href="../../index.html#jak">Jak działa</a>
+        <a href="../../index.html#dlakogo">Dla kogo</a>
+        <a href="#zaufanie">Zaufanie</a>
+        <a href="../../index.html#faq">FAQ</a>
+      </div>
+      <div class="nav-end">
+        <a class="btn btn-dark" href="#lista">Zapisz się <span class="arr">→</span></a>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <!-- ───── MINI-HERO ───── -->
+  <section class="mini">
+    <div class="wrap">
+      <h1>Osobne wizyty i badania. <span class="accent">Jedna historia choroby.</span></h1>
+      <p class="lead">Każda wizyta to osobne nagranie. Każde badanie — osobny plik. Malinche czyta je w kolejności, w jakiej powstały, i widzi jeden ciąg — nie cztery luźne pliki, do których nikt już nie wraca.</p>
+    </div>
+  </section>
+
+  <div class="wrap"><svg class="frieze" viewBox="0 0 480 26" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="480" height="26" fill="url(#pGreca)"/></svg></div>
+
+  <!-- ───── ROLE INSIGHTS RENDER ───── -->
+  <section class="block demo" id="insight">
+    <div class="wrap">
+      <div class="insight-stage">
+        <div class="insight-host" id="konstelacjaHost"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───── WORKED CASE ───── -->
+  <section class="block worked">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow kicker">Jak to wygląda na nagraniu</span>
+        <h2>Jeden pacjent, cztery osobne nagrania.</h2>
+        <p>Wywiad, EEG, wizyta kontrolna, drugie badanie — dyktowane luzem, w odstępie tygodni. Niżej te same pliki w kolejności, w jakiej powstały.</p>
+      </div>
+
+      <!-- the track Malinche derives -->
+      <ol class="track" style="list-style:none;margin:0">
+        <li class="rec">
+          <span class="node" aria-hidden="true"></span>
+          <div class="meta"><span class="when">wizyta 1</span><span class="rkind">Wywiad</span></div>
+          <div class="body">
+            <p>Wywiad z pacjentem — pierwsze objawy, przebieg, leki, wywiad rodzinny.</p>
+            <span class="det">audio 18:42 · przepisane na Macu</span>
+          </div>
+        </li>
+        <li class="rec">
+          <span class="node" aria-hidden="true"></span>
+          <div class="meta"><span class="when">badanie 1</span><span class="rkind">EEG</span></div>
+          <div class="body">
+            <p>Badanie EEG mózgu — opis zapisu i wniosek dyktowane zaraz po badaniu.</p>
+            <span class="det">audio 06:11 · powiązane z wizytą 1</span>
+          </div>
+        </li>
+        <li class="rec">
+          <span class="node" aria-hidden="true"></span>
+          <div class="meta"><span class="when">wizyta 2</span><span class="rkind">Wywiad</span></div>
+          <div class="body">
+            <p>Kolejny wywiad — co się zmieniło od ostatniego razu, reakcja na leczenie.</p>
+            <span class="det">audio 12:08 · nawiązuje do wizyty 1</span>
+          </div>
+        </li>
+        <li class="rec">
+          <span class="node" aria-hidden="true"></span>
+          <div class="meta"><span class="when">badanie 2</span><span class="rkind">EEG</span></div>
+          <div class="body">
+            <p>Kolejne badanie — porównanie zapisu z poprzednim, kierunek dalszej diagnostyki.</p>
+            <span class="det">audio 07:53 · porównane z badaniem 1</span>
+          </div>
+        </li>
+        <li class="rec more">
+          <span class="node" aria-hidden="true"></span>
+          <span class="more-l">…i kolejne wizyty, i kolejne badania — ciąg się nie urywa.</span>
+        </li>
+      </ol>
+
+      <!-- synthesis: flat editorial conclusion -->
+      <div class="synth">
+        <span class="eyebrow">Co z tego składa Malinche</span>
+        <p class="synth-line">…składa się w historię choroby pacjenta — <em>jeden ciąg, nie luźne pliki.</em></p>
+      </div>
+
+      <p class="wedge">To nie jest oprogramowanie medyczne ani kartoteka. To <b>ten sam mechanizm</b> co wszędzie — osobne nagrania czytane razem — pokazany na materiale, który lekarz zna z codziennej pracy.</p>
+    </div>
+  </section>
+
+  <!-- ───── PROOF (role-tuned) ───── -->
+  <section class="block proof-sec" id="zaufanie">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow kicker">Dlaczego można zaufać</span>
+        <h2>Dane pacjenta zostają tam, gdzie powstały.</h2>
+      </div>
+      <div class="proofs">
+        <div class="pf lead local">
+          <div class="t">Lokalnie</div>
+          <p>Transkrypcja idzie na Twoim Macu (whisper.cpp). Nagrania i nazwiska nie wychodzą do żadnej chmury — żeby nie wyciekały dalej. Nawet na sekundę.</p>
+        </div>
+        <div class="pf">
+          <div class="t">Twoje pliki</div>
+          <p>Zapis to czysty Markdown w folderze, który posiadasz. Eksport, kopia, archiwum — kiedy chcesz. Żadnego zamknięcia w cudzym systemie.</p>
+        </div>
+        <div class="pf">
+          <div class="t">Otwarty kod</div>
+          <p>Rdzeń jest open source (MIT). Możesz zajrzeć, sprawdzić, uruchomić u siebie. Bez konta, bez kluczy do nas.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───── WAITLIST ───── -->
+  <section class="block" id="lista">
+    <div class="wrap">
+      <div class="signup">
+        <h2>Bądź pierwszy, gdy ruszy.</h2>
+        <p class="muted">Otwarty rdzeń — lokalna transkrypcja do Twoich plików — działa już dziś. Zapisz się po wersję, która sama łączy osobne nagrania w jeden ciąg i podsuwa, co się z czym wiąże.</p>
+        <form class="form" onsubmit="return false">
+          <input type="email" placeholder="twój@email.pl" aria-label="Adres e-mail" />
+          <button class="btn btn-dark" type="submit">Zapisz mnie</button>
+        </form>
+        <span class="badge">Wczesny dostęp</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+window.LP_KONSTELACJA_DATA = {
+  CONNS: [
+    { id:"shared", type:"shared", color:"#D6B033", label:"Wspólny wątek między wizytami",
+      snippet:"Ten sam objaw wraca w dwóch wywiadach — za każdym razem opisany inaczej.",
+      thesis:"Ten sam objaw wraca w dwóch wywiadach, ale opisany innymi słowami — zestawione obok siebie układają się w jeden wzorzec, łatwy do przeoczenia między wizytami.",
+      notes:["Wywiad — wizyta 1","Wywiad — wizyta 2"],
+      evidence:[
+        { date:"wizyta 1", note:"Wywiad", quote:"…pacjent zgłasza, że „czasem robi się dziwnie” rano, trudno mu to nazwać…" },
+        { date:"wizyta 2", note:"Wywiad", quote:"…wraca temat porannych „zawieszeń”, tym razem z aurą wzrokową…" }
+      ],
+      directions:[
+        "Zestawić oba opisy obok siebie przed kolejną wizytą?",
+        "Czy „poranne zawieszenia” i „aura” to ten sam epizod opisany inaczej?"
+      ] },
+    { id:"emergent", type:"emergent", color:"#E3C16B", label:"Emergentny wzorzec",
+      snippet:"Porównanie dwóch zapisów EEG sugeruje powtarzalny kierunek.",
+      thesis:"Dwa zapisy EEG, dyktowane w odstępie tygodni, opisują podobny element w tej samej okolicy — zestawione sugerują kierunek, którego pojedyncze badanie nie pokazuje.",
+      notes:["EEG — badanie 1","EEG — badanie 2"],
+      evidence:[
+        { date:"badanie 1", note:"EEG", quote:"…zmiany zaznaczone głównie w odprowadzeniach skroniowych po stronie lewej…" },
+        { date:"badanie 2", note:"EEG", quote:"…obraz podobny do poprzedniego, zmiany utrzymują się w tej samej okolicy…" }
+      ],
+      directions:[
+        "Porównać oba opisy wprost — progresja czy stan stabilny?",
+        "Zebrać oba wnioski w jedną notatkę do dalszej diagnostyki?"
+      ] },
+    { id:"contradiction", type:"contradiction", color:"#D9542A", label:"Rozbieżność wywiad ↔ badanie",
+      snippet:"To, co pacjent zgłasza, nie pokrywa się z opisem badania.",
+      thesis:"Pacjent w wywiadzie opisuje nasilenie objawów, a wniosek z badania dyktowany tego samego dnia mówi o poprawie — rozbieżność widać dopiero, gdy oba nagrania leżą obok siebie.",
+      notes:["Wywiad — wizyta 2","EEG — badanie 2"],
+      evidence:[
+        { date:"wizyta 2", note:"Wywiad", quote:"…pacjent mówi, że epizody są częstsze niż przed miesiącem…" },
+        { date:"badanie 2", note:"EEG", quote:"…zapis spokojniejszy niż poprzednio, mniej wyładowań w obserwacji…" }
+      ],
+      directions:[
+        "Dopytać pacjenta o okoliczności epizodów między wizytami?",
+        "Zaznaczyć rozbieżność wprost w historii, zamiast wybierać jedną wersję?"
+      ] }
+  ],
+  TRANSCRIPTS: [
+    ["Wywiad — wizyta 1","26-06"],
+    ["EEG — badanie 1","26-06"],
+    ["Wywiad — wizyta 2","26-07"],
+    ["EEG — badanie 2","26-07"]
+  ]
+};
+</script>
+<script src="../../landing-konstelacja.js"></script>
+
+</body>
+</html>
