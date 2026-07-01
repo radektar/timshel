@@ -80,6 +80,23 @@ def test_dim_change_rebuilds_store(vault, monkeypatch):
         e2.close()
 
 
+def test_cli_backfill_then_ask(tmp_path, monkeypatch, capsys):
+    """The deployed entrypoint (`make ask` / `make backfill-embeddings`) end to end."""
+    from src.config.config import config as config_proxy  # delegates to the get_config() singleton
+
+    _note(tmp_path, "okna", "Okna", "14.06", "Producenci okien nie odpowiadaja, dach stoi w miejscu.")
+    from src.connections.recall import cli as cli_mod
+
+    monkeypatch.setattr(engine_mod, "resolve_embedder", lambda *a, **k: FakeEmbedder())
+    monkeypatch.setattr(config_proxy, "TRANSCRIBE_DIR", tmp_path)
+
+    assert cli_mod.main(["backfill"]) == 0
+    assert cli_mod.main(["ask", "dostawa okien dach"]) == 0
+    out = capsys.readouterr().out
+    assert "okna" in out
+    assert "okien" in out.lower()
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 def test_engine_end_to_end_real_embedder(vault):
