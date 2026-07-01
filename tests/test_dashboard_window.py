@@ -349,3 +349,26 @@ def test_ask_about_insight_enters_recall_with_rationale():
     assert conn is not None
     ctrl.askAboutInsightClicked_(None)
     assert ctrl._mode == "recall" and ctrl._query == conn.rationale
+
+
+# ── background indexing banner (Faza 5) ────────────────────────────────────
+
+def test_index_banner_renders_while_indexing():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+        "recall_index_status": lambda: {"state": "indexing", "done": 12, "total": 170, "error": ""},
+    })
+    ctrl._ensure_window()
+    assert ctrl._index_snapshot()["state"] == "indexing"
+    _complete_search(ctrl, "co z oknami")
+    _render(ctrl)  # partial-index banner + results paint without raising
+
+
+def test_no_index_banner_when_ready():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+        "recall_index_status": lambda: {"state": "ready", "done": 170, "total": 170},
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "q")
+    _render(ctrl)  # ready → no banner, just results

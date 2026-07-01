@@ -64,20 +64,44 @@ class RecallEngine:
     def index_path(self, path) -> int:
         return index_note(Path(path), self._store, self._embedder)
 
-    def backfill(self, *, progress: Optional[Callable] = None) -> int:
-        """Index every top-level transcript in the vault. One bad note never stops it."""
+    def backfill(self, *, progress: Optional[Callable] = None, incremental: bool = False) -> int:
+        """Index every top-level transcript in the vault. One bad note never stops it.
+
+        ``incremental`` skips notes already indexed at their current content hash — so
+        a background catch-up on every launch only embeds what's new or changed. Returns
+        the number of notes actually (re)indexed. ``progress(done, total, path)`` fires
+        for every note, skipped or not, so a first-run UI can show honest coverage.
+        """
         notes = self._iter_notes()
         total = len(notes)
         indexed = 0
         for i, path in enumerate(notes, 1):
             try:
-                self.index_path(path)
-                indexed += 1
+                if incremental and self._is_current(path):
+                    pass  # already indexed at this content hash — skip the embed
+                else:
+                    self.index_path(path)
+                    indexed += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("recall backfill failed for %s: %s", path, exc)
             if progress:
                 progress(i, total, path)
         return indexed
+
+    def _is_current(self, path) -> bool:
+        """True if ``path`` is already indexed at its current content hash."""
+        from src.connections.recall.chunking import content_hash
+        from src.connections.recall.indexer import split_frontmatter
+
+        stored = self._store.note_version(Path(path).stem)
+        if not stored:
+            return False
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:  # pragma: no cover - defensive
+            return False
+        _, body = split_frontmatter(text)
+        return stored == content_hash(body.strip())
 
     def _iter_notes(self) -> List[Path]:
         digest_dir_name = "Malinche Digests"

@@ -1154,12 +1154,46 @@ if _APPKIT_AVAILABLE:
             self._ask_field = fld
 
         @objc.python_method
+        def _index_snapshot(self):
+            cb = self._callbacks.get("recall_index_status")
+            if cb is None:
+                return None
+            try:
+                return cb()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("recall_index_status callback failed: %s", exc)
+                return None
+
+        @objc.python_method
+        def _build_index_banner(self, doc, cy, inner_w):
+            """Honest 'still indexing' strip: you can ask now, results are partial."""
+            snap = self._index_snapshot()
+            if not snap or snap.get("state") != "indexing":
+                return cy
+            done, total = snap.get("done", 0), snap.get("total", 0)
+            count = f"  ({done}/{total})" if total else ""
+            band = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 30))
+            band.setWantsLayer_(True)
+            if band.layer() is not None:
+                band.layer().setBackgroundColor_(_c(214, 176, 51, 0.08).CGColor())
+                band.layer().setCornerRadius_(6.0)
+            doc.addSubview_(band)
+            lbl = _label(f"Indeksuję Twoje notatki{count} — możesz pytać już teraz "
+                         f"(wyniki częściowe).", 12, _gold())
+            lbl.setFrame_(NSMakeRect(_READER_PAD_X + 10, cy + 7, inner_w - 20, 16))
+            doc.addSubview_(lbl)
+            return cy + 40
+
+        @objc.python_method
         def _build_recall_content(self, reader_w, vm):
             doc = _DashFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, reader_w, 10))
             inner_w = reader_w - 2 * _READER_PAD_X
             cy = _PAD
             self._recall_note_ids = []
             self._synth_note_ids = []  # reset in lockstep — never carry stale answer tags
+
+            # honest partial-index banner while the background backfill is still running
+            cy = self._build_index_banner(doc, cy, inner_w)
 
             # query header — shown the moment we enter recall mode (even while loading)
             if self._query:
@@ -1183,10 +1217,22 @@ if _APPKIT_AVAILABLE:
             if vm is None:
                 lbl = _wrapping_label(
                     "Zadaj pytanie powyżej — przeszukam Twoje notatki lokalnie.",
-                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 40))
+                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 26))
                 doc.addSubview_(lbl)
-                doc.setFrameSize_(NSMakeSize(reader_w, cy + 50))
-                return doc, cy + 50
+                cy += 34
+                # Privacy disclosure — the trust backbone: local search, cloud only on
+                # the explicit synthesis, and only matched excerpts.
+                privacy = (
+                    "Wyszukiwanie jest w 100% lokalne — nic nie opuszcza Twojego Maca. "
+                    "Do chmury idą tylko dopasowane fragmenty i tylko gdy klikniesz "
+                    "„Zsyntetyzuj”."
+                )
+                ph = _measure_height(privacy, 12, inner_w)
+                doc.addSubview_(_wrapping_label(
+                    privacy, 12, _c(111, 102, 90),
+                    NSMakeRect(_READER_PAD_X, cy, inner_w, ph)))
+                doc.setFrameSize_(NSMakeSize(reader_w, cy + ph + 20))
+                return doc, cy + ph + 20
 
             if not vm.is_empty:
                 meta = _label(f"{vm.count} fragmentów · lokalnie, bez AI", 12, _muted())

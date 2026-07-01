@@ -154,6 +154,15 @@ class VaultVectorStore:
         with self._lock:
             return [r[0] for r in self._db.execute("SELECT DISTINCT note_id FROM chunks").fetchall()]
 
+    def note_version(self, note_id: str) -> Optional[str]:
+        """The stored ``version_hash`` for a note (any chunk — they share it), or None
+        if the note isn't indexed. Lets an incremental backfill skip unchanged notes."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT version_hash FROM chunks WHERE note_id=? LIMIT 1", (note_id,)
+            ).fetchone()
+        return row[0] if row else None
+
     def set_meta(self, key: str, value: str) -> None:
         with self._lock:
             self._db.execute(

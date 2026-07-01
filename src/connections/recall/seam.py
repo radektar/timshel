@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.connections.recall.indexing import IndexingState, run_backfill
 from src.logger import logger
 
 _ENGINE = None
+# Shared, process-wide index status: the background backfill writes it, the menu chip
+# and the window's partial banner read it (via index_state()).
+_STATE = IndexingState()
 
 
 def _engine():
@@ -23,6 +27,30 @@ def _engine():
 
         _ENGINE = RecallEngine(get_config().TRANSCRIBE_DIR)
     return _ENGINE
+
+
+def index_state() -> IndexingState:
+    """The shared recall index status (Standby/Indexing/Ready/Error + progress)."""
+    return _STATE
+
+
+def start_background_index() -> None:
+    """Catch the recall index up to the vault on a daemon thread — non-blocking.
+
+    First launch embeds the whole vault (incremental on later runs), so recall "just
+    works" without a manual backfill. Constructing the engine may download the model,
+    which is exactly why this runs off the main thread. Best-effort; never raises.
+    """
+    import threading
+
+    def _run():
+        try:
+            run_backfill(_engine(), _STATE, incremental=True)
+        except Exception as exc:  # noqa: BLE001 - pragma: no cover
+            logger.debug("recall background index failed to start: %s", exc)
+            _STATE.failed(exc)
+
+    threading.Thread(target=_run, name="RecallBackfill", daemon=True).start()
 
 
 def index_transcript_safe(path) -> None:

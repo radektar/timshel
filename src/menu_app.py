@@ -209,6 +209,16 @@ class MalincheMenuApp(rumps.App):
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("recall hotkey unavailable: %s", exc)
 
+        # Recall "just works": catch the index up to the vault in the background so a
+        # fresh install is searchable without a manual backfill. Non-blocking, gated.
+        try:
+            if config.ENABLE_RECALL_INDEX:
+                from src.connections.recall import seam
+
+                seam.start_background_index()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall background index unavailable: %s", exc)
+
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
         
@@ -1057,7 +1067,18 @@ class MalincheMenuApp(rumps.App):
             "recall_search": self._recall_search,
             "recall_synthesize": self._recall_synthesize,
             "recall_save_answer": self._recall_save_answer,
+            "recall_index_status": self._recall_index_status,
         }
+
+    def _recall_index_status(self):
+        """Snapshot of the background index (Standby/Indexing/Ready/Error + progress)
+        for the window's honest partial banner. ``None`` if recall isn't wired."""
+        try:
+            from src.connections.recall import seam
+
+            return seam.index_state().snapshot()
+        except Exception:  # pragma: no cover - defensive
+            return None
 
     def _recall_search(self, query):
         """Query the local recall index for the window's pull surface (no LLM).

@@ -290,8 +290,11 @@ tags: [{tags}]
         self.EMBED_MODEL = getattr(
             self._user_settings, "embed_model", ""
         ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        # Recall is on by default (Faza 5): search is 100% local, so indexing the vault
+        # in the background is safe and makes the lens "just work". A user who saved the
+        # setting keeps their choice; only an absent setting falls back to enabled.
         self.ENABLE_RECALL_INDEX = bool(
-            getattr(self._user_settings, "enable_recall_index", False)
+            getattr(self._user_settings, "enable_recall_index", True)
         )
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama

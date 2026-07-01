@@ -109,3 +109,19 @@ def test_engine_end_to_end_real_embedder(vault):
         assert res[0].quote
     finally:
         eng.close()
+
+
+def test_backfill_incremental_skips_unchanged_reindexes_edited(vault, monkeypatch):
+    monkeypatch.setattr(engine_mod, "resolve_embedder", lambda *a, **k: FakeEmbedder())
+    eng = engine_mod.RecallEngine(vault)
+    try:
+        assert eng.backfill() == 2                     # first pass indexes both notes
+        assert eng.backfill(incremental=True) == 0     # nothing changed → nothing reindexed
+        # edit one note's body → only that note re-embeds
+        (Path(vault) / "okna.md").write_text(
+            '---\ntitle: "Okna"\ndate: 14.06\n---\n\nZupelnie nowa tresc o czym innym.\n',
+            encoding="utf-8")
+        assert eng.backfill(incremental=True) == 1
+        assert eng.backfill(incremental=True) == 0     # and now it's current again
+    finally:
+        eng.close()

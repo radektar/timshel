@@ -134,6 +134,21 @@ def _no_onboarding_modal(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _recall_index_off_by_default(monkeypatch):
+    """Recall ships enabled (Faza 5), but that would make the transcription seam try to
+    index — and load the embedding model — inside unrelated tests. Isolate the suite:
+    default the flag off. Recall's own tests drive the engine directly and never read it,
+    so they are unaffected; a test that wants the seam can re-enable it explicitly.
+    """
+    try:
+        from src.config.config import config as cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_RECALL_INDEX", False, raising=False)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _clear_volume_session():
     """Reset the process-wide 'Once' registry around every test.
 

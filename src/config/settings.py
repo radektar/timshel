@@ -75,10 +75,10 @@ class UserSettings:
     note_opener: str = "obsidian"
 
     # Local recall engine — embeddings for "ask your corpus". Local, no API key;
-    # provider/model swappable. Indexing at transcription time is opt-in for now.
+    # provider/model swappable. Recall (local search) is on by default (Faza 5).
     embed_provider: str = "fastembed"
     embed_model: str = ""  # empty -> Config default
-    enable_recall_index: bool = False
+    enable_recall_index: bool = True
 
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
