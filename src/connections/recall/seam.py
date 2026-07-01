@@ -33,19 +33,41 @@ def index_transcript_safe(path) -> None:
         logger.debug("recall index_transcript failed: %s", exc)
 
 
-def search_safe(query: str, k: int = 8):
-    """Query the recall index for the results UI. Best-effort: ``([], 0.0)`` on any
-    failure (missing index, model not yet downloaded, deps absent) so the window
-    degrades to an empty state instead of raising. Shares the lazy engine so the
-    embedding model is loaded once, not per query.
+def search_detailed(query: str, k: int = 8):
+    """Query the recall index and report a coarse status so the UI can be honest.
 
-    Returns ``(results, confidence)`` — the same shape as ``RecallEngine.search_scored``.
+    Returns ``(results, confidence, status)`` where ``status`` is:
+      - ``"ok"``          — the index was searched (results may still be empty = a
+                            genuine no-match → the UI's honest abstinence copy);
+      - ``"empty"``       — nothing indexed yet (needs a backfill) — NOT a no-match;
+      - ``"unavailable"`` — engine/model/deps not ready, or search raised.
+
+    The distinction matters: a hard failure must never be dressed up as "nothing in
+    your notes about X". Best-effort throughout — never raises into the caller.
     """
     try:
-        return _engine().search_scored(query, k=k)
+        eng = _engine()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("recall engine unavailable: %s", exc)
+        return [], 0.0, "unavailable"
+    try:
+        if eng.count() == 0:
+            return [], 0.0, "empty"
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("recall count failed: %s", exc)
+        return [], 0.0, "unavailable"
+    try:
+        results, confidence = eng.search_scored(query, k=k)
+        return results, confidence, "ok"
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall search failed: %s", exc)
-        return [], 0.0
+        return [], 0.0, "unavailable"
+
+
+def search_safe(query: str, k: int = 8):
+    """Back-compat 2-tuple ``(results, confidence)`` wrapper over :func:`search_detailed`."""
+    results, confidence, _status = search_detailed(query, k=k)
+    return results, confidence
 
 
 def reset_engine() -> None:

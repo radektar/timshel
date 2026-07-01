@@ -23,7 +23,7 @@ returns ``None`` without AppKit.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 from src.config import config
 from src.connections import handoff as ho
@@ -608,6 +608,9 @@ if _APPKIT_AVAILABLE:
             self._recall = None             # RecallResults view-model when in recall mode
             self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
             self._query = ""                # last query text (persists across rebuilds)
+            self._recall_loading = False    # search in flight (off the main thread)
+            self._recall_status = "ok"      # "ok" | "empty" | "unavailable" (honest states)
+            self._pending_recall = None     # worker→main-thread handoff payload
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -1146,22 +1149,32 @@ if _APPKIT_AVAILABLE:
             cy = _PAD
             self._recall_note_ids = []
 
-            if vm is None:
+            # query header — shown the moment we enter recall mode (even while loading)
+            if self._query:
+                eye = _eyebrow("Zapytałeś", _muted())
+                eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(eye)
+                cy += 20
+                qh = max(24.0, _measure_height(self._query, 18, inner_w))
                 doc.addSubview_(_wrapping_label(
+                    self._query, 18, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, qh)))
+                cy += qh + 10
+
+            if self._recall_loading:
+                lbl = _label("Szukam w Twoich notatkach…  (lokalnie, bez AI)", 13.5, _muted())
+                lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
+                doc.addSubview_(lbl)
+                cy += 30
+                doc.setFrameSize_(NSMakeSize(reader_w, cy + _PAD))
+                return doc, cy + _PAD
+
+            if vm is None:
+                lbl = _wrapping_label(
                     "Zadaj pytanie powyżej — przeszukam Twoje notatki lokalnie.",
-                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 40)))
+                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 40))
+                doc.addSubview_(lbl)
                 doc.setFrameSize_(NSMakeSize(reader_w, cy + 50))
                 return doc, cy + 50
-
-            eye = _eyebrow("Zapytałeś", _muted())
-            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
-            doc.addSubview_(eye)
-            cy += 20
-            q = vm.query or ""
-            qh = max(24.0, _measure_height(q, 18, inner_w))
-            doc.addSubview_(_wrapping_label(
-                q, 18, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, qh)))
-            cy += qh + 10
 
             if not vm.is_empty:
                 meta = _label(f"{vm.count} fragmentów · lokalnie, bez AI", 12, _muted())
@@ -1176,7 +1189,9 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(rule)
             cy += 16
 
-            if vm.is_empty:
+            if vm.is_empty and self._recall_status != "ok":
+                cy = self._build_recall_notready(doc, cy, inner_w)
+            elif vm.is_empty:
                 cy = self._build_recall_abstinence(doc, vm, cy, inner_w, reader_w)
             else:
                 for row in vm.rows:
@@ -1185,6 +1200,28 @@ if _APPKIT_AVAILABLE:
             cy += _PAD
             doc.setFrameSize_(NSMakeSize(reader_w, cy))
             return doc, cy
+
+        @objc.python_method
+        def _build_recall_notready(self, doc, cy, inner_w):
+            # Honest states distinct from a genuine no-match: never claim "nothing in
+            # your notes about X" when the search couldn't actually run.
+            if self._recall_status == "empty":
+                head = "Twoje notatki nie są jeszcze zaindeksowane."
+                sub = ("Recall potrzebuje jednorazowego zindeksowania vaulta, zanim "
+                       "przeszuka — to nie znaczy, że nic nie ma. (Auto-backfill: wkrótce.)")
+            else:  # "unavailable"
+                head = "Nie udało się przeszukać notatek."
+                sub = ("Indeks lub lokalny model nie są jeszcze gotowe — spróbuj "
+                       "ponownie za chwilę. To nie znaczy, że nic nie ma.")
+            hh = max(24.0, _measure_height(head, 20, inner_w))
+            doc.addSubview_(_wrapping_label(
+                head, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            cy += hh + 8
+            sh = max(18.0, _measure_height(sub, 13.5, inner_w))
+            doc.addSubview_(_wrapping_label(
+                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            cy += sh + 12
+            return cy
 
         @objc.python_method
         def _build_recall_row(self, doc, row, cy, inner_w, reader_w):
@@ -1280,22 +1317,66 @@ if _APPKIT_AVAILABLE:
             if not self._query:
                 self._mode = "insight"
                 self._recall = None
+                self._recall_loading = False
                 self._render()
                 return
-            results, confidence = [], 0.0
+            # Show the query in a "searching" state immediately, then do the work off
+            # the main thread — the embed + full-corpus BM25 (and a first-run model
+            # download) must never block the AppKit UI, mirroring the digest/retranscribe
+            # daemon threads.
+            self._mode = "recall"
+            self._recall = None
+            self._recall_status = "ok"
+            self._recall_loading = True
+            self._scroll_y = 0.0
+            self._render()
+            import threading
+
+            threading.Thread(
+                target=self._recall_worker_, args=(self._query,),
+                name="RecallSearch", daemon=True,
+            ).start()
+
+        @objc.python_method
+        def _recall_worker_(self, query):
+            """Runs on a daemon thread: search + build the view-model, then marshal
+            the result back onto the main thread for rendering."""
+            results, confidence, status = [], 0.0, "unavailable"
             cb = self._callbacks.get("recall_search")
-            if cb is not None:
+            if cb is None:
+                status = "unavailable"
+            else:
                 try:
-                    out = cb(self._query)
-                    if out:
+                    out = cb(query)
+                    if isinstance(out, tuple) and len(out) == 3:
+                        results, confidence, status = out
+                    elif isinstance(out, tuple) and len(out) == 2:
                         results, confidence = out
+                        status = "ok"
+                    else:  # wrong-shape contract → treat as failure, not "no match"
+                        status = "unavailable"
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("recall_search callback failed: %s", exc)
+                    status = "unavailable"
             from src.ui import recall_presenter as rp
 
-            self._recall = rp.present(self._query, results, confidence)
-            self._mode = "recall"
-            self._scroll_y = 0.0
+            self._pending_recall = {
+                "query": query,
+                "vm": rp.present(query, results, confidence),
+                "status": status,
+            }
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyRecall:", None, False
+            )
+
+        def applyRecall_(self, _ignored):
+            payload = self._pending_recall
+            # Drop stale results — the user may have typed a newer query meanwhile.
+            if not payload or payload.get("query") != self._query:
+                return
+            self._recall = payload["vm"]
+            self._recall_status = payload.get("status", "ok")
+            self._recall_loading = False
             self._render()
 
         @objc.python_method

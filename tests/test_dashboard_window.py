@@ -69,27 +69,50 @@ def _fake_results(n=3):
     ]
 
 
-def test_recall_mode_renders_ranked_results():
+def _complete_search(ctrl, query):
+    """Drive the off-thread search synchronously (no run loop in tests): the worker
+    builds the payload, applyRecall_ applies it on the 'main thread'."""
+    ctrl._query = query
+    ctrl._mode = "recall"
+    ctrl._recall_loading = True
+    ctrl._recall_worker_(query)
+    ctrl.applyRecall_(None)
+
+
+def test_run_recall_shows_loading_off_main_thread():
     ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(3), 0.82),
-        "open_note": lambda name: None,
+        "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
     })
     ctrl._ensure_window()
     ctrl._run_recall("co z dostawa okien")
-    assert ctrl._mode == "recall"
+    # search is dispatched to a daemon thread: mode flips + loading is shown at once,
+    # the result is NOT applied synchronously.
+    assert ctrl._mode == "recall" and ctrl._recall_loading is True
+    _render(ctrl)  # loading state paints without raising
+
+
+def test_recall_mode_renders_ranked_results():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
+        "open_note": lambda name: None,
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "co z dostawa okien")
+    assert ctrl._mode == "recall" and ctrl._recall_loading is False
     assert ctrl._recall is not None and ctrl._recall.count == 3
-    _render(ctrl)  # paints the recall content without raising
+    assert ctrl._recall_status == "ok"
+    _render(ctrl)
     assert len(ctrl._recall_note_ids) == 3
 
 
 def test_recall_open_invokes_open_note():
     opened = []
     ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82),
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
         "open_note": lambda name: opened.append(name),
     })
     ctrl._ensure_window()
-    ctrl._run_recall("q")
+    _complete_search(ctrl, "q")
     _render(ctrl)
 
     class _Sender:
@@ -102,17 +125,49 @@ def test_recall_open_invokes_open_note():
 
 def test_recall_abstinence_renders():
     ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(1), 0.20),  # below floor → abstinence
+        "recall_search": lambda q: (_fake_results(1), 0.20, "ok"),  # below floor
     })
     ctrl._ensure_window()
-    ctrl._run_recall("przepis na sernik")
+    _complete_search(ctrl, "przepis na sernik")
     assert ctrl._recall.is_empty and ctrl._recall.nearest is not None
+    assert ctrl._recall_status == "ok"
     _render(ctrl)  # abstinence view paints without raising
+
+
+def test_recall_notready_state_renders_for_empty_index():
+    # A failed/unindexed search must NOT render as a genuine "nothing found".
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: ([], 0.0, "empty"),
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "cokolwiek")
+    assert ctrl._recall.is_empty and ctrl._recall_status == "empty"
+    _render(ctrl)  # not-ready view paints without raising
+
+
+def test_recall_stale_result_is_dropped():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+    })
+    ctrl._ensure_window()
+    ctrl._query = "nowe pytanie"           # user has moved on
+    ctrl._recall_worker_("stare pytanie")  # an older worker finishes late
+    ctrl.applyRecall_(None)
+    assert ctrl._recall is None            # stale payload dropped, not applied
+
+
+def test_wrong_shape_callback_is_unavailable_not_no_match():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: ["oops-not-a-tuple"],
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "q")
+    assert ctrl._recall.is_empty and ctrl._recall_status == "unavailable"
 
 
 def test_empty_query_returns_to_insight():
     ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.8),
+        "recall_search": lambda q: (_fake_results(2), 0.8, "ok"),
     })
     ctrl._ensure_window()
     ctrl._run_recall("q")

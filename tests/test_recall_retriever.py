@@ -142,6 +142,19 @@ def test_search_scored_empty_query_is_zero_confidence(engine):
     assert retriever.search_scored("   ") == ([], 0.0)
 
 
+def test_search_scored_confidence_clears_floor_for_relevant_query(engine):
+    # A query that literally shares a note's terms must clear the abstinence floor via
+    # the lexical-overlap net, else the UI would wrongly abstain on a real match. Binds
+    # confidence to the floor (not just a 0<c<=1 bound). Terms are taken verbatim from
+    # the 'okna' note so overlap is deterministic under the fake embedder; real models
+    # score even higher (validated on the live vault).
+    from src.ui.recall_presenter import DEFAULT_ABSTAIN_FLOOR
+
+    retriever, _ = engine
+    _, conf = retriever.search_scored("dostepnosc okien producenci dach", k=5)
+    assert conf >= DEFAULT_ABSTAIN_FLOOR
+
+
 def test_rrf_rewards_agreement():
     fused = reciprocal_rank_fusion([[1, 2, 3], [2, 4, 5]], k=60)
     assert fused[0][0] == 2  # ranked highly by both lists

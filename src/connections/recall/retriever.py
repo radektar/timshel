@@ -125,10 +125,14 @@ class HybridRetriever:
             )
 
         confidence = top_sim
-        if results:
-            q_tokens = set(_tokenize(query))
-            if q_tokens:
-                doc_tokens = set(_tokenize(f"{results[0].note_id}\n{results[0].quote}"))
-                overlap = len(q_tokens & doc_tokens) / len(q_tokens)
-                confidence = max(confidence, overlap)
+        q_tokens = set(_tokenize(query))
+        if results and q_tokens:
+            # Scan the top few fused hits, not just rank 0: a named-entity/title match
+            # can land at rank ≥2 behind dense chunks, and checking only results[0]
+            # would miss it and wrongly abstain — the exact case this net exists for.
+            best_overlap = max(
+                len(q_tokens & set(_tokenize(f"{r.note_id}\n{r.quote}"))) / len(q_tokens)
+                for r in results[:5]
+            )
+            confidence = max(confidence, best_overlap)
         return results, confidence

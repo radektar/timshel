@@ -75,3 +75,26 @@ def test_persists_across_reopen(tmp_path):
         assert s2.knn(_unit([1, 0, 0, 0]), k=1)[0].text == "persisted"
     finally:
         s2.close()
+
+
+def test_store_is_usable_from_another_thread(tmp_path):
+    """The lazy engine is shared across the UI-search thread and the daemon indexing
+    thread, so the connection must allow cross-thread use (check_same_thread=False).
+    Before the fix this raised 'SQLite objects created in a thread...' in the worker."""
+    import threading
+
+    store = VaultVectorStore(tmp_path / ".malinche" / "th.db", dim=4)
+    errors = []
+
+    def worker():
+        try:
+            store.count()
+            store.knn(_unit([1, 0, 0, 0]), k=3)
+        except Exception as exc:  # pragma: no cover - fails only on regression
+            errors.append(exc)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    store.close()
+    assert errors == []

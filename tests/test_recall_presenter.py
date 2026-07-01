@@ -71,3 +71,11 @@ def test_present_abstains_on_no_hits():
 def test_confidence_is_carried_through():
     vm = rp.present("q", [_res("n", "t")], confidence=0.77)
     assert vm.confidence == 0.77
+
+
+def test_abstinence_boundary_at_default_floor():
+    """The calibrated 0.60 cutoff is the crux of honest abstinence — guard it."""
+    r = [_res("26-01-01 - Nota", "fragment")]
+    f = rp.DEFAULT_ABSTAIN_FLOOR
+    assert rp.present("q", r, f).is_empty is False       # == floor → shows (strict <)
+    assert rp.present("q", r, f - 0.001).is_empty is True  # just below → abstains

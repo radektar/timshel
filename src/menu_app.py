@@ -986,12 +986,14 @@ class MalincheMenuApp(rumps.App):
     def _recall_search(self, query):
         """Query the local recall index for the window's pull surface (no LLM).
 
-        Best-effort and fully local: returns ``(results, confidence)`` or ``([], 0.0)``
-        if the index/model isn't ready, so the window shows an honest empty state.
+        Best-effort and fully local: returns ``(results, confidence, status)`` where
+        status distinguishes a genuine no-match ("ok") from an unindexed vault
+        ("empty") or a not-ready engine ("unavailable"), so the window can be honest
+        instead of claiming "nothing in your notes" when it never actually searched.
         """
         from src.connections.recall import seam
 
-        return seam.search_safe(query)
+        return seam.search_detailed(query)
 
     def _recent_transcripts_for_insights(self):
         """Real recent transcripts for the Insights rail (replaces atrapy).

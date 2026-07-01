@@ -353,6 +353,15 @@ def reload_config() -> Config:
     """
     global _config_instance
     _config_instance = Config()
+    # Drop the cached recall engine — it captured the old TRANSCRIBE_DIR and embedder
+    # at first use, so a changed vault dir or embedding model would otherwise keep
+    # querying the previous index. Lazy import avoids a config↔recall import cycle.
+    try:
+        from src.connections.recall.seam import reset_engine
+
+        reset_engine()
+    except Exception:  # pragma: no cover - recall is optional
+        pass
     return _config_instance
 
 
