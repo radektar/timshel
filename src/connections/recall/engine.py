@@ -8,7 +8,7 @@ embedding model changes (different dim), the store is rebuilt rather than corrup
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from src.connections.recall.embedding import resolve_embedder
 from src.connections.recall.indexer import index_note
@@ -56,6 +56,10 @@ class RecallEngine:
 
     def search(self, query: str, k: int = 8) -> List[Result]:
         return self._retriever.search(query, k=k)
+
+    def search_scored(self, query: str, k: int = 8) -> Tuple[List[Result], float]:
+        """Hybrid search plus the top dense cosine similarity (confidence signal)."""
+        return self._retriever.search_scored(query, k=k)
 
     def index_path(self, path) -> int:
         return index_note(Path(path), self._store, self._embedder)

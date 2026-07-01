@@ -128,6 +128,20 @@ def test_title_proper_noun_retrieves_even_when_absent_from_body(tmp_path):
         store.close()
 
 
+def test_search_scored_returns_confidence(engine):
+    retriever, _ = engine
+    results, conf = retriever.search_scored("co z dostawa okien i opoznieniem dachu", k=5)
+    assert results and 0.0 < conf <= 1.0
+    # search() is the same pipeline without the confidence
+    assert [r.note_id for r in retriever.search("co z dostawa okien i opoznieniem dachu", k=5)] == \
+        [r.note_id for r in results]
+
+
+def test_search_scored_empty_query_is_zero_confidence(engine):
+    retriever, _ = engine
+    assert retriever.search_scored("   ") == ([], 0.0)
+
+
 def test_rrf_rewards_agreement():
     fused = reciprocal_rank_fusion([[1, 2, 3], [2, 4, 5]], k=60)
     assert fused[0][0] == 2  # ranked highly by both lists
