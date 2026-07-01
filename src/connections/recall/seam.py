@@ -33,6 +33,21 @@ def index_transcript_safe(path) -> None:
         logger.debug("recall index_transcript failed: %s", exc)
 
 
+def search_safe(query: str, k: int = 8):
+    """Query the recall index for the results UI. Best-effort: ``([], 0.0)`` on any
+    failure (missing index, model not yet downloaded, deps absent) so the window
+    degrades to an empty state instead of raising. Shares the lazy engine so the
+    embedding model is loaded once, not per query.
+
+    Returns ``(results, confidence)`` — the same shape as ``RecallEngine.search_scored``.
+    """
+    try:
+        return _engine().search_scored(query, k=k)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("recall search failed: %s", exc)
+        return [], 0.0
+
+
 def reset_engine() -> None:
     """Drop the cached engine (e.g. after a settings change)."""
     global _ENGINE

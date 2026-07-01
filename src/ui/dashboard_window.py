@@ -88,6 +88,7 @@ _READER_PAD_X = 24.0
 _ROW_H = 58.0
 _FOOTER_H = 46.0
 _BAR_H = 48.0
+_ASKBAR_H = 56.0  # pull entry strip under the header (recall — Faza 3)
 # Radius family (design: one decision, held everywhere — native macOS feel).
 _R_CONTROL = 6.0  # buttons, segment track, CTA, icons
 _R_CHECK = 5.0    # checkbox
@@ -602,6 +603,11 @@ if _APPKIT_AVAILABLE:
             self._grounded = False
             self._scroll = None
             self._scroll_y = 0.0
+            # pull (recall) surface — Faza 3
+            self._mode = "insight"          # "insight" (push) | "recall" (pull)
+            self._recall = None             # RecallResults view-model when in recall mode
+            self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
+            self._query = ""                # last query text (persists across rebuilds)
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -981,25 +987,41 @@ if _APPKIT_AVAILABLE:
                 div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
             view.addSubview_(div)
 
+            # The ask-bar occupies the top strip in every state; content scrolls below.
+            top = _ASKBAR_H
+            if self._mode == "recall":
+                self._build_recall_reader(view, frame, top)
+            else:
+                self._build_insight_reader(view, frame, top)
+
+            # Added last so the ask-bar stays on top and clickable in every state.
+            self._build_askbar(view, NSMakeRect(0, 0, frame.size.width, top))
+            return view
+
+        @objc.python_method
+        def _build_insight_reader(self, view, frame, top):
             conn = self._deck.active()
             if conn is None:
                 if self._transcribing:
-                    return self._build_skeleton(view, frame)
+                    self._build_skeleton(view, frame)
+                    return
                 if not self._deck.is_empty:
                     # The deck has connections, just none in the current view.
                     title, subtitle = self._EMPTY_VIEW_COPY.get(
                         self._deck.view, (None, None)
                     )
-                    return self._build_empty(view, frame, title, subtitle)
-                return self._build_empty(view, frame)
+                    self._build_empty(view, frame, title, subtitle)
+                    return
+                self._build_empty(view, frame)
+                return
 
             has_sel = bool(self._selected)
             bar_h = _BAR_H if has_sel else 0.0
-            scroll_h = frame.size.height - _FOOTER_H - bar_h
+            scroll_h = frame.size.height - _FOOTER_H - bar_h - top
 
             # scrolling document (spark + ground + directions)
             scroll = NSScrollView.alloc().initWithFrame_(
-                NSMakeRect(0, 0, frame.size.width, scroll_h)
+                NSMakeRect(0, top, frame.size.width, scroll_h)
             )
             scroll.setHasVerticalScroller_(True)
             scroll.setAutohidesScrollers_(True)
@@ -1032,7 +1054,249 @@ if _APPKIT_AVAILABLE:
             self._build_footer(
                 view, NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H)
             )
-            return view
+
+        @objc.python_method
+        def _build_recall_reader(self, view, frame, top):
+            scroll_h = frame.size.height - _FOOTER_H - top
+            scroll = NSScrollView.alloc().initWithFrame_(
+                NSMakeRect(0, top, frame.size.width, scroll_h)
+            )
+            scroll.setHasVerticalScroller_(True)
+            scroll.setAutohidesScrollers_(True)
+            scroll.setDrawsBackground_(False)
+            scroll.setBorderType_(0)
+            doc, content_h = self._build_recall_content(frame.size.width, self._recall)
+            doc.setFrame_(NSMakeRect(0, 0, frame.size.width, max(content_h, scroll_h)))
+            scroll.setDocumentView_(doc)
+            self._scroll = scroll
+            view.addSubview_(scroll)
+            self._build_footer(
+                view, NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H)
+            )
+
+        # -- ask-bar (pull entry) + recall results (no LLM) ------------------ #
+
+        @objc.python_method
+        def _build_askbar(self, view, frame):
+            strip = NSView.alloc().initWithFrame_(frame)
+            strip.setWantsLayer_(True)
+            if strip.layer() is not None:
+                strip.layer().setBackgroundColor_(_c(0, 0, 0, 0.14).CGColor())
+            view.addSubview_(strip)
+            bd = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, frame.size.height - 1, frame.size.width, 1)
+            )
+            bd.setWantsLayer_(True)
+            if bd.layer() is not None:
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, 0.06).CGColor())
+            strip.addSubview_(bd)
+
+            pad = 15.0
+            field_h = 38.0
+            fy = (frame.size.height - field_h) / 2.0
+            left = pad
+            if self._mode == "recall":
+                back = _pill_button(
+                    "‹ Podsunięte", NSMakeRect(pad, fy + 6, 118, 26),
+                    _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                    self, "backToInsightsClicked:", 12.0,
+                )
+                strip.addSubview_(back)
+                left = pad + 130
+
+            fld_w = max(160.0, frame.size.width - left - pad)
+            cont = NSView.alloc().initWithFrame_(NSMakeRect(left, fy, fld_w, field_h))
+            cont.setWantsLayer_(True)
+            if cont.layer() is not None:
+                cont.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
+                cont.layer().setCornerRadius_(6.0)
+                cont.layer().setBorderWidth_(1.0)
+                cont.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+            strip.addSubview_(cont)
+
+            glyph = _label("⌕", 15, _terracotta())
+            glyph.setFrame_(NSMakeRect(11, (field_h - 20) / 2.0, 18, 20))
+            cont.addSubview_(glyph)
+
+            fld = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(34, (field_h - 22) / 2.0, fld_w - 44, 22)
+            )
+            fld.setEditable_(True)
+            fld.setBezeled_(False)
+            fld.setBordered_(False)
+            fld.setDrawsBackground_(False)
+            fld.setTextColor_(_cream())
+            fld.setFont_(NSFont.systemFontOfSize_(14))
+            try:
+                fld.setPlaceholderString_("Zapytaj swój korpus…  (lokalnie, bez AI)")
+                fld.setFocusRingType_(1)  # NSFocusRingTypeNone
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+            if self._query:
+                fld.setStringValue_(self._query)
+            fld.setTarget_(self)
+            fld.setAction_("askSubmitted:")
+            cont.addSubview_(fld)
+            self._ask_field = fld
+
+        @objc.python_method
+        def _build_recall_content(self, reader_w, vm):
+            doc = _DashFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, reader_w, 10))
+            inner_w = reader_w - 2 * _READER_PAD_X
+            cy = _PAD
+            self._recall_note_ids = []
+
+            if vm is None:
+                doc.addSubview_(_wrapping_label(
+                    "Zadaj pytanie powyżej — przeszukam Twoje notatki lokalnie.",
+                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 40)))
+                doc.setFrameSize_(NSMakeSize(reader_w, cy + 50))
+                return doc, cy + 50
+
+            eye = _eyebrow("Zapytałeś", _muted())
+            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+            doc.addSubview_(eye)
+            cy += 20
+            q = vm.query or ""
+            qh = max(24.0, _measure_height(q, 18, inner_w))
+            doc.addSubview_(_wrapping_label(
+                q, 18, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, qh)))
+            cy += qh + 10
+
+            if not vm.is_empty:
+                meta = _label(f"{vm.count} fragmentów · lokalnie, bez AI", 12, _muted())
+                meta.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 16))
+                doc.addSubview_(meta)
+                cy += 22
+
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 1))
+            rule.setWantsLayer_(True)
+            if rule.layer() is not None:
+                rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
+            doc.addSubview_(rule)
+            cy += 16
+
+            if vm.is_empty:
+                cy = self._build_recall_abstinence(doc, vm, cy, inner_w, reader_w)
+            else:
+                for row in vm.rows:
+                    cy = self._build_recall_row(doc, row, cy, inner_w, reader_w)
+
+            cy += _PAD
+            doc.setFrameSize_(NSMakeSize(reader_w, cy))
+            return doc, cy
+
+        @objc.python_method
+        def _build_recall_row(self, doc, row, cy, inner_w, reader_w):
+            x = _READER_PAD_X
+            faint = _c(111, 102, 90)
+            rank = _label(f"{row.rank:02d}", 12, faint)
+            rank.setFrame_(NSMakeRect(x, cy + 1, 24, 15))
+            doc.addSubview_(rank)
+            text_x = x + 32
+            text_w = inner_w - 32
+
+            top_line = row.title
+            if row.date and row.title:
+                top_line = f"{row.date}   ·   {row.title}"
+            elif row.date:
+                top_line = row.date
+            tline = _label(top_line, 12.0, _muted())
+            tline.setFrame_(NSMakeRect(text_x, cy, text_w - 96, 16))
+            doc.addSubview_(tline)
+
+            idx = len(self._recall_note_ids)
+            self._recall_note_ids.append(row.note_id)
+            ob = _pill_button(
+                "↗ otwórz", NSMakeRect(reader_w - _READER_PAD_X - 84, cy - 3, 84, 22),
+                _terracotta(), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
+                self, "recallOpenClicked:", 11.5,
+            )
+            ob.setTag_(idx)
+            doc.addSubview_(ob)
+            cy += 20
+
+            quote = "„" + row.quote + "”"
+            qcolor = _c(140, 130, 115) if row.dimmed else _cream_soft()
+            qh = max(18.0, _measure_height(quote, 14.5, text_w))
+            doc.addSubview_(_wrapping_label(
+                quote, 14.5, qcolor, NSMakeRect(text_x, cy, text_w, qh)))
+            cy += qh + 12
+
+            sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, 1))
+            sep.setWantsLayer_(True)
+            if sep.layer() is not None:
+                sep.layer().setBackgroundColor_(_c(255, 255, 255, 0.055).CGColor())
+            doc.addSubview_(sep)
+            cy += 12
+            return cy
+
+        @objc.python_method
+        def _build_recall_abstinence(self, doc, vm, cy, inner_w, reader_w):
+            head_txt = "Nic w Twoich notatkach na to pytanie."
+            hh = max(24.0, _measure_height(head_txt, 20, inner_w))
+            doc.addSubview_(_wrapping_label(
+                head_txt, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            cy += hh + 8
+            sub = ("Search jest w 100% lokalny i niczego nie zmyśla — "
+                   "nic nie opuszcza Twojego Maca.")
+            sh = max(18.0, _measure_height(sub, 13.5, inner_w))
+            doc.addSubview_(_wrapping_label(
+                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            cy += sh + 20
+
+            if vm.nearest is not None:
+                nh = _eyebrow("Najbliższe (słabe) trafienie", _c(111, 102, 90))
+                nh.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(nh)
+                cy += 20
+                cy = self._build_recall_row(doc, vm.nearest, cy, inner_w, reader_w)
+            return cy
+
+        # -- ask-bar / recall actions --------------------------------------- #
+
+        def askSubmitted_(self, sender):
+            try:
+                text = str(sender.stringValue()).strip()
+            except Exception:  # pragma: no cover - defensive
+                text = ""
+            self._run_recall(text)
+
+        def recallOpenClicked_(self, sender):
+            ids = getattr(self, "_recall_note_ids", [])
+            i = int(sender.tag())
+            if 0 <= i < len(ids):
+                self._invoke_callback("open_note", ids[i])
+
+        def backToInsightsClicked_(self, sender):
+            self._mode = "insight"
+            self._recall = None
+            self._query = ""
+            self._render()
+
+        @objc.python_method
+        def _run_recall(self, text):
+            self._query = (text or "").strip()
+            if not self._query:
+                self._mode = "insight"
+                self._recall = None
+                self._render()
+                return
+            results, confidence = [], 0.0
+            cb = self._callbacks.get("recall_search")
+            if cb is not None:
+                try:
+                    out = cb(self._query)
+                    if out:
+                        results, confidence = out
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_search callback failed: %s", exc)
+            from src.ui import recall_presenter as rp
+
+            self._recall = rp.present(self._query, results, confidence)
+            self._mode = "recall"
+            self._scroll_y = 0.0
+            self._render()
 
         @objc.python_method
         def _build_reader_content(self, reader_w, conn):

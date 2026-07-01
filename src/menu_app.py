@@ -980,7 +980,18 @@ class MalincheMenuApp(rumps.App):
             "recent_transcripts": self._recent_transcripts_for_insights,
             "open_note": self._open_note_in_obsidian,
             "open_transcript": self._open_transcript_in_obsidian,
+            "recall_search": self._recall_search,
         }
+
+    def _recall_search(self, query):
+        """Query the local recall index for the window's pull surface (no LLM).
+
+        Best-effort and fully local: returns ``(results, confidence)`` or ``([], 0.0)``
+        if the index/model isn't ready, so the window shows an honest empty state.
+        """
+        from src.connections.recall import seam
+
+        return seam.search_safe(query)
 
     def _recent_transcripts_for_insights(self):
         """Real recent transcripts for the Insights rail (replaces atrapy).

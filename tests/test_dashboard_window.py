@@ -53,6 +53,74 @@ def test_empty_state_renders():
     assert ctrl._deck.is_empty
 
 
+# ── recall (pull) surface — Faza 3 ─────────────────────────────────────────
+
+from src.connections.recall.retriever import Result  # noqa: E402
+
+
+def _fake_results(n=3):
+    return [
+        Result(
+            note_id=f"26-06-0{i} - Nota testowa {i}", quote=f"doslowny fragment {i}",
+            parent_text=f"fragment {i}", char_start=0, char_end=10,
+            score=0.5 - i * 0.01, channels="dense+lexical",
+        )
+        for i in range(1, n + 1)
+    ]
+
+
+def test_recall_mode_renders_ranked_results():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(3), 0.82),
+        "open_note": lambda name: None,
+    })
+    ctrl._ensure_window()
+    ctrl._run_recall("co z dostawa okien")
+    assert ctrl._mode == "recall"
+    assert ctrl._recall is not None and ctrl._recall.count == 3
+    _render(ctrl)  # paints the recall content without raising
+    assert len(ctrl._recall_note_ids) == 3
+
+
+def test_recall_open_invokes_open_note():
+    opened = []
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82),
+        "open_note": lambda name: opened.append(name),
+    })
+    ctrl._ensure_window()
+    ctrl._run_recall("q")
+    _render(ctrl)
+
+    class _Sender:
+        def tag(self):
+            return 0
+
+    ctrl.recallOpenClicked_(_Sender())
+    assert opened == [ctrl._recall_note_ids[0]]
+
+
+def test_recall_abstinence_renders():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(1), 0.20),  # below floor → abstinence
+    })
+    ctrl._ensure_window()
+    ctrl._run_recall("przepis na sernik")
+    assert ctrl._recall.is_empty and ctrl._recall.nearest is not None
+    _render(ctrl)  # abstinence view paints without raising
+
+
+def test_empty_query_returns_to_insight():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.8),
+    })
+    ctrl._ensure_window()
+    ctrl._run_recall("q")
+    assert ctrl._mode == "recall"
+    ctrl._run_recall("   ")
+    assert ctrl._mode == "insight" and ctrl._recall is None
+
+
 def test_update_deck_refreshes():
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
