@@ -79,3 +79,15 @@ def test_abstinence_boundary_at_default_floor():
     f = rp.DEFAULT_ABSTAIN_FLOOR
     assert rp.present("q", r, f).is_empty is False       # == floor → shows (strict <)
     assert rp.present("q", r, f - 0.001).is_empty is True  # just below → abstains
+
+
+def test_clean_quote_strips_markdown_and_leading_noise():
+    # the exact kinds of noise seen in real chunk citations
+    assert rp.clean_quote("📝 **Informacyjne:** Wewnetrzne sciany") == "Informacyjne: Wewnetrzne sciany"
+    assert rp.clean_quote("## Streszczenie Zespol omawia projekt") == "Streszczenie Zespol omawia projekt"
+    assert rp.clean_quote("> cytat z bloku") == "cytat z bloku"
+
+
+def test_clean_quote_keeps_real_words_intact():
+    # must NOT drop a legitimate lowercase-leading fragment
+    assert rp.clean_quote("dostawa okien niepewna, dach stoi") == "dostawa okien niepewna, dach stoi"

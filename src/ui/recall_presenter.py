@@ -72,13 +72,32 @@ def trim_quote(text: str, limit: int = 240) -> str:
     return q[:limit].rsplit(" ", 1)[0].rstrip() + "…"
 
 
+_MD_MARKERS = re.compile(r"[*_`#>]+")
+# Leading run of non-letter noise (markdown bullets, emoji, stray punctuation).
+_LEAD_NOISE = re.compile(r"^[^0-9A-Za-zÀ-ÿ„”\"']+", re.UNICODE)
+
+
+def clean_quote(text: str, limit: int = 240) -> str:
+    """Turn a raw chunk into a readable citation for display.
+
+    Chunks are cut over markdown summaries, so a raw quote carries structural noise
+    (``**bold**``, ``## heading``, ``>`` blockquotes, list bullets, emoji). This strips
+    that noise and length-caps — safely, without dropping real words. Mid-word chunk
+    *starts* are fixed at the source (the chunker snaps to a word boundary), so this
+    layer only cleans markup. Display-only; the stored chunk stays raw for anchoring.
+    """
+    q = _MD_MARKERS.sub("", " ".join((text or "").split()))
+    q = _LEAD_NOISE.sub("", q).strip()
+    return trim_quote(q, limit)
+
+
 def _row(result, rank: int, *, quote_limit: int, dimmed: bool = False) -> RecallRow:
     date, title = split_stem(result.note_id)
     return RecallRow(
         rank=rank,
         date=date,
         title=title,
-        quote=trim_quote(result.quote, quote_limit),
+        quote=clean_quote(result.quote, quote_limit),
         note_id=result.note_id,
         score=result.score,
         channels=result.channels,

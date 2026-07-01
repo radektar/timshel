@@ -53,3 +53,25 @@ def test_chunk_is_frozen_dataclass():
         assert False, "Chunk should be immutable"
     except Exception:
         pass
+
+
+def test_snap_start_moves_off_midword():
+    from src.connections.recall import chunking
+    body = "abcdef ghijkl mnopqr"
+    assert chunking._snap_start(body, 2) == 7   # mid 'abcdef' -> start of 'ghijkl'
+
+
+def test_snap_start_is_noop_at_word_boundary():
+    from src.connections.recall import chunking
+    body = "abc def"
+    assert chunking._snap_start(body, 0) == 0   # start of body
+    assert chunking._snap_start(body, 4) == 4   # 'def' preceded by a space
+
+
+def test_chunks_never_start_mid_word():
+    from src.connections.recall import chunking
+    body = " ".join(f"slowo{i}" for i in range(400))  # forces several overlapping chunks
+    chunks = chunking.chunk_body("n", body, target_chars=200, overlap_chars=50)
+    assert len(chunks) > 1
+    for ch in chunks:
+        assert ch.text.split()[0].startswith("slowo")  # never a fragment like "lowo12"

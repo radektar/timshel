@@ -36,6 +36,22 @@ def content_hash(text: str) -> str:
     return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
 
 
+def _snap_start(body: str, pos: int) -> int:
+    """Advance ``pos`` to the start of the next whole word so a chunk never *begins*
+    mid-word (the overlap step lands inside a token). No-op at a real boundary (start
+    of body, or preceded by whitespace). Bounded so it can't skip more than a token."""
+    n = len(body)
+    if pos <= 0 or pos >= n or body[pos - 1].isspace():
+        return pos
+    limit = min(n, pos + 60)
+    i = pos
+    while i < limit and not body[i].isspace():
+        i += 1
+    while i < limit and body[i].isspace():
+        i += 1
+    return i if i < n else pos
+
+
 def _snap_end(body: str, start: int, hard_end: int) -> int:
     """End a chunk at a paragraph, then sentence, break within the window.
 
@@ -104,5 +120,5 @@ def chunk_body(
             seq += 1
         if end >= n:
             break
-        pos = max(end - overlap_chars, pos + 1)
+        pos = _snap_start(body, max(end - overlap_chars, pos + 1))
     return chunks
