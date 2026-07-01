@@ -104,6 +104,9 @@ class Config:
     LLM_MODEL_TAGS: Optional[str] = None
     LLM_MODEL_SYNTHESIS: Optional[str] = None
     LLM_MODEL_JUDGE: Optional[str] = None
+    # Results-synthesis: the one LLM in the recall (pull) path — the explicit
+    # "synthesize these results" escalation. Independently swappable per the plan.
+    LLM_MODEL_RESULTS_SYNTHESIS: Optional[str] = None
     # Candidate-assembly + synthesis budgets (bound the prompt regardless of corpus size).
     MAX_SYNTHESIS_NOTE_CHARS: int = 1200
     MAX_SYNTHESIS_NOTES: int = 25

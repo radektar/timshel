@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import types
+
 import pytest
 
 from src.ui import dashboard_window as dw
@@ -224,3 +226,92 @@ def test_set_transcribing_toggles_flag():
     assert ctrl._transcribing is True
     ctrl.setTranscribing_(False)
     assert ctrl._transcribing is False
+
+
+# ── recall synthesis escalation (the one LLM door) — Faza 4 ────────────────
+
+def _fake_answer():
+    return types.SimpleNamespace(
+        answered=True,
+        thesis="Dostawa okien opozniona, dach czeka.",
+        evidence=[types.SimpleNamespace(
+            note="26-06-05 - Okna dach", date="26-06-05", quote="dostawa niepewna")],
+        directions=["Co z alternatywnym dostawca okien?"],
+    )
+
+
+def _complete_synthesis(ctrl):
+    ctrl._answer_loading = True
+    ctrl._synth_worker_(ctrl._query, list(ctrl._recall_raw))
+    ctrl.applyAnswer_(None)
+
+
+def test_recall_keeps_raw_hits_for_synthesis():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "co z oknami")
+    assert len(ctrl._recall_raw) == 2  # raw Results retained for the escalation
+    _render(ctrl)  # results + escalation bar paint without raising
+
+
+def test_synthesis_renders_answer_card_and_actions():
+    saved = {}
+    opened = []
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+        "recall_synthesize": lambda q, r: _fake_answer(),
+        "recall_save_answer": lambda q, a: "/tmp/answer.md",
+        "open_note": lambda n: opened.append(n),
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "co z oknami")
+    _complete_synthesis(ctrl)
+    assert ctrl._answer is not None and ctrl._answer_loading is False
+    _render(ctrl)  # answer card + sources paint without raising
+    assert ctrl._synth_note_ids  # evidence ↗ tags populated
+
+    class _S:
+        def tag(self):
+            return 0
+
+    ctrl.synthOpenClicked_(_S())
+    assert opened == [ctrl._synth_note_ids[0]]
+
+    ctrl.saveAnswerClicked_(None)  # invokes recall_save_answer, shows a toast
+
+    ctrl.clearAnswerClicked_(None)
+    assert ctrl._answer is None
+    _render(ctrl)  # back to plain results
+
+
+def test_synthesis_none_answer_does_not_crash():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+        "recall_synthesize": lambda q, r: None,  # soft failure
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "q")
+    _complete_synthesis(ctrl)
+    assert ctrl._answer is None and ctrl._answer_loading is False
+    _render(ctrl)
+
+
+def test_focus_recall_shows_window_and_can_prefill():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: ([], 0.0, "empty"),
+    })
+    ctrl.focusRecall()
+    assert ctrl._window is not None  # window brought up, ask-bar present
+    ctrl.focusRecall("co z oknami")  # prefill runs a search
+    assert ctrl._mode == "recall" and ctrl._query == "co z oknami"
+
+
+def test_ask_about_insight_enters_recall_with_rationale():
+    ctrl = dw.build_dashboard_window()  # sample deck → an active insight exists
+    ctrl._ensure_window()
+    conn = ctrl._deck.active()
+    assert conn is not None
+    ctrl.askAboutInsightClicked_(None)
+    assert ctrl._mode == "recall" and ctrl._query == conn.rationale

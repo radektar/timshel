@@ -611,6 +611,11 @@ if _APPKIT_AVAILABLE:
             self._recall_loading = False    # search in flight (off the main thread)
             self._recall_status = "ok"      # "ok" | "empty" | "unavailable" (honest states)
             self._pending_recall = None     # worker→main-thread handoff payload
+            self._recall_raw: List = []     # raw hits kept for the synthesis escalation
+            self._answer = None             # RecallAnswer once synthesized (the LLM door)
+            self._answer_loading = False    # synthesis in flight
+            self._pending_answer = None     # synth worker→main-thread handoff
+            self._synth_note_ids: List[str] = []  # tag -> note_id for answer-card ↗ open
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -1193,9 +1198,19 @@ if _APPKIT_AVAILABLE:
                 cy = self._build_recall_notready(doc, cy, inner_w)
             elif vm.is_empty:
                 cy = self._build_recall_abstinence(doc, vm, cy, inner_w, reader_w)
+            elif self._answer is not None:
+                # synthesized card (thesis) sits above its grounding (the same passages)
+                cy = self._build_answer_card(doc, cy, inner_w, reader_w)
+                shdr = _eyebrow("Źródła", _muted())
+                shdr.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(shdr)
+                cy += 20
+                for row in vm.rows:
+                    cy = self._build_recall_row(doc, row, cy, inner_w, reader_w)
             else:
                 for row in vm.rows:
                     cy = self._build_recall_row(doc, row, cy, inner_w, reader_w)
+                cy = self._build_escalation(doc, cy, inner_w, reader_w)
 
             cy += _PAD
             doc.setFrameSize_(NSMakeSize(reader_w, cy))
@@ -1221,6 +1236,104 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(_wrapping_label(
                 sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
             cy += sh + 12
+            return cy
+
+        @objc.python_method
+        def _build_escalation(self, doc, cy, inner_w, reader_w):
+            # The one LLM door: explicit, gold, and honest that excerpts leave the Mac.
+            cy += 8
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 1))
+            rule.setWantsLayer_(True)
+            if rule.layer() is not None:
+                rule.layer().setBackgroundColor_(_c(214, 176, 51, 0.22).CGColor())
+            doc.addSubview_(rule)
+            cy += 14
+            if self._answer_loading:
+                lbl = _label(
+                    "Syntetyzuję…  (jedyny moment, gdy dopasowane fragmenty idą do chmury)",
+                    12.5, _gold())
+                lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
+                doc.addSubview_(lbl)
+                cy += 28
+                return cy
+            btn = _pill_button(
+                "✦ Zsyntetyzuj te wyniki", NSMakeRect(_READER_PAD_X, cy, 214, 30),
+                _gold(), _c(214, 176, 51, 0.14), _c(214, 176, 51, 0.55),
+                self, "synthesizeClicked:", 13.0)
+            doc.addSubview_(btn)
+            note = _label("Tylko teraz fragmenty świadomie opuszczają Maca.", 11.5, _c(140, 130, 115))
+            note.setFrame_(NSMakeRect(_READER_PAD_X + 226, cy + 7, inner_w - 226, 16))
+            doc.addSubview_(note)
+            cy += 40
+            return cy
+
+        @objc.python_method
+        def _build_answer_card(self, doc, cy, inner_w, reader_w):
+            self._synth_note_ids = []
+            ans = self._answer
+            eye = _eyebrow("✦ Synteza", _gold())
+            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, 200, 13))
+            doc.addSubview_(eye)
+            back = _pill_button(
+                "‹ tylko wyniki", NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
+                _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                self, "clearAnswerClicked:", 11.5)
+            doc.addSubview_(back)
+            cy += 24
+
+            thesis = "„" + (getattr(ans, "thesis", "") or "") + "”"
+            th = max(28.0, _measure_height(thesis, 22, inner_w))
+            doc.addSubview_(_wrapping_label(
+                thesis, 22, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, th)))
+            cy += th + 14
+
+            for ev in getattr(ans, "evidence", None) or []:
+                cy = self._build_answer_evidence(doc, ev, cy, inner_w, reader_w)
+
+            dirs = getattr(ans, "directions", None) or []
+            if dirs:
+                dh = _eyebrow("Kierunki", _muted())
+                dh.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(dh)
+                cy += 20
+                for d in dirs:
+                    line = "→  " + (d or "").strip()
+                    lh = max(18.0, _measure_height(line, 13.5, inner_w))
+                    doc.addSubview_(_wrapping_label(
+                        line, 13.5, _cream_soft(), NSMakeRect(_READER_PAD_X, cy, inner_w, lh)))
+                    cy += lh + 6
+
+            save = _pill_button(
+                "⤓ Zapisz do notatek", NSMakeRect(_READER_PAD_X, cy + 6, 170, 28),
+                _cream(), _terra_deep(), _terra_deep(), self, "saveAnswerClicked:", 12.5)
+            doc.addSubview_(save)
+            cy += 46
+            return cy
+
+        @objc.python_method
+        def _build_answer_evidence(self, doc, ev, cy, inner_w, reader_w):
+            from src.ui.recall_presenter import split_stem
+
+            date, title = split_stem(getattr(ev, "note", "") or "")
+            top = f"{date}   ·   {title}" if date else (title or getattr(ev, "note", ""))
+            tl = _label(top, 12.0, _muted())
+            tl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 40, 16))
+            doc.addSubview_(tl)
+            idx = len(self._synth_note_ids)
+            self._synth_note_ids.append(getattr(ev, "note", "") or "")
+            ob = _pill_button(
+                "↗", NSMakeRect(reader_w - _READER_PAD_X - 30, cy - 2, 30, 22),
+                _terracotta(), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
+                self, "synthOpenClicked:", 12.0)
+            ob.setTag_(idx)
+            doc.addSubview_(ob)
+            cy += 19
+            quote = "„" + (getattr(ev, "quote", "") or "") + "”"
+            qh = max(16.0, _measure_height(quote, 13.5, inner_w - 12))
+            lbl = _wrapping_label(quote, 13.5, _cream_soft(),
+                                  NSMakeRect(_READER_PAD_X + 12, cy, inner_w - 12, qh))
+            doc.addSubview_(lbl)
+            cy += qh + 12
             return cy
 
         @objc.python_method
@@ -1364,6 +1477,7 @@ if _APPKIT_AVAILABLE:
                 "query": query,
                 "vm": rp.present(query, results, confidence),
                 "status": status,
+                "results": results,  # raw hits kept for the optional synthesis escalation
             }
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
                 "applyRecall:", None, False
@@ -1376,8 +1490,96 @@ if _APPKIT_AVAILABLE:
                 return
             self._recall = payload["vm"]
             self._recall_status = payload.get("status", "ok")
+            self._recall_raw = payload.get("results", [])
             self._recall_loading = False
+            self._answer = None          # a fresh search clears any prior synthesis
+            self._answer_loading = False
             self._render()
+
+        # -- synthesis escalation (the one LLM door in the pull path) -------- #
+
+        @objc.python_method
+        def _run_synthesis(self):
+            if not self._recall_raw or self._answer_loading:
+                return
+            self._answer_loading = True
+            self._render()
+            import threading
+
+            threading.Thread(
+                target=self._synth_worker_, args=(self._query, list(self._recall_raw)),
+                name="RecallSynthesis", daemon=True,
+            ).start()
+
+        @objc.python_method
+        def _synth_worker_(self, query, results):
+            answer = None
+            cb = self._callbacks.get("recall_synthesize")
+            if cb is not None:
+                try:
+                    answer = cb(query, results)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_synthesize callback failed: %s", exc)
+            self._pending_answer = {"query": query, "answer": answer}
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyAnswer:", None, False
+            )
+
+        def applyAnswer_(self, _ignored):
+            payload = self._pending_answer
+            if not payload or payload.get("query") != self._query:
+                return
+            self._answer = payload.get("answer")
+            self._answer_loading = False
+            self._render()
+
+        def synthesizeClicked_(self, sender):
+            self._run_synthesis()
+
+        def clearAnswerClicked_(self, sender):
+            self._answer = None
+            self._answer_loading = False
+            self._render()
+
+        def saveAnswerClicked_(self, sender):
+            if self._answer is None:
+                return
+            path = None
+            cb = self._callbacks.get("recall_save_answer")
+            if cb is not None:
+                try:
+                    path = cb(self._query, self._answer)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_save_answer callback failed: %s", exc)
+            self._show_toast("Zapisano do notatek" if path else "Nie udało się zapisać")
+
+        def synthOpenClicked_(self, sender):
+            ids = getattr(self, "_synth_note_ids", [])
+            i = int(sender.tag())
+            if 0 <= i < len(ids):
+                self._invoke_callback("open_note", ids[i])
+
+        def askAboutInsightClicked_(self, sender):
+            # push→pull: seed the ask-bar with the active insight and search the corpus.
+            conn = self._deck.active()
+            if conn is not None and getattr(conn, "rationale", ""):
+                self._run_recall(conn.rationale)
+
+        @objc.python_method
+        def focusRecall(self, prefill=None):
+            """The hotkey entry: bring the window forward and focus the ask-bar (and,
+            if given, run a query straight away). Reuses the always-present ask-bar
+            rather than a separate spotlight panel."""
+            self._ensure_window()
+            if prefill:
+                self._run_recall(prefill)
+            self.showWindow()
+            fld = getattr(self, "_ask_field", None)
+            if fld is not None and self._window is not None:
+                try:
+                    self._window.makeFirstResponder_(fld)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
         @objc.python_method
         def _build_reader_content(self, reader_w, conn):
@@ -1419,6 +1621,14 @@ if _APPKIT_AVAILABLE:
                     cx = _READER_PAD_X
                     cy += 30
             cy += 34
+
+            # push→pull bridge: ask the corpus about this insight ("Zapytaj o to")
+            ask_btn = _pill_button(
+                "✦ Zapytaj o to", NSMakeRect(_READER_PAD_X, cy, 148, 26),
+                _terracotta(), _c(217, 84, 42, 0.10), _c(217, 84, 42, 0.5),
+                self, "askAboutInsightClicked:", 12.0)
+            doc.addSubview_(ask_btn)
+            cy += 36
 
             # ground — evidence toggle + (when expanded) rows
             if conn.evidence:

@@ -185,6 +185,12 @@ class MalincheMenuApp(rumps.App):
         self._dashboard = build_dashboard_window(callbacks=self._dashboard_callbacks())
         self._refresh_insights_badge()
 
+        # Global hotkey (⌥Space) → recall ask-bar. Best-effort; never blocks launch.
+        try:
+            self._register_recall_hotkey()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall hotkey unavailable: %s", exc)
+
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
         
@@ -969,6 +975,51 @@ class MalincheMenuApp(rumps.App):
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Could not open Insights window: %s", exc)
 
+    def _open_recall(self, _=None):
+        """Bring the Insights window forward with the ask-bar focused — recall entry."""
+        try:
+            if getattr(self, "_dashboard", None) is None:
+                from src.ui.dashboard_window import build_dashboard_window
+
+                self._dashboard = build_dashboard_window(
+                    callbacks=self._dashboard_callbacks()
+                )
+            if self._dashboard is not None:
+                self._dashboard.focusRecall()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Could not open recall ask-bar: %s", exc)
+
+    def _register_recall_hotkey(self):
+        """Best-effort global hotkey (⌥Space) → focus the recall ask-bar.
+
+        A global NSEvent monitor needs Accessibility permission (silent no-op without
+        it); a local monitor covers the app-active case. Both return the event so the
+        chord is never swallowed. All failures are swallowed — the ask-bar stays
+        reachable from the Insights window regardless.
+        """
+        try:
+            from AppKit import NSEvent, NSEventModifierFlagOption
+        except Exception:  # pragma: no cover - non-mac
+            return
+        mask = 1 << 10  # NSEventMaskKeyDown
+        space = 49      # keyCode for Space
+
+        def _handler(event):
+            try:
+                if event.keyCode() == space and (
+                    int(event.modifierFlags()) & int(NSEventModifierFlagOption)
+                ):
+                    _run_on_main_thread(self._open_recall)
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return event
+
+        try:
+            NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, _handler)
+            NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, _handler)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall hotkey registration failed: %s", exc)
+
     def _dashboard_callbacks(self):
         """Wiring the Insights window needs from the app (vault + Obsidian).
 
@@ -981,6 +1032,8 @@ class MalincheMenuApp(rumps.App):
             "open_note": self._open_note_in_obsidian,
             "open_transcript": self._open_transcript_in_obsidian,
             "recall_search": self._recall_search,
+            "recall_synthesize": self._recall_synthesize,
+            "recall_save_answer": self._recall_save_answer,
         }
 
     def _recall_search(self, query):
@@ -994,6 +1047,23 @@ class MalincheMenuApp(rumps.App):
         from src.connections.recall import seam
 
         return seam.search_detailed(query)
+
+    def _recall_synthesize(self, query, results):
+        """The one LLM in the pull path: synthesize a grounded answer from the
+        retrieved passages on the user's explicit escalation. Best-effort → None
+        (window shows a soft failure). Only these matched excerpts leave the Mac."""
+        from src.connections.recall.synthesis import synthesize_answer_safe
+
+        return synthesize_answer_safe(query, results)
+
+    def _recall_save_answer(self, query, answer):
+        """Save a synthesized answer to the vault as a linkable markdown note."""
+        from datetime import datetime
+
+        from src.connections.recall.answer_writer import save_answer
+
+        date_str = datetime.now().strftime("%y-%m-%d")
+        return save_answer(query, answer, config.TRANSCRIBE_DIR, date_str=date_str)
 
     def _recent_transcripts_for_insights(self):
         """Real recent transcripts for the Insights rail (replaces atrapy).
