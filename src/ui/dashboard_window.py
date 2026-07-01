@@ -616,6 +616,12 @@ if _APPKIT_AVAILABLE:
             self._answer_loading = False    # synthesis in flight
             self._pending_answer = None     # synth worker→main-thread handoff
             self._synth_note_ids: List[str] = []  # tag -> note_id for answer-card ↗ open
+            self._answer_failed = False     # last synthesis attempt returned nothing
+            # Monotonic generation token: every new search/navigation bumps it, and
+            # an off-thread search OR synthesis result is applied only if its captured
+            # epoch still matches — text equality alone can't tell a stale answer
+            # (built from old passages) from a fresh one for the same query text.
+            self._epoch = 0
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -1153,6 +1159,7 @@ if _APPKIT_AVAILABLE:
             inner_w = reader_w - 2 * _READER_PAD_X
             cy = _PAD
             self._recall_note_ids = []
+            self._synth_note_ids = []  # reset in lockstep — never carry stale answer tags
 
             # query header — shown the moment we enter recall mode (even while loading)
             if self._query:
@@ -1271,8 +1278,11 @@ if _APPKIT_AVAILABLE:
         def _build_answer_card(self, doc, cy, inner_w, reader_w):
             self._synth_note_ids = []
             ans = self._answer
-            eye = _eyebrow("✦ Synteza", _gold())
-            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, 200, 13))
+            answered = getattr(ans, "answered", True)
+            eye = _eyebrow(
+                "✦ Synteza" if answered else "✦ Synteza — brak pokrycia w notatkach",
+                _gold() if answered else _muted())
+            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 130, 13))
             doc.addSubview_(eye)
             back = _pill_button(
                 "‹ tylko wyniki", NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
@@ -1281,10 +1291,13 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(back)
             cy += 24
 
+            # When the model says the notes don't cover the question, the thesis is an
+            # honest "not covered" note — render it muted, not as a confident answer.
             thesis = "„" + (getattr(ans, "thesis", "") or "") + "”"
+            tcolor = _cream() if answered else _c(176, 162, 141)
             th = max(28.0, _measure_height(thesis, 22, inner_w))
             doc.addSubview_(_wrapping_label(
-                thesis, 22, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, th)))
+                thesis, 22, tcolor, NSMakeRect(_READER_PAD_X, cy, inner_w, th)))
             cy += th + 14
 
             for ev in getattr(ans, "evidence", None) or []:
@@ -1419,17 +1432,31 @@ if _APPKIT_AVAILABLE:
                 self._invoke_callback("open_note", ids[i])
 
         def backToInsightsClicked_(self, sender):
+            self._epoch += 1          # invalidate any in-flight search/synthesis
             self._mode = "insight"
             self._recall = None
+            self._recall_loading = False
+            self._answer = None
+            self._answer_loading = False
             self._query = ""
             self._render()
+
+        @objc.python_method
+        def _reset_recall_flight(self):
+            """Clear per-query state and bump the epoch so in-flight workers drop."""
+            self._epoch += 1
+            self._recall = None
+            self._recall_status = "ok"
+            self._answer = None
+            self._answer_loading = False
+            self._answer_failed = False
 
         @objc.python_method
         def _run_recall(self, text):
             self._query = (text or "").strip()
             if not self._query:
+                self._reset_recall_flight()
                 self._mode = "insight"
-                self._recall = None
                 self._recall_loading = False
                 self._render()
                 return
@@ -1437,21 +1464,21 @@ if _APPKIT_AVAILABLE:
             # the main thread — the embed + full-corpus BM25 (and a first-run model
             # download) must never block the AppKit UI, mirroring the digest/retranscribe
             # daemon threads.
+            self._reset_recall_flight()
             self._mode = "recall"
-            self._recall = None
-            self._recall_status = "ok"
             self._recall_loading = True
             self._scroll_y = 0.0
+            epoch = self._epoch
             self._render()
             import threading
 
             threading.Thread(
-                target=self._recall_worker_, args=(self._query,),
+                target=self._recall_worker_, args=(self._query, epoch),
                 name="RecallSearch", daemon=True,
             ).start()
 
         @objc.python_method
-        def _recall_worker_(self, query):
+        def _recall_worker_(self, query, epoch):
             """Runs on a daemon thread: search + build the view-model, then marshal
             the result back onto the main thread for rendering."""
             results, confidence, status = [], 0.0, "unavailable"
@@ -1474,6 +1501,7 @@ if _APPKIT_AVAILABLE:
             from src.ui import recall_presenter as rp
 
             self._pending_recall = {
+                "epoch": epoch,
                 "query": query,
                 "vm": rp.present(query, results, confidence),
                 "status": status,
@@ -1485,15 +1513,13 @@ if _APPKIT_AVAILABLE:
 
         def applyRecall_(self, _ignored):
             payload = self._pending_recall
-            # Drop stale results — the user may have typed a newer query meanwhile.
-            if not payload or payload.get("query") != self._query:
+            # Drop stale results — a newer search/navigation bumped the epoch meanwhile.
+            if not payload or payload.get("epoch") != self._epoch:
                 return
             self._recall = payload["vm"]
             self._recall_status = payload.get("status", "ok")
             self._recall_raw = payload.get("results", [])
             self._recall_loading = False
-            self._answer = None          # a fresh search clears any prior synthesis
-            self._answer_loading = False
             self._render()
 
         # -- synthesis escalation (the one LLM door in the pull path) -------- #
@@ -1502,17 +1528,19 @@ if _APPKIT_AVAILABLE:
         def _run_synthesis(self):
             if not self._recall_raw or self._answer_loading:
                 return
+            self._answer_failed = False
             self._answer_loading = True
+            epoch = self._epoch
             self._render()
             import threading
 
             threading.Thread(
-                target=self._synth_worker_, args=(self._query, list(self._recall_raw)),
+                target=self._synth_worker_, args=(self._query, list(self._recall_raw), epoch),
                 name="RecallSynthesis", daemon=True,
             ).start()
 
         @objc.python_method
-        def _synth_worker_(self, query, results):
+        def _synth_worker_(self, query, results, epoch):
             answer = None
             cb = self._callbacks.get("recall_synthesize")
             if cb is not None:
@@ -1520,17 +1548,24 @@ if _APPKIT_AVAILABLE:
                     answer = cb(query, results)
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("recall_synthesize callback failed: %s", exc)
-            self._pending_answer = {"query": query, "answer": answer}
+            self._pending_answer = {"epoch": epoch, "answer": answer}
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
                 "applyAnswer:", None, False
             )
 
         def applyAnswer_(self, _ignored):
             payload = self._pending_answer
-            if not payload or payload.get("query") != self._query:
+            # Epoch guard: a stale answer (built from now-replaced passages) must never
+            # land on a newer result set — that would cite passages the user can't see.
+            if not payload or payload.get("epoch") != self._epoch:
                 return
             self._answer = payload.get("answer")
             self._answer_loading = False
+            if self._answer is None:
+                # Synthesis attempted but produced nothing (no key, disabled, or error) —
+                # tell the user instead of silently snapping back to the same results.
+                self._answer_failed = True
+                self._show_toast("Synteza niedostępna — sprawdź klucz API lub spróbuj ponownie")
             self._render()
 
         def synthesizeClicked_(self, sender):
@@ -1539,6 +1574,7 @@ if _APPKIT_AVAILABLE:
         def clearAnswerClicked_(self, sender):
             self._answer = None
             self._answer_loading = False
+            self._answer_failed = False
             self._render()
 
         def saveAnswerClicked_(self, sender):

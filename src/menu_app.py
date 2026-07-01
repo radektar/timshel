@@ -56,6 +56,24 @@ def _run_on_main_thread(func):
         func()
 
 
+# Device-independent NSEvent modifier bits (avoid importing AppKit for a pure check).
+_MOD_SHIFT, _MOD_CONTROL, _MOD_OPTION, _MOD_COMMAND = 1 << 17, 1 << 18, 1 << 19, 1 << 20
+_RECALL_KEYCODE_SPACE = 49
+
+
+def _is_recall_chord(keycode, flags) -> bool:
+    """True iff the event is exactly ⌃⌥Space (Control+Option+Space).
+
+    Exclusive of Command/Shift so it never fires on supersets, and deliberately NOT
+    plain ⌥Space — that is the macOS non-breaking-space key, so binding it would
+    hijack a normal keystroke system-wide. Pure function → unit-testable.
+    """
+    if int(keycode) != _RECALL_KEYCODE_SPACE:
+        return False
+    active = int(flags) & (_MOD_SHIFT | _MOD_CONTROL | _MOD_OPTION | _MOD_COMMAND)
+    return active == (_MOD_CONTROL | _MOD_OPTION)
+
+
 from src.config import config
 from src.config.settings import UserSettings
 from src.file_monitor import (
@@ -185,7 +203,7 @@ class MalincheMenuApp(rumps.App):
         self._dashboard = build_dashboard_window(callbacks=self._dashboard_callbacks())
         self._refresh_insights_badge()
 
-        # Global hotkey (⌥Space) → recall ask-bar. Best-effort; never blocks launch.
+        # Global hotkey (⌃⌥Space) → recall ask-bar. Best-effort; never blocks launch.
         try:
             self._register_recall_hotkey()
         except Exception as exc:  # pragma: no cover - defensive
@@ -945,28 +963,33 @@ class MalincheMenuApp(rumps.App):
             logger.error("Failed to open log viewer: %s", exc)
             rumps.alert("Error", f"Could not open log viewer: {exc}", "OK")
 
+    def _ensure_dashboard(self):
+        """Build the Insights window if needed and refresh it to the latest persisted
+        digest. The window is built once eagerly at launch (with a placeholder deck),
+        so without this refresh it would render the placeholder for the whole session
+        even after a real digest lands. Returns the controller (or None without AppKit).
+        """
+        if getattr(self, "_dashboard", None) is None:
+            from src.ui.dashboard_window import build_dashboard_window
+
+            self._dashboard = build_dashboard_window(
+                callbacks=self._dashboard_callbacks()
+            )
+        if self._dashboard is not None:
+            try:
+                from src.ui.insight_pipeline import latest_deck
+
+                fresh = latest_deck()
+                if fresh is not None:
+                    self._dashboard.updateDeck_(fresh)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("could not refresh insights deck on open: %s", exc)
+        return self._dashboard
+
     def _open_insights(self, _):
         """Open the Insights 'Konstelacja' window — the designed home surface."""
         try:
-            if getattr(self, "_dashboard", None) is None:
-                from src.ui.dashboard_window import build_dashboard_window
-
-                self._dashboard = build_dashboard_window(
-                    callbacks=self._dashboard_callbacks()
-                )
-            if self._dashboard is not None:
-                # Refresh to the latest persisted digest before showing. The
-                # window is built once (eagerly, at launch) when no digest
-                # exists yet, so without this it would render the placeholder
-                # deck for the whole session even after a real digest lands.
-                try:
-                    from src.ui.insight_pipeline import latest_deck
-
-                    fresh = latest_deck()
-                    if fresh is not None:
-                        self._dashboard.updateDeck_(fresh)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("could not refresh insights deck on open: %s", exc)
+            if self._ensure_dashboard() is not None:
                 self._dashboard.showWindow()
                 self._refresh_insights_badge()
             else:
@@ -976,47 +999,47 @@ class MalincheMenuApp(rumps.App):
             logger.error("Could not open Insights window: %s", exc)
 
     def _open_recall(self, _=None):
-        """Bring the Insights window forward with the ask-bar focused — recall entry."""
-        try:
-            if getattr(self, "_dashboard", None) is None:
-                from src.ui.dashboard_window import build_dashboard_window
+        """Bring the Insights window forward with the ask-bar focused — recall entry.
 
-                self._dashboard = build_dashboard_window(
-                    callbacks=self._dashboard_callbacks()
-                )
-            if self._dashboard is not None:
-                self._dashboard.focusRecall()
+        Refreshes to the latest digest first (via _ensure_dashboard), so entering by
+        hotkey doesn't operate on the stale launch-time placeholder deck.
+        """
+        try:
+            dash = self._ensure_dashboard()
+            if dash is not None:
+                dash.focusRecall()
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Could not open recall ask-bar: %s", exc)
 
     def _register_recall_hotkey(self):
-        """Best-effort global hotkey (⌥Space) → focus the recall ask-bar.
+        """Best-effort global hotkey (⌃⌥Space) → focus the recall ask-bar.
 
         A global NSEvent monitor needs Accessibility permission (silent no-op without
-        it); a local monitor covers the app-active case. Both return the event so the
-        chord is never swallowed. All failures are swallowed — the ask-bar stays
+        it); a local monitor covers the app-active case (a global monitor never fires
+        for the app's own events, so there is no double-trigger). Both return the event
+        so the chord is never swallowed. All failures are swallowed — the ask-bar stays
         reachable from the Insights window regardless.
         """
         try:
-            from AppKit import NSEvent, NSEventModifierFlagOption
+            from AppKit import NSEvent
         except Exception:  # pragma: no cover - non-mac
             return
         mask = 1 << 10  # NSEventMaskKeyDown
-        space = 49      # keyCode for Space
 
         def _handler(event):
             try:
-                if event.keyCode() == space and (
-                    int(event.modifierFlags()) & int(NSEventModifierFlagOption)
-                ):
+                if _is_recall_chord(event.keyCode(), event.modifierFlags()):
                     _run_on_main_thread(self._open_recall)
             except Exception:  # pragma: no cover - defensive
                 pass
             return event
 
         try:
-            NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, _handler)
-            NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, _handler)
+            # Retain the monitor tokens so they can be removed and never double-register.
+            self._recall_hotkey_monitors = [
+                NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, _handler),
+                NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, _handler),
+            ]
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("recall hotkey registration failed: %s", exc)
 
@@ -1051,18 +1074,35 @@ class MalincheMenuApp(rumps.App):
     def _recall_synthesize(self, query, results):
         """The one LLM in the pull path: synthesize a grounded answer from the
         retrieved passages on the user's explicit escalation. Best-effort → None
-        (window shows a soft failure). Only these matched excerpts leave the Mac."""
-        from src.connections.recall.synthesis import synthesize_answer_safe
+        (window shows a soft failure). Only these matched excerpts leave the Mac.
 
-        return synthesize_answer_safe(query, results)
+        A permanent billing/credit error trips the shared AI circuit breaker (same as
+        the push digest path) so we don't re-issue a doomed request on every click.
+        """
+        from src.connections.recall.synthesis import synthesize_answer_safe
+        from src.summarizer import APIBillingError
+
+        try:
+            return synthesize_answer_safe(query, results)
+        except APIBillingError as exc:
+            disable = getattr(self.transcriber, "_disable_ai", None)
+            if disable is not None:
+                disable("billing", exc)
+            return None
 
     def _recall_save_answer(self, query, answer):
-        """Save a synthesized answer to the vault as a linkable markdown note."""
+        """Save a synthesized answer to the vault as a linkable markdown note.
+
+        Returns ``None`` (→ a soft "couldn't save" toast) rather than raising if the
+        vault dir isn't configured yet.
+        """
         from datetime import datetime
 
         from src.connections.recall.answer_writer import save_answer
 
-        date_str = datetime.now().strftime("%y-%m-%d")
+        if not config.TRANSCRIBE_DIR:
+            return None
+        date_str = datetime.now().strftime("%Y-%m-%d")  # match digest_writer's 4-digit year
         return save_answer(query, answer, config.TRANSCRIBE_DIR, date_str=date_str)
 
     def _recent_transcripts_for_insights(self):

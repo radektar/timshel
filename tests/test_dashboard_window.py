@@ -77,7 +77,8 @@ def _complete_search(ctrl, query):
     ctrl._query = query
     ctrl._mode = "recall"
     ctrl._recall_loading = True
-    ctrl._recall_worker_(query)
+    ctrl._epoch += 1
+    ctrl._recall_worker_(query, ctrl._epoch)
     ctrl.applyRecall_(None)
 
 
@@ -152,10 +153,11 @@ def test_recall_stale_result_is_dropped():
         "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
     })
     ctrl._ensure_window()
-    ctrl._query = "nowe pytanie"           # user has moved on
-    ctrl._recall_worker_("stare pytanie")  # an older worker finishes late
+    stale_epoch = ctrl._epoch
+    ctrl._recall_worker_("stare pytanie", stale_epoch)  # an older worker finishes late
+    ctrl._epoch += 1                       # a newer search/navigation bumped the epoch
     ctrl.applyRecall_(None)
-    assert ctrl._recall is None            # stale payload dropped, not applied
+    assert ctrl._recall is None            # stale payload dropped by the epoch guard
 
 
 def test_wrong_shape_callback_is_unavailable_not_no_match():
@@ -242,7 +244,7 @@ def _fake_answer():
 
 def _complete_synthesis(ctrl):
     ctrl._answer_loading = True
-    ctrl._synth_worker_(ctrl._query, list(ctrl._recall_raw))
+    ctrl._synth_worker_(ctrl._query, list(ctrl._recall_raw), ctrl._epoch)
     ctrl.applyAnswer_(None)
 
 
@@ -286,16 +288,48 @@ def test_synthesis_renders_answer_card_and_actions():
     _render(ctrl)  # back to plain results
 
 
-def test_synthesis_none_answer_does_not_crash():
+def test_synthesis_soft_failure_flags_and_does_not_crash():
     ctrl = dw.build_dashboard_window(callbacks={
         "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
-        "recall_synthesize": lambda q, r: None,  # soft failure
+        "recall_synthesize": lambda q, r: None,  # soft failure (no key / disabled / error)
     })
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     _complete_synthesis(ctrl)
     assert ctrl._answer is None and ctrl._answer_loading is False
+    assert ctrl._answer_failed is True  # user gets feedback, not a silent no-op
     _render(ctrl)
+
+
+def test_stale_synthesis_is_dropped_by_epoch_guard():
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+        "recall_synthesize": lambda q, r: _fake_answer(),
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "co z oknami")
+    # a synthesis captures the current epoch, but a newer search bumps it before apply
+    ctrl._answer_loading = True
+    stale_epoch = ctrl._epoch
+    ctrl._synth_worker_(ctrl._query, list(ctrl._recall_raw), stale_epoch)
+    ctrl._epoch += 1  # user re-searched / navigated meanwhile
+    ctrl.applyAnswer_(None)
+    assert ctrl._answer is None  # stale answer (old passages) never lands on new results
+
+
+def test_answered_false_card_renders_muted():
+    unanswered = types.SimpleNamespace(
+        answered=False, thesis="Notatki nie pokrywają tego pytania.",
+        evidence=[], directions=[])
+    ctrl = dw.build_dashboard_window(callbacks={
+        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+        "recall_synthesize": lambda q, r: unanswered,
+    })
+    ctrl._ensure_window()
+    _complete_search(ctrl, "q")
+    _complete_synthesis(ctrl)
+    assert ctrl._answer is not None and ctrl._answer.answered is False
+    _render(ctrl)  # "brak pokrycia" card paints without raising
 
 
 def test_focus_recall_shows_window_and_can_prefill():

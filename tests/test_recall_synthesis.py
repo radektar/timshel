@@ -107,13 +107,26 @@ def test_synthesize_answer_safe_none_without_synthesizer(monkeypatch):
     assert rs.synthesize_answer_safe("q", _RESULTS) is None
 
 
-def test_synthesize_answer_safe_swallows_billing(monkeypatch):
+def test_synthesize_answer_safe_propagates_billing(monkeypatch):
+    # Billing errors must NOT be swallowed — the caller trips the circuit breaker.
     class _Boom:
         def synthesize(self, q, r):
             raise APIBillingError("permanent")
 
     monkeypatch.setattr(rs, "get_recall_synthesizer", lambda: _Boom())
-    assert rs.synthesize_answer_safe("q", _RESULTS) is None
+    with pytest.raises(APIBillingError):
+        rs.synthesize_answer_safe("q", _RESULTS)
+
+
+def test_parse_payload_malformed_returns_none():
+    assert rs._parse_payload({"answered": True}) is None  # missing required 'thesis'
+    assert rs._parse_payload("not a dict") is None
+
+
+def test_answer_evidence_strips_wikilink_brackets():
+    payload = {**_PAYLOAD, "evidence": [{"note": "[[okna]]", "date": "", "quote": "q"}]}
+    ans = _synth(_Msg([_Block(payload)])).synthesize("q", _RESULTS)
+    assert ans.evidence[0].note == "okna"
 
 
 def test_get_recall_synthesizer_gated_by_config(monkeypatch):

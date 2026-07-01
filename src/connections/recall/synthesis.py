@@ -167,7 +167,10 @@ class RecallSynthesizer:
 
         self.last_usage = getattr(message, "usage", None)
         if getattr(message, "stop_reason", None) == "max_tokens":
-            logger.warning("results-synthesis: response truncated at max_tokens — skipping")
+            logger.warning(
+                "results-synthesis: response truncated at max_tokens (%s) — skipping",
+                config.SYNTHESIS_MAX_TOKENS,
+            )
             return None
         for block in message.content:
             if (
@@ -197,16 +200,17 @@ def get_recall_synthesizer() -> Optional[RecallSynthesizer]:
 
 
 def synthesize_answer_safe(query: str, results: List[Any]) -> Optional[RecallAnswer]:
-    """Best-effort escalation for the UI: ``None`` on any failure (no synthesizer,
-    permanent API error, empty inputs) so the window degrades gracefully."""
+    """Best-effort escalation for the UI: ``None`` on a recoverable failure (no
+    synthesizer, empty inputs, transient API error). **APIBillingError propagates**
+    so the caller can trip the shared session circuit breaker — swallowing it here
+    would let every click re-issue a doomed request after credits are exhausted."""
     synth = get_recall_synthesizer()
     if synth is None:
         return None
     try:
         return synth.synthesize(query, results)
-    except APIBillingError as exc:  # permanent → swallow here; UI shows a soft failure
-        logger.warning("results-synthesis billing error: %s", exc)
-        return None
+    except APIBillingError:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.debug("results-synthesis failed: %s", exc)
         return None
