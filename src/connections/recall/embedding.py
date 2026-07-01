@@ -41,6 +41,9 @@ class FastembedProvider:
     """fastembed (ONNX, torch-free). e5-family models get the query:/passage: prefixes."""
 
     def __init__(self, model_name: str = DEFAULT_EMBED_MODEL):
+        from src.runtime_deps import ensure_importable
+
+        ensure_importable("fastembed")
         from fastembed import TextEmbedding  # lazy: keep package import light
 
         self._model = TextEmbedding(model_name=model_name)
