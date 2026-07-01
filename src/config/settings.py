@@ -69,6 +69,17 @@ class UserSettings:
     # Connected LLM for the Insights action handoff (claude | chatgpt).
     ai_handoff_tool: str = "claude"
 
+    # How clicking a note/transcript opens it: "obsidian" (deep link, default),
+    # "finder" (reveal in Finder), "default" (system .md handler), or
+    # "app:<Name>" (e.g. "app:Pile"). Decouples Malinche from assuming Obsidian.
+    note_opener: str = "obsidian"
+
+    # Local recall engine — embeddings for "ask your corpus". Local, no API key;
+    # provider/model swappable. Indexing at transcription time is opt-in for now.
+    embed_provider: str = "fastembed"
+    embed_model: str = ""  # empty -> Config default
+    enable_recall_index: bool = False
+
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
     start_at_login: bool = defaults.DEFAULT_START_AT_LOGIN
@@ -137,6 +148,10 @@ class UserSettings:
             "enable_ai_summaries": self.enable_ai_summaries,
             "ai_api_key": self.ai_api_key,
             "ai_handoff_tool": self.ai_handoff_tool,
+            "note_opener": self.note_opener,
+            "embed_provider": self.embed_provider,
+            "embed_model": self.embed_model,
+            "enable_recall_index": self.enable_recall_index,
             "show_notifications": self.show_notifications,
             "start_at_login": self.start_at_login,
             "setup_completed": self.setup_completed,

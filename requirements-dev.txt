@@ -8,6 +8,11 @@ flake8>=6.0.0
 mypy>=1.0.0
 isort>=5.12.0
 
+# Local recall engine (dev/CI). In the shipped app these are auto-installed on
+# first use via runtime_deps, not bundled — see SAFEGUARDED_PACKAGES.
+fastembed>=0.3.0
+sqlite-vec>=0.1.6
+
 
 
 

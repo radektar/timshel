@@ -67,6 +67,13 @@ signal-report:
 	@echo "Computing action-rate over the Insights signal log (ADR-004)..."
 	python -m src.connections.signal_report
 
+ask:
+	@python -m src.connections.recall.cli ask "$(Q)"
+
+backfill-embeddings:
+	@echo "Embedding the vault for local recall (first run downloads the model)..."
+	python -m src.connections.recall.cli backfill
+
 lint:
 	@echo "Running linters..."
 	flake8 src/

@@ -1043,16 +1043,20 @@ class MalincheMenuApp(rumps.App):
         return [{"label": p.stem, "path": p} for _, p in hits[:limit]]
 
     def _open_note_in_obsidian(self, basename):
-        """Resolve a source-note basename in the vault and open it in Obsidian."""
+        """Resolve a source-note basename in the vault and open it in the
+        user's configured markdown app (Obsidian by default)."""
         from src.ui import obsidian_link
 
-        obsidian_link.open_note(basename, config.TRANSCRIBE_DIR)
+        obsidian_link.open_note(
+            basename, config.TRANSCRIBE_DIR, opener=config.NOTE_OPENER
+        )
 
     def _open_transcript_in_obsidian(self, path):
-        """Open a recent transcript (absolute path) in Obsidian."""
+        """Open a recent transcript (absolute path) in the user's configured
+        markdown app (Obsidian by default)."""
         from src.ui import obsidian_link
 
-        obsidian_link.open_path(path)
+        obsidian_link.open_path(path, opener=config.NOTE_OPENER)
 
     def _notify_digest_ready(self, digest_name: str) -> None:
         """Notify carrying the *thesis* of the top connection, not "digest ready".

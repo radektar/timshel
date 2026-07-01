@@ -270,6 +270,27 @@ tags: [{tags}]
             self._user_settings, "ai_handoff_tool", "claude"
         ) or "claude"
 
+        # How note/transcript clicks open files: Obsidian deep link by default,
+        # but configurable so Malinche doesn't assume Obsidian (see
+        # ui/obsidian_link.file_open_argv). "obsidian" | "finder" | "default" |
+        # "app:<Name>".
+        self.NOTE_OPENER = getattr(
+            self._user_settings, "note_opener", "obsidian"
+        ) or "obsidian"
+
+        # Local recall engine ("ask your corpus"). Embeddings are local + no API key;
+        # provider/model are swappable (no hardcoded provider). Indexing at
+        # transcription time is opt-in until the feature ships.
+        self.EMBED_PROVIDER = getattr(
+            self._user_settings, "embed_provider", ""
+        ) or "fastembed"
+        self.EMBED_MODEL = getattr(
+            self._user_settings, "embed_model", ""
+        ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        self.ENABLE_RECALL_INDEX = bool(
+            getattr(self._user_settings, "enable_recall_index", False)
+        )
+
         # AI summaries run whenever a usable LLM backend is configured: Ollama
         # needs no key; cloud providers need an API key. Key presence is the
         # single control — it matches the Settings copy ("without a key … skips

@@ -1895,6 +1895,19 @@ Brak podsumowania AI. Możliwe przyczyny:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("connection enqueue skipped: %s", exc)
 
+            # Keep the local recall index fresh at transcription time. Opt-in
+            # (ENABLE_RECALL_INDEX) and fully guarded — must never disturb
+            # transcription.
+            try:
+                from src.config.config import get_config
+
+                if getattr(get_config(), "ENABLE_RECALL_INDEX", False):
+                    from src.connections.recall.seam import index_transcript_safe
+
+                    index_transcript_safe(md_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("recall index skipped: %s", exc)
+
         return success
 
     def stage_audio_file(self, source: Path) -> Path:
