@@ -126,6 +126,13 @@ class Config:
     CONNECTIONS_MIN_GAP_DAYS: int = 2
     # Sub-folder (inside TRANSCRIBE_DIR) where digest notes are written.
     DIGEST_DIR_NAME: str = "Malinche Digests"
+    # Magic-insights prototype instrumentation. Each digest appends a cost +
+    # coverage record to {vault}/.malinche/metrics.jsonl (H1/H4 evidence base).
+    INSIGHT_METRICS_ENABLED: bool = True
+    # Prototype tester mode: routes the synthesis stage through the strongest
+    # model (LLM_MODEL_SYNTHESIS, e.g. claude-opus-4-8), forces a digest run,
+    # and always emits metrics. Off in normal operation.
+    PROTOTYPE_TESTER_MODE: bool = False
 
     # Markdown template
     MD_TEMPLATE: str = """---

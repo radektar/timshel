@@ -155,6 +155,21 @@ def _set_digest_ready(transcriber: object, path: Path) -> None:
             logger.debug("could not set digest_ready: %s", exc)
 
 
+def _record_digest_metrics(synthesizer, candidates, connections, path: Path) -> None:
+    """Append the per-digest cost + coverage record. Best-effort, never raises."""
+    from src.connections.insight_metrics import record_digest_metrics
+
+    record_digest_metrics(
+        model=getattr(synthesizer, "model", ""),
+        usage=getattr(synthesizer, "last_usage", None),
+        candidates=len(candidates.notes),
+        connections=len(connections),
+        connection_types=[c.type for c in connections],
+        digest=path.name,
+        tester_mode=bool(getattr(config, "PROTOTYPE_TESTER_MODE", False)),
+    )
+
+
 def run_digest_if_due(
     transcriber: object = None, force: bool = False
 ) -> Optional[Path]:
@@ -229,6 +244,7 @@ def run_digest_if_due(
         path, conn_meta = write_digest_note(connections, len(candidates.notes))
         dismissals.record_digest(path, conn_meta)
         scheduler.mark_ran(now, path)
+        _record_digest_metrics(synthesizer, candidates, connections, path)
         _set_digest_ready(transcriber, path)
         return path
     finally:
