@@ -120,6 +120,11 @@ class Config:
     # from the recent window in topic but joined by a shared rare token. 0 = pure
     # similarity (legacy). Validated at 4 in the distance experiment.
     SYNTHESIS_BRIDGE_COUNT: int = 4
+    # Entity distance-channel (Challenge #3): notes joined to the recent window
+    # by a shared named entity (person/project/org) even after topic vocabulary
+    # drifts — the channel that catches contradictions BM25/tags miss. 0 = off
+    # (baseline). Enabled in the magic-insights prototype.
+    SYNTHESIS_ENTITY_COUNT: int = 4
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6

@@ -210,6 +210,7 @@ def run_digest_if_due(
             scheduler.last_digest_at,
             dismissals,
             inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
+            inject_entities=config.SYNTHESIS_ENTITY_COUNT,
         )
         if len(candidates.notes) < 2:
             logger.info("synthesis: fewer than 2 candidate notes, skipping")

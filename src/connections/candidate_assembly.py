@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Set
 
 from src.config import config
 from src.connections.dismissals import DismissalStore
+from src.connections.entities import extract_entities
 from src.logger import logger
 from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
 from src.tag_index import TagIndex
@@ -61,10 +62,17 @@ class CandidateSet:
     notes: List[NoteRef]
     window_basenames: Set[str]
     bridge_basenames: Set[str] = None  # type: ignore[assignment]
+    # basename -> the preselection channels that surfaced it ("window", "tag",
+    # "bm25", "bridge", "entity"). The prototype's recall instrument (H3): to
+    # ask "did preselection reach this planted pair, and via which channel?",
+    # score the answer against this map. Empty by default (baseline callers).
+    channel_map: Dict[str, Set[str]] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.bridge_basenames is None:
             self.bridge_basenames = set()
+        if self.channel_map is None:
+            self.channel_map = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -253,6 +261,40 @@ def _bridge_neighbors(
     return [note for _, _, note in scored[:max_n]]
 
 
+def _entity_neighbors(
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Notes joined to the window by a shared *named entity*, not shared words.
+
+    The channel Challenge #3 asks for: a contradiction months apart survives on
+    the person / project / org both notes name, even after the topical
+    vocabulary has drifted (so BM25 and tags miss it). Entities come from
+    :func:`~src.connections.entities.extract_entities` (wikilinks + multi-word
+    proper nouns). Ranked by how many entities a note shares with the window,
+    then recency. Returns at most ``max_n`` notes.
+    """
+    if max_n <= 0:
+        return []
+    window_entities: Set[str] = set()
+    for note in window:
+        window_entities |= extract_entities(note.summary_md)
+    if not window_entities:
+        return []
+
+    scored: List[tuple] = []
+    for note in older:
+        if note.basename in exclude:
+            continue
+        shared = window_entities & extract_entities(note.summary_md)
+        if shared:
+            scored.append((len(shared), note.date, note))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [note for _, _, note in scored[:max_n]]
+
+
 def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
     out: List[NoteRef] = []
     i = j = 0
@@ -294,6 +336,7 @@ def assemble_candidates(
     dismissals: DismissalStore,
     first_run_window: int = 15,
     inject_bridges: int = 0,
+    inject_entities: int = 0,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -303,6 +346,9 @@ def assemble_candidates(
         dismissals: store used to drop muted notes (connection-level filtering
             happens later, on the synthesis output).
         first_run_window: how many recent notes seed the very first digest.
+        inject_bridges: rare-token distance-channel notes to inject (0 = off).
+        inject_entities: shared-entity distance-channel notes to inject (0 = off,
+            byte-identical to the pre-entity baseline).
     """
     corpus = [
         n for n in load_corpus(vault_dir) if not dismissals.note_muted(n.basename)
@@ -346,21 +392,53 @@ def assemble_candidates(
         )
         bridge_basenames = {n.basename for n in bridges}
 
+    # Entity distance-channel: notes sharing a named entity with the window even
+    # when topic vocabulary has drifted (Challenge #3). Injected alongside
+    # bridges so it survives the cap/budget. Default 0 -> baseline unchanged.
+    entities: List[NoteRef] = []
+    entity_basenames: Set[str] = set()
+    if inject_entities > 0:
+        entities = _entity_neighbors(
+            window, older, window_basenames | bridge_basenames, inject_entities
+        )
+        entity_basenames = {n.basename for n in entities}
+
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
-    for note in bridges + _interleave(tag_neighbors, lexical_neighbors):
+    for note in bridges + entities + _interleave(tag_neighbors, lexical_neighbors):
         if note.basename in seen:
             continue
         seen.add(note.basename)
         ranked.append(note)
 
     ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
-    ranked = _enforce_char_budget(ranked, window_basenames | bridge_basenames)
+    protected = window_basenames | bridge_basenames | entity_basenames
+    ranked = _enforce_char_budget(ranked, protected)
+
+    # Channel attribution for the surfaced notes (H3 recall instrument).
+    channel_sources = [
+        ("window", window),
+        ("tag", tag_neighbors),
+        ("bm25", lexical_neighbors),
+        ("bridge", bridges),
+        ("entity", entities),
+    ]
+    kept = {n.basename for n in ranked}
+    channel_map: Dict[str, Set[str]] = {}
+    for channel, notes in channel_sources:
+        for note in notes:
+            if note.basename in kept:
+                channel_map.setdefault(note.basename, set()).add(channel)
+
     logger.info(
-        "connection assembly: %d candidates (%d new, %d bridges) from %d-note corpus",
+        "connection assembly: %d candidates (%d new, %d bridges, %d entities) "
+        "from %d-note corpus",
         len(ranked),
         len(window_basenames),
         len(bridge_basenames),
+        len(entity_basenames),
         len(corpus),
     )
-    return CandidateSet(ranked, window_basenames, bridge_basenames)
+    return CandidateSet(
+        ranked, window_basenames, bridge_basenames, channel_map=channel_map
+    )

@@ -8,6 +8,7 @@ from src.config import config
 from src.connections.candidate_assembly import (
     NoteRef,
     _bm25_ranked,
+    _entity_neighbors,
     assemble_candidates,
     load_corpus,
 )
@@ -121,6 +122,59 @@ def test_bm25_ranks_lexically_related_first():
     )
     ranked = _bm25_ranked(window, [unrelated, related])
     assert ranked and ranked[0].basename == "related"
+
+
+def test_entity_neighbors_join_on_shared_proper_noun():
+    # "hit" shares the entity; "miss" shares nothing. Topic words differ.
+    window = [
+        _note("W", "2026-06-20", summary="rozmowa z Bank Ochrony Środowiska wczoraj")
+    ]
+    hit = _note(
+        "hit", "2026-05-01", summary="znowu Bank Ochrony Środowiska, zmiana planu"
+    )
+    miss = _note("miss", "2026-05-01", summary="ogrodnictwo kompost grzadki warzywa")
+    res = _entity_neighbors(window, [miss, hit], {"W"}, max_n=2)
+    assert [n.basename for n in res] == ["hit"]
+
+
+def test_entity_neighbors_respects_exclude_and_zero():
+    window = [_note("W", "2026-06-20", summary="Bank Ochrony Środowiska")]
+    older = [_note("hit", "2026-05-01", summary="Bank Ochrony Środowiska znów")]
+    assert _entity_neighbors(window, older, {"W", "hit"}, 2) == []  # excluded
+    assert _entity_neighbors(window, older, {"W"}, 0) == []  # channel off
+
+
+def test_entity_channel_attributed_in_channel_map(vault):
+    _write_note(
+        vault,
+        "new",
+        "2026-06-20",
+        summary="Ustalenia Bank Ochrony Środowiska poszly ok",
+    )
+    _write_note(
+        vault,
+        "older_ent",
+        "2026-05-01",
+        summary="Bank Ochrony Środowiska wraca, zmiana",
+    )
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_entities=3
+    )
+    names = {n.basename for n in cs.notes}
+    assert "older_ent" in names
+    assert "entity" in cs.channel_map.get("older_ent", set())
+    assert cs.channel_map.get("new") == {"window"}
+
+
+def test_entities_off_by_default_no_entity_channel(vault):
+    _write_note(vault, "new", "2026-06-20", summary="Bank Ochrony Środowiska poszlo ok")
+    _write_note(
+        vault, "older_ent", "2026-05-01", summary="Bank Ochrony Środowiska wraca"
+    )
+    cs = assemble_candidates(vault, "2026-06-10T00:00:00", DismissalStore(vault))
+    # inject_entities defaults to 0 -> no note is attributed to the entity channel
+    all_channels = set().union(*cs.channel_map.values()) if cs.channel_map else set()
+    assert "entity" not in all_channels
 
 
 def test_char_budget_caps_total(vault, monkeypatch):
