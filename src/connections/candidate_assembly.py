@@ -144,8 +144,13 @@ def _tokenize(text: str) -> List[str]:
 # --------------------------------------------------------------------------- #
 # Corpus loading + ranking
 # --------------------------------------------------------------------------- #
-def load_corpus(vault_dir: Path) -> List[NoteRef]:
-    """Load top-level transcript notes (digests live in a subfolder, excluded)."""
+def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
+    """Load top-level transcript notes (digests live in a subfolder, excluded).
+
+    ``as_of`` (YYYY-MM-DD, inclusive) drops notes dated after it — the
+    time-travel seam for the recall harness, which replays "what would
+    assembly have seen the day note X arrived". Production callers omit it.
+    """
     notes: List[NoteRef] = []
     note_chars = config.MAX_SYNTHESIS_NOTE_CHARS
     for md_path in sorted(Path(vault_dir).glob("*.md")):
@@ -157,13 +162,16 @@ def load_corpus(vault_dir: Path) -> List[NoteRef]:
         fm = _frontmatter(full)
         if fm.get("type") == "malinche-digest":
             continue
+        note_date = (fm.get("date") or fm.get("recording_date") or "")[:10]
+        if as_of and note_date and note_date > as_of:
+            continue
         tags = _parse_tags(fm.get("tags", ""))
         notes.append(
             NoteRef(
                 md_path=md_path,
                 basename=md_path.stem,
                 title=fm.get("title") or md_path.stem,
-                date=(fm.get("date") or fm.get("recording_date") or "")[:10],
+                date=note_date,
                 tags=tags,
                 norm_tags={TagIndex.normalize_tag(t) for t in tags if t},
                 summary_md=_summary_or_excerpt(full, note_chars),
@@ -337,6 +345,7 @@ def assemble_candidates(
     first_run_window: int = 15,
     inject_bridges: int = 0,
     inject_entities: int = 0,
+    as_of: Optional[str] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -349,9 +358,13 @@ def assemble_candidates(
         inject_bridges: rare-token distance-channel notes to inject (0 = off).
         inject_entities: shared-entity distance-channel notes to inject (0 = off,
             byte-identical to the pre-entity baseline).
+        as_of: time-travel cutoff (YYYY-MM-DD, inclusive) for the recall
+            harness — see :func:`load_corpus`. Production callers omit it.
     """
     corpus = [
-        n for n in load_corpus(vault_dir) if not dismissals.note_muted(n.basename)
+        n
+        for n in load_corpus(vault_dir, as_of=as_of)
+        if not dismissals.note_muted(n.basename)
     ]
     if not corpus:
         return CandidateSet([], set())

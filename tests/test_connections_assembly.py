@@ -177,6 +177,26 @@ def test_entities_off_by_default_no_entity_channel(vault):
     assert "entity" not in all_channels
 
 
+def test_as_of_excludes_future_notes(vault):
+    _write_note(vault, "past", "2026-05-01", tags="t", summary="alpha")
+    _write_note(vault, "cutoff_day", "2026-06-10", tags="t", summary="alpha")
+    _write_note(vault, "future", "2026-06-20", tags="t", summary="alpha")
+    corpus = load_corpus(vault, as_of="2026-06-10")
+    assert {n.basename for n in corpus} == {"past", "cutoff_day"}  # inclusive
+
+
+def test_as_of_flows_through_assemble(vault):
+    _write_note(vault, "old", "2026-05-01", tags="t", summary="alpha")
+    _write_note(vault, "newer", "2026-06-10", tags="t", summary="alpha")
+    _write_note(vault, "future", "2026-06-20", tags="t", summary="alpha")
+    cs = assemble_candidates(
+        vault, "2026-06-09T00:00:00", DismissalStore(vault), as_of="2026-06-10"
+    )
+    names = {n.basename for n in cs.notes}
+    assert "future" not in names
+    assert cs.window_basenames == {"newer"}
+
+
 def test_char_budget_caps_total(vault, monkeypatch):
     monkeypatch.setattr(config, "MAX_SYNTHESIS_PROMPT_CHARS", 500)
     monkeypatch.setattr(config, "MAX_SYNTHESIS_NOTES", 25)
