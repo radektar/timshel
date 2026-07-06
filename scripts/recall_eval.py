@@ -73,7 +73,7 @@ CONFIGS = [
     # Goldilocks band: skip the 2 nearest dense neighbours (near-duplicates).
     # If recall holds or rises, the mid-band is the better dense setting.
     ("full-band", ChannelCfg(**{**_FULL, "dense_skip": 2})),
-    ("similarity-only", ChannelCfg(bridges=0, entities=0, dense=0, graph=0, stance=0)),
+    ("similarity-only", ChannelCfg()),  # all channels default to 0
 ]
 
 
@@ -132,9 +132,14 @@ def simulate_pair(
     older = [b for b in pair["notes"] if b != newer]
     if corpus_tokens is not None:
         nt = corpus_tokens.get(newer, set())
-        base.lexical_jaccard = max(
-            (_jaccard(nt, corpus_tokens.get(b, set())) for b in older), default=1.0
-        )
+        # An empty token set means "unknown overlap" (blank/whitespace note),
+        # NOT lexically-disjoint — leave jaccard at 1.0 so a blank note isn't
+        # mis-sorted into the hard/uncheatable slice that gates the H3 verdict.
+        if nt:
+            base.lexical_jaccard = max(
+                (_jaccard(nt, corpus_tokens.get(b, set())) for b in older),
+                default=1.0,
+            )
     if any(dates[b] == dates[newer] for b in older):
         base.status = "window-collision"
         return base

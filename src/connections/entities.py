@@ -23,6 +23,7 @@ entities. This channel is the complement, not a replacement.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Set
 
 # A capitalised token: one uppercase letter (incl. Polish) then lowercase tail.
@@ -60,6 +61,11 @@ def _token_key(token: str) -> str:
     return token if len(token) <= 4 else token[: max(4, len(token) - 3)]
 
 
+# Cached: entity_keys(summary) is called by the entity, graph and stance
+# channels — up to 3x per note per assemble, and the recall harness replays
+# assembly hundreds of times over an unchanging corpus. Pure text->set; callers
+# never mutate the result (they use | and &), so sharing the cached set is safe.
+@lru_cache(maxsize=8192)
 def entity_keys(text: str) -> Set[str]:
     """Inflection-tolerant match keys for the entities of ``text``.
 

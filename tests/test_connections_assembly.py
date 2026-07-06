@@ -195,6 +195,30 @@ def test_graph_channel_reaches_two_hop_note(vault):
     assert "graph" in cs.channel_map.get("old", set())
 
 
+def test_count_cap_protects_distance_channels_over_similarity(vault, monkeypatch):
+    import src.connections.candidate_assembly as ca
+
+    monkeypatch.setattr(config, "MAX_SYNTHESIS_NOTES", 4)
+    # 3 dense notes (protected) + 5 tag notes (abundant similarity). Under a
+    # cap of 4 (window + 3), all 3 dense must survive; tag overflow is trimmed.
+    _write_note(vault, "newer", "2026-06-20", tags="shared", summary="okno alpha")
+    for i in range(3):
+        _write_raw_note(vault, f"dense{i}", f"2026-05-0{i+1}", body=f"semantic {i}")
+    for i in range(5):
+        _write_note(vault, f"tagnote{i}", f"2026-04-0{i+1}", tags="shared", summary="t")
+
+    class _FakeEngine:
+        def knn_note_ids(self, query, k=20):
+            return ["dense0", "dense1", "dense2"]
+
+    monkeypatch.setattr(ca, "_get_recall_engine", lambda vault_dir: _FakeEngine())
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_dense=3
+    )
+    names = {n.basename for n in cs.notes}
+    assert names == {"newer", "dense0", "dense1", "dense2"}  # no tag note survived
+
+
 def test_round_robin_gives_each_channel_a_share():
     from src.connections.candidate_assembly import _round_robin
 

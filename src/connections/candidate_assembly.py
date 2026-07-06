@@ -1,12 +1,15 @@
 """Assemble a bounded, relevance-ranked set of notes for one synthesis pass.
 
-No embeddings: we combine three cheap, local signals —
-  1. the *recency window* (new material since the last digest — always kept),
-  2. *tag bridges* (older notes sharing normalized tags with the window),
-  3. *lexical overlap* via a compact in-process BM25 over note summaries —
-then bound the result to a token budget. Deliberately dependency-light (no
-scipy / scikit-learn): the corpus is hundreds of short notes, where a small
-BM25 is plenty. ``bm25s`` is the documented drop-in if scale ever demands it.
+We combine several cheap, local preselection channels and round-robin them into
+a bounded candidate set:
+  * the *recency window* (new material since the last digest — always kept),
+  * *tag bridges* + a compact in-process *BM25* (similarity channels),
+  * *rare-token bridges*, *shared-entity*, *dense KNN* (recall engine),
+    *note-term graph PPR*, and *stance-flip* (distance channels — off by
+    default, enabled by the magic-insights prototype).
+Deliberately dependency-light for the local signals (no scipy / scikit-learn);
+the dense channel reuses the vault's existing embedding index. The corpus is
+hundreds of short notes, where these small algorithms are plenty.
 
 We always feed *summaries*, never full transcripts — and when a note has no
 summary block (AI summaries were off when it was transcribed) we fall back to a
@@ -19,6 +22,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -137,7 +141,12 @@ def _summary_or_excerpt(full: str, max_chars: int) -> str:
     return _excerpt(body, max_chars)
 
 
+@lru_cache(maxsize=8192)
 def _tokenize(text: str) -> List[str]:
+    # Cached: called by bm25, bridges, doc-freq and the graph channel — several
+    # full-corpus passes per assemble, hundreds of assembles per recall run over
+    # an unchanging corpus. Pure text->list; callers only read it (set(), len(),
+    # Counter()), never mutate, so the shared cached list is safe.
     tokens: List[str] = []
     for raw in _TOKEN_RE.findall(text.lower()):
         tok = TagIndex.normalize_tag(raw)
@@ -635,7 +644,6 @@ def assemble_candidates(
     # Everything ANY channel ranked, before cap/budget (recall-eval diagnostic).
     precap_basenames = set(seen)
 
-    ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
     protected = (
         window_basenames
         | bridge_basenames
@@ -644,6 +652,15 @@ def assemble_candidates(
         | graph_basenames
         | stance_basenames
     )
+    # The note-count cap must not drop the weak-signal distance channels in
+    # favour of the abundant similarity channels (bm25/tags). Round-robin fairly
+    # interleaves them, but a distance note landing deep in the round order would
+    # otherwise fall past the cap. Stable-partition protected (window + distance)
+    # ahead of the rest — preserving round-robin order within each group — so the
+    # cap trims similarity overflow first. (Without this, step-D's round-robin
+    # could REGRESS prototype recall vs the old distance-first concat.)
+    ranked.sort(key=lambda n: n.basename not in protected)
+    ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
     ranked = _enforce_char_budget(ranked, protected)
 
     # Channel attribution for the surfaced notes (H3 recall instrument).

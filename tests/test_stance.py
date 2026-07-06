@@ -24,6 +24,23 @@ def test_polarity_negation_flips_sign():
     assert polarity_score("nie widzę problemu") > 0  # negated negative -> positive
 
 
+def test_no_is_not_a_negator_in_polish():
+    # "no" is an affirmative filler in Polish; it must not invert the sign.
+    assert polarity_score("no dobra, warto to zrobić") > 0
+
+
+def test_business_words_not_false_negative():
+    # "zł" (currency), "strategia" must NOT read as negative anymore.
+    assert polarity_score("budżet 5000 zł, dobra strategia inwestycji") >= 0
+    assert polarity_score("złożyć wniosek o dotację") == 0.0
+
+
+def test_negation_scope_three_tokens():
+    # "nie jest to dobry" — negator is 3 tokens before the valence word.
+    assert polarity_score("nie jest to dobry pomysł") < 0
+    assert polarity_score("to jest dobry pomysł") > 0
+
+
 def test_change_cue_detection():
     assert _has_cue("zmieniłem zdanie w tej sprawie")
     assert _has_cue("już nie chcę tego robić")
@@ -78,3 +95,17 @@ def test_stance_no_anchor_no_pairs():
     older = [_note("o", "2026-02-01", "świetny pomysł, warto")]
     # no shared entity/tag anchor -> no pairing even with opposite polarity
     assert stance_flip_neighbors(window, older, set(), 3) == []
+
+
+def test_cue_does_not_pair_neutral_older_note():
+    # A change-cue in the window must NOT pair an older note that holds no
+    # stance (neutral) — that would flood the channel with non-contradictions.
+    window = [_note("w", "2026-06-20", "Zmieniłem zdanie o Bank Ochrony Środowiska")]
+    neutral = _note(
+        "neutral", "2026-02-01", "Bank Ochrony Środowiska — notatka ze spotkania"
+    )
+    opinion = _note(
+        "opinion", "2026-02-01", "Bank Ochrony Środowiska to świetny wybór, warto"
+    )
+    res = stance_flip_neighbors(window, [neutral, opinion], set(), 3)
+    assert [n.basename for n in res] == ["opinion"]  # neutral dropped

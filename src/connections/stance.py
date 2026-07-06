@@ -27,6 +27,11 @@ _WORD_RE = re.compile(r"[a-ząćęłńóśźż]+", re.IGNORECASE)
 
 # Valence stems (prefix match, so Polish inflection is covered). Deliberately
 # small and high-precision — a v1 signal, not a sentiment model.
+# Single-word stems only (prefix match, so Polish inflection is covered).
+# Removed as ambiguous prefix-false-positives: "chce/chcę" (neutral intent),
+# "pewn" (filler "pewnie"), "działa" (matches "działka"), "za tym" (substring),
+# "zł" (currency/złoto/złapać), "strat" (strateg…). Multi-word entries removed
+# entirely — the negation-scope flip already covers "nie warto".
 _POS_STEMS = {
     # PL
     "dobr",
@@ -39,19 +44,13 @@ _POS_STEMS = {
     "sukces",
     "zgadz",
     "popier",
-    "chcę",
-    "chce",
     "wierzę",
     "wierze",
-    "pewn",
-    "sens",
+    "sensown",
     "lepsz",
     "najlepsz",
-    "za tym",
     "optymist",
     "udan",
-    "działa",
-    "dziala",
     # EN
     "good",
     "great",
@@ -68,17 +67,29 @@ _POS_STEMS = {
 }
 _NEG_STEMS = {
     # PL
-    "zł",
+    "zły",
+    "zła",
+    "złe",
+    "złego",
+    "złej",
+    "złych",
+    "złym",
+    "złą",
     "źle",
     "zle",
     "problem",
     "ryzyk",
-    "strat",
+    "strata",
+    "straty",
+    "stratę",
+    "stratą",
+    "stracił",
+    "stracic",
+    "stracić",
     "przeciw",
     "rezygn",
     "wątpl",
     "watpl",
-    "nie warto",
     "błąd",
     "blad",
     "porażk",
@@ -101,11 +112,9 @@ _NEG_STEMS = {
     "loss",
     "against",
     "doubt",
-    "problem",
     "mistake",
     "fail",
     "reject",
-    "no longer",
 }
 # Explicit stance-change signals — a strong hint the note revisits a position.
 _CHANGE_CUES = (
@@ -127,7 +136,9 @@ _CHANGE_CUES = (
     "used to",
     "reconsider",
 )
-_NEGATORS = {"nie", "not", "no", "bez", "never", "nigdy", "żaden", "zaden"}
+# "no" deliberately excluded — in Polish it is an affirmative filler ("no
+# dobra", "no warto"), not a negator; treating it as one inverts affirmations.
+_NEGATORS = {"nie", "not", "bez", "never", "nigdy", "żaden", "zaden"}
 
 
 def _has_cue(text: str) -> bool:
@@ -142,14 +153,13 @@ def _stem_hit(token: str, stems: Set[str]) -> bool:
 def polarity_score(text: str) -> float:
     """Signed valence of ``text`` in roughly [-1, 1] (0 = neutral/unknown).
 
-    Sums per-token valence with a 2-token negation-scope flip; normalized by the
-    count of valence-bearing tokens. Multi-word lexicon entries (e.g. "nie
-    warto", "no longer") are matched on the raw lowercased text as a prefilter.
+    Sums per-token valence with a 3-token negation-scope flip (covers "nie jest
+    to dobry", "nie do końca dobry"); normalized by the count of valence-bearing
+    tokens. Lexicon is single-word stems only — no substring prefilter (which
+    fired inside unrelated words and double-counted negated phrases).
     """
-    low = text.lower()
-    pos = sum(1 for p in _POS_STEMS if " " in p and p in low)
-    neg = sum(1 for n in _NEG_STEMS if " " in n and n in low)
-    tokens = _WORD_RE.findall(low)
+    pos = neg = 0
+    tokens = _WORD_RE.findall(text.lower())
     for i, tok in enumerate(tokens):
         sign = 0
         if _stem_hit(tok, _POS_STEMS):
@@ -158,8 +168,8 @@ def polarity_score(text: str) -> float:
             sign = -1
         if sign == 0:
             continue
-        # negation in the preceding 2 tokens flips the sign
-        if any(tokens[j] in _NEGATORS for j in range(max(0, i - 2), i)):
+        # negation in the preceding 3 tokens flips the sign
+        if any(tokens[j] in _NEGATORS for j in range(max(0, i - 3), i)):
             sign = -sign
         if sign > 0:
             pos += 1
@@ -210,12 +220,14 @@ def stance_flip_neighbors(
             continue
         note_pol = polarity_score(note.summary_md)
         opposition = abs(win_pol - note_pol)
-        # Require a genuine sign flip OR an explicit change cue on either side;
-        # same-sign near-zero pairs are not contradictions.
         sign_flip = (win_pol > 0.1 and note_pol < -0.1) or (
             win_pol < -0.1 and note_pol > 0.1
         )
-        cue = win_cue or _has_cue(note.summary_md)
+        # A change-cue only counts when the OLDER note actually holds a stance
+        # (|note_pol| > 0.1). Otherwise a single "zmieniłem…" in the window would
+        # pair every anchor-sharing note regardless of polarity, flooding the
+        # channel with non-contradictions.
+        cue = (win_cue or _has_cue(note.summary_md)) and abs(note_pol) > 0.1
         if not (sign_flip or cue):
             continue
         score = len(shared) * (opposition + (0.5 if cue else 0.0))
