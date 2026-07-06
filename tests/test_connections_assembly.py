@@ -195,6 +195,35 @@ def test_graph_channel_reaches_two_hop_note(vault):
     assert "graph" in cs.channel_map.get("old", set())
 
 
+def test_stance_channel_pairs_contradiction(vault):
+    _write_raw_note(
+        vault,
+        "newer",
+        "2026-06-20",
+        body="Fundacja Ziemi to jednak zły kierunek, rezygnuję z tego",
+    )
+    _write_raw_note(
+        vault,
+        "old_flip",
+        "2026-03-01",
+        body="Fundacja Ziemi to świetny pomysł, zdecydowanie warto",
+    )
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_stance=4
+    )
+    names = {n.basename for n in cs.notes}
+    assert "old_flip" in names
+    assert "stance" in cs.channel_map.get("old_flip", set())
+
+
+def test_stance_channel_off_by_default(vault):
+    _write_raw_note(vault, "newer", "2026-06-20", body="Fundacja Ziemi zły pomysł")
+    _write_raw_note(vault, "old", "2026-03-01", body="Fundacja Ziemi świetny warto")
+    cs = assemble_candidates(vault, "2026-06-10T00:00:00", DismissalStore(vault))
+    all_channels = set().union(*cs.channel_map.values()) if cs.channel_map else set()
+    assert "stance" not in all_channels
+
+
 def test_graph_channel_off_by_default(vault):
     _write_raw_note(vault, "newer", "2026-06-20", body="Bank Ochrony Środowiska")
     _write_raw_note(vault, "old", "2026-04-01", body="Bank Ochrony Środowiska")

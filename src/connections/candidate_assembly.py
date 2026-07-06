@@ -450,6 +450,7 @@ def assemble_candidates(
     inject_entities: int = 0,
     inject_dense: int = 0,
     inject_graph: int = 0,
+    inject_stance: int = 0,
     as_of: Optional[str] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
@@ -467,6 +468,8 @@ def assemble_candidates(
             (0 = off; requires the recall index — fails soft without it).
         inject_graph: notes reached by PPR over the note-term bridge graph
             (0 = off; pure-local ABC/HippoRAG-lite channel).
+        inject_stance: older notes sharing an anchor with the window but of
+            opposite polarity (0 = off; contradiction-candidate channel).
         as_of: time-travel cutoff (YYYY-MM-DD, inclusive) for the recall
             harness — see :func:`load_corpus`. Production callers omit it.
     """
@@ -555,10 +558,31 @@ def assemble_candidates(
         )
         graph_basenames = {n.basename for n in graph}
 
+    # Stance-flip channel: older notes sharing an anchor (entity/tag) with the
+    # window but carrying OPPOSITE polarity — contradiction candidates the
+    # similarity channels miss. Default 0 -> baseline unchanged.
+    stance: List[NoteRef] = []
+    stance_basenames: Set[str] = set()
+    if inject_stance > 0:
+        from src.connections.stance import stance_flip_neighbors
+
+        stance = stance_flip_neighbors(
+            window,
+            older,
+            window_basenames
+            | bridge_basenames
+            | entity_basenames
+            | dense_basenames
+            | graph_basenames,
+            inject_stance,
+        )
+        stance_basenames = {n.basename for n in stance}
+
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
     for note in (
-        bridges
+        stance
+        + bridges
         + entities
         + dense
         + graph
@@ -579,6 +603,7 @@ def assemble_candidates(
         | entity_basenames
         | dense_basenames
         | graph_basenames
+        | stance_basenames
     )
     ranked = _enforce_char_budget(ranked, protected)
 
@@ -591,6 +616,7 @@ def assemble_candidates(
         ("entity", entities),
         ("dense", dense),
         ("graph", graph),
+        ("stance", stance),
     ]
     kept = {n.basename for n in ranked}
     channel_map: Dict[str, Set[str]] = {}
@@ -601,13 +627,14 @@ def assemble_candidates(
 
     logger.info(
         "connection assembly: %d candidates (%d new, %d bridges, %d entities, "
-        "%d dense, %d graph) from %d-note corpus",
+        "%d dense, %d graph, %d stance) from %d-note corpus",
         len(ranked),
         len(window_basenames),
         len(bridge_basenames),
         len(entity_basenames),
         len(dense_basenames),
         len(graph_basenames),
+        len(stance_basenames),
         len(corpus),
     )
     return CandidateSet(

@@ -324,6 +324,7 @@ def main() -> int:
         inject_entities=4,
         inject_dense=6,
         inject_graph=6,
+        inject_stance=4,
     )
     if len(base.notes) < 4:
         print(

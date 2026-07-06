@@ -143,6 +143,9 @@ class Config:
     # (Swanson ABC / HippoRAG-lite — the LBD mechanism for anti-similar pairs).
     # 0 = OFF (unvalidated until H3). Prototype tools turn it on.
     SYNTHESIS_GRAPH_COUNT: int = 0
+    # Stance-flip channel: older notes sharing an anchor with the window but of
+    # opposite polarity — contradiction candidates. 0 = OFF (unvalidated).
+    SYNTHESIS_STANCE_COUNT: int = 0
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6

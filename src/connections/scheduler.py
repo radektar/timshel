@@ -227,6 +227,7 @@ def run_digest_if_due(
             inject_entities=config.SYNTHESIS_ENTITY_COUNT,
             inject_dense=config.SYNTHESIS_DENSE_COUNT,
             inject_graph=config.SYNTHESIS_GRAPH_COUNT,
+            inject_stance=config.SYNTHESIS_STANCE_COUNT,
         )
         if len(candidates.notes) < 2:
             logger.info("synthesis: fewer than 2 candidate notes, skipping")

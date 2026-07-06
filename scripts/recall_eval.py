@@ -58,15 +58,18 @@ class ChannelCfg:
     entities: int = 0
     dense: int = 0
     graph: int = 0
+    stance: int = 0
 
 
+_FULL = dict(bridges=4, entities=4, dense=6, graph=6, stance=4)
 CONFIGS = [
-    ("full", ChannelCfg(bridges=4, entities=4, dense=6, graph=6)),
-    ("no-graph", ChannelCfg(bridges=4, entities=4, dense=6, graph=0)),
-    ("no-dense", ChannelCfg(bridges=4, entities=4, dense=0, graph=6)),
-    ("no-entity", ChannelCfg(bridges=4, entities=0, dense=6, graph=6)),
-    ("no-bridge", ChannelCfg(bridges=0, entities=4, dense=6, graph=6)),
-    ("similarity-only", ChannelCfg(bridges=0, entities=0, dense=0, graph=0)),
+    ("full", ChannelCfg(**_FULL)),
+    ("no-stance", ChannelCfg(**{**_FULL, "stance": 0})),
+    ("no-graph", ChannelCfg(**{**_FULL, "graph": 0})),
+    ("no-dense", ChannelCfg(**{**_FULL, "dense": 0})),
+    ("no-entity", ChannelCfg(**{**_FULL, "entities": 0})),
+    ("no-bridge", ChannelCfg(**{**_FULL, "bridges": 0})),
+    ("similarity-only", ChannelCfg(bridges=0, entities=0, dense=0, graph=0, stance=0)),
 ]
 
 
@@ -144,6 +147,7 @@ def simulate_pair(
         inject_entities=cfg.entities,
         inject_dense=cfg.dense,
         inject_graph=cfg.graph,
+        inject_stance=cfg.stance,
         as_of=dates[newer],
     )
     surfaced = {n.basename for n in cands.notes}
@@ -268,6 +272,7 @@ def render_report(
     add("\n## Unique saves per distance channel\n")
     full_hits = {r.pair_id for r in full if r.status == "hit"}
     for name, label in (
+        ("no-stance", "stance"),
         ("no-graph", "graph"),
         ("no-dense", "dense"),
         ("no-entity", "entity"),
@@ -338,6 +343,7 @@ def synthesize_sample(
             inject_entities=4,
             inject_dense=6,
             inject_graph=6,
+            inject_stance=4,
             as_of=dates[newer],
         )
         language = detect_language(" ".join(n.summary_md for n in cands.notes)[:5000])
