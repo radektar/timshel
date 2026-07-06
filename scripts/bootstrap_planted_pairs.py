@@ -117,7 +117,9 @@ def _next_id(data: Dict[str, Any]) -> str:
 _PROPOSE_SYSTEM = (
     "You read a person's own voice notes (transcribed) and MINE CANDIDATE PAIRS "
     "for a ground-truth set. A human will review every proposal, so OVER-GENERATE: "
-    "include plausible-but-uncertain pairs; propose 40-60 in total.\n\n"
+    "include plausible-but-uncertain pairs; propose 30-45 in total. Keep every "
+    "field TIGHT — quotes at most ~15 words, 'why' one short sentence — so the "
+    "full list fits in the response.\n\n"
     "Pair types (prioritise the first two; at most 1 in 4 may be shared-thread):\n"
     "- contradiction-over-time: the person's stance CHANGED between an earlier "
     "and a later note (use the dates). Highest value — hunt for these first, "
@@ -207,20 +209,30 @@ def propose_pairs(
         "input_schema": PlantedPairList.model_json_schema(),
     }
     print(f"mining pairs with {model} over {len(corpus)} notes ...")
-    message = client.messages.create(
+    # 32k output headroom: 40+ pairs with verbatim quotes truncated at 16k
+    # (a truncated forced-tool call yields unparseable JSON = 0 pairs, money
+    # burned). Streaming keeps long generations under SDK timeout rules.
+    with client.messages.stream(
         model=model,
-        max_tokens=16384,
-        timeout=300.0,
+        max_tokens=32768,
+        timeout=600.0,
         system=_PROPOSE_SYSTEM,
         tools=[tool],
         tool_choice={"type": "tool", "name": _TOOL_NAME},
         messages=[{"role": "user", "content": _corpus_prompt(corpus)}],
-    )
+    ) as stream:
+        message = stream.get_final_message()
     usage = getattr(message, "usage", None)
     if usage:
         print(
             f"  tokens: in={usage.input_tokens} out={usage.output_tokens} "
             f"(~${(usage.input_tokens * 5 + usage.output_tokens * 25) / 1e6:.2f})"
+        )
+    truncated = getattr(message, "stop_reason", None) == "max_tokens"
+    if truncated:
+        print(
+            "  ! response TRUNCATED at max_tokens — the tool JSON may be "
+            "partial; salvaging what parses."
         )
     proposals = PlantedPairList()
     for block in message.content:
@@ -229,6 +241,11 @@ def propose_pairs(
             and getattr(block, "name", None) == _TOOL_NAME
         ):
             proposals = _parse_proposals(block.input)
+    if truncated and not proposals.pairs:
+        print(
+            "  ! nothing salvageable from the truncated call. Re-run propose; "
+            "if it truncates again, lower the pair target in _PROPOSE_SYSTEM."
+        )
     corpus_basenames = {n.basename for n in corpus}
     kept, halluc, dups = filter_proposals(
         proposals.pairs, corpus_basenames, known_sigs, dismissed_sigs
@@ -392,6 +409,9 @@ def main() -> int:
     new_pairs = propose_pairs(
         corpus, api_key, existing_sigs(data), dismissed_sigs, model=args.model
     )
+    if not new_pairs:
+        print("no new pairs from this call — nothing saved (see messages above)")
+        return 1
     for pair in new_pairs:
         pair["id"] = _next_id(data)
         data["pairs"].append(pair)
