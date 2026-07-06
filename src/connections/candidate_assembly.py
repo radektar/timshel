@@ -419,6 +419,29 @@ def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
     return out
 
 
+def _round_robin(channels: List[List[NoteRef]]) -> List[NoteRef]:
+    """Interleave N ranked channel lists one item at a time (channel quotas).
+
+    Round-robin gives every channel a fair share of the note-count cap, so no
+    single dominant channel (bm25/tags) can crowd out the weak-signal ones —
+    and no pile of distance channels can starve similarity. Order within a round
+    follows the ``channels`` order (earlier = slight priority). With exactly two
+    lists this is byte-identical to :func:`_interleave`, so the baseline (only
+    tag + bm25 populated) is unchanged.
+    """
+    out: List[NoteRef] = []
+    idx = [0] * len(channels)
+    remaining = True
+    while remaining:
+        remaining = False
+        for c, ch in enumerate(channels):
+            if idx[c] < len(ch):
+                out.append(ch[idx[c]])
+                idx[c] += 1
+                remaining = True
+    return out
+
+
 def _enforce_char_budget(
     notes: List[NoteRef], window_basenames: Set[str]
 ) -> List[NoteRef]:
@@ -578,15 +601,21 @@ def assemble_candidates(
         )
         stance_basenames = {n.basename for n in stance}
 
+    # Fair round-robin across all channels (quotas), so neither the dominant
+    # similarity channels nor the pile of distance channels can monopolize the
+    # note-count cap. Two-list baseline (only tag+bm25) stays byte-identical.
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
-    for note in (
-        stance
-        + bridges
-        + entities
-        + dense
-        + graph
-        + _interleave(tag_neighbors, lexical_neighbors)
+    for note in _round_robin(
+        [
+            stance,
+            bridges,
+            entities,
+            dense,
+            graph,
+            tag_neighbors,
+            lexical_neighbors,
+        ]
     ):
         if note.basename in seen:
             continue

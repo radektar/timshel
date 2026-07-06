@@ -195,6 +195,28 @@ def test_graph_channel_reaches_two_hop_note(vault):
     assert "graph" in cs.channel_map.get("old", set())
 
 
+def test_round_robin_gives_each_channel_a_share():
+    from src.connections.candidate_assembly import _round_robin
+
+    a = [_note("a1", "d"), _note("a2", "d"), _note("a3", "d")]
+    b = [_note("b1", "d")]
+    c = [_note("c1", "d"), _note("c2", "d")]
+    order = [n.basename for n in _round_robin([a, b, c])]
+    # first round takes one from each populated channel before seconds
+    assert order[:3] == ["a1", "b1", "c1"]
+    assert set(order) == {"a1", "a2", "a3", "b1", "c1", "c2"}
+
+
+def test_round_robin_two_lists_matches_interleave():
+    from src.connections.candidate_assembly import _interleave, _round_robin
+
+    a = [_note(f"a{i}", "d") for i in range(3)]
+    b = [_note(f"b{i}", "d") for i in range(2)]
+    assert [n.basename for n in _round_robin([a, b])] == [
+        n.basename for n in _interleave(a, b)
+    ]
+
+
 def test_stance_channel_pairs_contradiction(vault):
     _write_raw_note(
         vault,
