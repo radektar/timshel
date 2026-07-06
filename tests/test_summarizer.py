@@ -441,6 +441,30 @@ class TestPromptConnectionSections:
         assert "VOCABULARY" in prompt
         assert "VERBATIM" in prompt
 
+    def test_all_polish_headings_pinned(self, prompt):
+        """First preview batch: Haiku drifted to 'Streszczenie', English
+        'Quotes' and invented 'Elementy do wykonania' — every heading must be
+        pinned to one deterministic Polish form."""
+        for heading in (
+            '"## Podsumowanie"',
+            '"## Kluczowe punkty"',
+            '"## Stanowiska"',
+            '"## Wątki otwarte"',
+            '"## Cytaty"',
+            '"## Lista działań (To-do)"',
+        ):
+            assert heading in prompt
+        # The lead section heading itself is mandatory (one preview dropped it).
+        assert "This heading is REQUIRED" in prompt
+
+    def test_stance_guards_cover_preview_failures(self, prompt):
+        """Regressions from the first preview batch: a relayed preference
+        pinned as 🔄 on a bracketed process name."""
+        assert "THEIR OWN previous opinion" in prompt
+        assert "NOT the speaker's stance" in prompt  # Syri example
+        assert 'processes ("proces doboru mentorów")' in prompt
+        assert "open dilemmas the speaker has not resolved" in prompt
+
 
 class TestPromptKnownTerms:
     """The KNOWN TERMS block: personal glossary + its no-invention guards."""

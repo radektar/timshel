@@ -365,9 +365,15 @@ Produce:
 
 1. A SHORT TITLE (max {self.title_max_length} characters) — concise and descriptive, in the transcript's language.
 
-2. A SUMMARY in markdown with these sections (translate the headings):
+2. A SUMMARY in markdown with these sections. Translate the headings, but in
+   Polish use EXACTLY these forms (they are matched by software):
+   "## Podsumowanie", "## Kluczowe punkty", "## Stanowiska",
+   "## Wątki otwarte", "## Cytaty", "## Lista działań (To-do)".
+   Never leave a heading in English inside a Polish note, and never invent
+   alternative headings ("Streszczenie", "Elementy do wykonania").
 
    ## Summary
+   - This heading is REQUIRED — never start the body as bare text without it
    - As many sentences as the content truly supports (a short recording → a short summary; do not stretch it)
    - **Bold** the key concepts, decisions and commitments; *italics* for context that is actually present
 
@@ -386,15 +392,21 @@ Produce:
    - One line per stance, MAXIMUM 5:
      - [[Subject]] ✅ short reason, close to the speaker's own words
      - [[Subject]] ❌ short reason, close to the speaker's own words
-     - [[Subject]] 🔄 changed mind — ONLY when the speaker explicitly says a
-       previous opinion changed; note old → new if stated
+     - [[Subject]] 🔄 changed mind — ONLY when the speaker explicitly says
+       THEIR OWN previous opinion changed ("zmieniłem zdanie", "już nie
+       uważam"); note old → new if stated. Never for tensions between other
+       people's preferences and possibilities.
    - [[Subject]] is the person, project, company, product or place the stance
      is about, in [[double brackets]], in its BASE dictionary form (Polish:
      mianownik — write [[Fundacja Ziemi]] even if the recording says
-     "Fundacji Ziemi"). Never bracket generic nouns ("pomysł", "spotkanie").
+     "Fundacji Ziemi"). Never bracket generic nouns ("pomysł", "spotkanie"),
+     processes ("proces doboru mentorów") or abstract concepts.
    - These are NOT stances — never list them: neutral facts or reports
      ("spotkałem się z X"), plans without judgement, someone else's opinion
-     the speaker merely relays, hedged musings ("może", "jeszcze nie wiem").
+     or preference the speaker merely relays ("Syri chce ręcznie dobierać
+     mentorów" = Syri's preference, NOT the speaker's stance), hedged musings
+     ("może", "jeszcze nie wiem"), open dilemmas the speaker has not resolved
+     (those belong in Open threads).
    - When in doubt, leave it out. Most recordings contain ZERO stances — then
      OMIT this whole section, heading included. An invented stance is far
      worse than a missing one.
