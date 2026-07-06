@@ -86,6 +86,7 @@ def main() -> int:
     config.VERDICT_ENABLED = not args.no_verdict
     config.SYNTHESIS_ENTITY_COUNT = 4
     config.SYNTHESIS_DENSE_COUNT = 6
+    config.SYNTHESIS_GRAPH_COUNT = 6
     config.LLM_MODEL_SYNTHESIS = args.model
     config.LLM_MODEL_VERDICT = args.model
 

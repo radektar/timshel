@@ -177,6 +177,32 @@ def test_entities_off_by_default_no_entity_channel(vault):
     assert "entity" not in all_channels
 
 
+def test_graph_channel_reaches_two_hop_note(vault):
+    # newer (window) shares entity with mid; mid shares entity with old.
+    # newer and old share nothing directly -> only the graph channel reaches old.
+    _write_raw_note(
+        vault, "newer", "2026-06-20", body="Rozmowa o Bank Ochrony Środowiska teraz"
+    )
+    _write_raw_note(
+        vault, "mid", "2026-05-15", body="Bank Ochrony Środowiska oraz Fundacja Ziemi"
+    )
+    _write_raw_note(vault, "old", "2026-04-01", body="Wraca temat Fundacja Ziemi znowu")
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_graph=5
+    )
+    names = {n.basename for n in cs.notes}
+    assert "old" in names
+    assert "graph" in cs.channel_map.get("old", set())
+
+
+def test_graph_channel_off_by_default(vault):
+    _write_raw_note(vault, "newer", "2026-06-20", body="Bank Ochrony Środowiska")
+    _write_raw_note(vault, "old", "2026-04-01", body="Bank Ochrony Środowiska")
+    cs = assemble_candidates(vault, "2026-06-10T00:00:00", DismissalStore(vault))
+    all_channels = set().union(*cs.channel_map.values()) if cs.channel_map else set()
+    assert "graph" not in all_channels
+
+
 def test_dense_channel_uses_engine_and_attributes(vault, monkeypatch):
     import src.connections.candidate_assembly as ca
 

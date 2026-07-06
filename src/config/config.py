@@ -139,6 +139,10 @@ class Config:
     # as the entity channel: unvalidated until H3 passes. Prototype tools turn
     # it on explicitly.
     SYNTHESIS_DENSE_COUNT: int = 0
+    # Graph channel: Personalized PageRank over the note-term bridge graph
+    # (Swanson ABC / HippoRAG-lite — the LBD mechanism for anti-similar pairs).
+    # 0 = OFF (unvalidated until H3). Prototype tools turn it on.
+    SYNTHESIS_GRAPH_COUNT: int = 0
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6

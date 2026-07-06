@@ -313,6 +313,38 @@ def _entity_neighbors(
     return [note for _, _, note in scored[:max_n]]
 
 
+def _graph_neighbors(
+    corpus: List[NoteRef],
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Notes reached from the window by Personalized PageRank over the note-term
+    bridge graph (Swanson ABC / HippoRAG-lite).
+
+    Unlike the entity channel (a single shared entity) this spreads activation
+    over MULTIPLE hops of shared bridge terms, so it reaches notes connected to
+    the window through a chain of intermediates even when they share no direct
+    term with any single window note. Ranked by PPR score. Pure-local, $0.
+    """
+    if max_n <= 0 or not older:
+        return []
+    from src.connections.note_graph import NoteGraph, build_note_terms
+
+    graph = NoteGraph(build_note_terms(corpus))
+    scores = graph.ppr([n.basename for n in window])
+    if not scores:
+        return []
+    older_by_name = {n.basename: n for n in older if n.basename not in exclude}
+    ranked = sorted(
+        (b for b in scores if b in older_by_name),
+        key=lambda b: scores[b],
+        reverse=True,
+    )
+    return [older_by_name[b] for b in ranked[:max_n]]
+
+
 # Module-level cache: the recall engine loads an ONNX embedding model — build it
 # once per vault path per process, not once per assemble call (the recall eval
 # replays assembly hundreds of times).
@@ -417,6 +449,7 @@ def assemble_candidates(
     inject_bridges: int = 0,
     inject_entities: int = 0,
     inject_dense: int = 0,
+    inject_graph: int = 0,
     as_of: Optional[str] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
@@ -432,6 +465,8 @@ def assemble_candidates(
             byte-identical to the pre-entity baseline).
         inject_dense: semantic KNN notes from the local embedding index
             (0 = off; requires the recall index — fails soft without it).
+        inject_graph: notes reached by PPR over the note-term bridge graph
+            (0 = off; pure-local ABC/HippoRAG-lite channel).
         as_of: time-travel cutoff (YYYY-MM-DD, inclusive) for the recall
             harness — see :func:`load_corpus`. Production callers omit it.
     """
@@ -505,10 +540,29 @@ def assemble_candidates(
         )
         dense_basenames = {n.basename for n in dense}
 
+    # Graph channel: Personalized PageRank over the note-term bridge graph
+    # (Swanson ABC / HippoRAG-lite) — multi-hop reach the single-entity channel
+    # misses. Default 0 -> baseline unchanged.
+    graph: List[NoteRef] = []
+    graph_basenames: Set[str] = set()
+    if inject_graph > 0:
+        graph = _graph_neighbors(
+            corpus,
+            window,
+            older,
+            window_basenames | bridge_basenames | entity_basenames | dense_basenames,
+            inject_graph,
+        )
+        graph_basenames = {n.basename for n in graph}
+
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
     for note in (
-        bridges + entities + dense + _interleave(tag_neighbors, lexical_neighbors)
+        bridges
+        + entities
+        + dense
+        + graph
+        + _interleave(tag_neighbors, lexical_neighbors)
     ):
         if note.basename in seen:
             continue
@@ -519,7 +573,13 @@ def assemble_candidates(
     precap_basenames = set(seen)
 
     ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
-    protected = window_basenames | bridge_basenames | entity_basenames | dense_basenames
+    protected = (
+        window_basenames
+        | bridge_basenames
+        | entity_basenames
+        | dense_basenames
+        | graph_basenames
+    )
     ranked = _enforce_char_budget(ranked, protected)
 
     # Channel attribution for the surfaced notes (H3 recall instrument).
@@ -530,6 +590,7 @@ def assemble_candidates(
         ("bridge", bridges),
         ("entity", entities),
         ("dense", dense),
+        ("graph", graph),
     ]
     kept = {n.basename for n in ranked}
     channel_map: Dict[str, Set[str]] = {}
@@ -540,12 +601,13 @@ def assemble_candidates(
 
     logger.info(
         "connection assembly: %d candidates (%d new, %d bridges, %d entities, "
-        "%d dense) from %d-note corpus",
+        "%d dense, %d graph) from %d-note corpus",
         len(ranked),
         len(window_basenames),
         len(bridge_basenames),
         len(entity_basenames),
         len(dense_basenames),
+        len(graph_basenames),
         len(corpus),
     )
     return CandidateSet(
