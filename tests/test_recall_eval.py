@@ -58,8 +58,7 @@ def test_hit_when_older_note_surfaces_via_tag(vault):
         _pair("pp-001", ["older", "newer"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     assert res.status == "hit"
@@ -82,8 +81,7 @@ def test_miss_when_older_note_unreachable(vault):
         _pair("pp-002", ["older", "newer"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     assert res.status == "miss"
@@ -97,8 +95,7 @@ def test_same_date_pair_is_window_collision(vault):
         _pair("pp-003", ["a", "b"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     assert res.status == "window-collision"
@@ -113,8 +110,7 @@ def test_future_notes_do_not_leak_into_simulation(vault):
         _pair("pp-004", ["older", "newer"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     assert res.status == "hit"
@@ -127,8 +123,7 @@ def test_skipped_when_note_missing_from_corpus(vault):
         _pair("pp-005", ["only", "ghost"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     assert res.status == "skipped"
@@ -165,16 +160,57 @@ def test_report_contains_verdict_and_unique_saves():
     ]
     by_config = {
         "full": full,
+        "no-graph": full,
+        "no-dense": full,
         "no-entity": no_entity,
         "no-bridge": full,
         "similarity-only": no_entity,
     }
     report = rev.render_report(by_config, n_pairs=2)
     assert "H3 verdict" in report
-    assert "GREY ZONE" in report  # 50% on full config
+    # contradiction 0% and emergent 0% -> both fail GO -> ITERATE
+    assert "ITERATE" in report
     assert "entity: 1 pairs only reachable with it: ['1']" in report
     assert "radek-manual" in report  # bias split present
-    assert "pp" not in report or True  # smoke: renders without crash
+
+
+def test_per_type_go_verdict_passes_when_signal_types_clear():
+    def _hits(pair_type, n_hit, n_miss):
+        return [
+            rev.PairResult(f"{pair_type}-h{i}", pair_type, "llm-proposed", "hit")
+            for i in range(n_hit)
+        ] + [
+            rev.PairResult(f"{pair_type}-m{i}", pair_type, "llm-proposed", "miss")
+            for i in range(n_miss)
+        ]
+
+    # contradiction 7/10=70% (>=65), emergent 7/10=70% (>=60) -> GO
+    full = _hits("contradiction-over-time", 7, 3) + _hits("emergent-idea", 7, 3)
+    by_config = {name: full for name, _ in rev.CONFIGS}
+    report = rev.render_report(by_config, n_pairs=len(full))
+    assert "GO to H1" in report
+
+
+def test_lexically_disjoint_slice_reported():
+    full = [
+        rev.PairResult(
+            "d1", "contradiction-over-time", "llm-proposed", "hit", lexical_jaccard=0.02
+        ),
+        rev.PairResult(
+            "d2",
+            "contradiction-over-time",
+            "llm-proposed",
+            "miss",
+            lexical_jaccard=0.05,
+        ),
+        rev.PairResult(
+            "s1", "shared-thread", "llm-proposed", "hit", lexical_jaccard=0.5
+        ),
+    ]
+    by_config = {name: full for name, _ in rev.CONFIGS}
+    report = rev.render_report(by_config, n_pairs=3)
+    assert "Lexically-disjoint slice" in report
+    assert "2 pairs" in report  # only the two low-jaccard pairs counted
 
 
 def test_newer_note_is_sole_window_member(vault):
@@ -186,8 +222,7 @@ def test_newer_note_is_sole_window_member(vault):
         _pair("pp-adj", ["older", "newer"]),
         vault,
         DismissalStore(vault),
-        bridges=0,
-        entities=0,
+        rev.ChannelCfg(),
         corpus_dates=_dates(vault),
     )
     # no shared tag/word/entity -> older is unreachable, so this is a MISS,

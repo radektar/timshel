@@ -44,14 +44,29 @@ from src.connections.dismissals import DismissalStore  # noqa: E402
 
 H3_PASS = 0.70
 H3_KILL = 0.50
+# Per-type GO thresholds — the signal types (contradiction/emergent) are what
+# the digest exists for; shared-thread is easy and inflates a blended number.
+TYPE_GO = {"contradiction-over-time": 0.65, "emergent-idea": 0.60}
+# A pair whose two notes share <= this Jaccard of content tokens is
+# "lexically-disjoint" — the hard slice that similarity channels cannot cheat.
+LEXICAL_DISJOINT_MAX = 0.10
 
-# (name, bridges, entities, dense)
+
+@dataclass
+class ChannelCfg:
+    bridges: int = 0
+    entities: int = 0
+    dense: int = 0
+    graph: int = 0
+
+
 CONFIGS = [
-    ("full", 4, 4, 6),
-    ("no-dense", 4, 4, 0),
-    ("no-entity", 4, 0, 6),
-    ("no-bridge", 0, 4, 6),
-    ("similarity-only", 0, 0, 0),
+    ("full", ChannelCfg(bridges=4, entities=4, dense=6, graph=6)),
+    ("no-graph", ChannelCfg(bridges=4, entities=4, dense=6, graph=0)),
+    ("no-dense", ChannelCfg(bridges=4, entities=4, dense=0, graph=6)),
+    ("no-entity", ChannelCfg(bridges=4, entities=0, dense=6, graph=6)),
+    ("no-bridge", ChannelCfg(bridges=0, entities=4, dense=6, graph=6)),
+    ("similarity-only", ChannelCfg(bridges=0, entities=0, dense=0, graph=0)),
 ]
 
 
@@ -66,6 +81,9 @@ class PairResult:
     # subset of `missing` that a channel DID rank but the note-count cap /
     # char budget cut — a budget problem, not a discovery problem.
     missing_but_ranked: List[str] = field(default_factory=list)
+    # max content-token Jaccard between the newer note and any older note;
+    # low = lexically-disjoint (the hard slice).
+    lexical_jaccard: float = 1.0
     linked_by_llm: Optional[bool] = None
 
 
@@ -80,14 +98,19 @@ def note_dates(pair: dict, corpus_dates: Dict[str, str]) -> Optional[Dict[str, s
     return out
 
 
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 def simulate_pair(
     pair: dict,
     vault: Path,
     dismissals: DismissalStore,
-    bridges: int,
-    entities: int,
+    cfg: ChannelCfg,
     corpus_dates: Dict[str, str],
-    dense: int = 0,
+    corpus_tokens: Optional[Dict[str, set]] = None,
 ) -> PairResult:
     base = PairResult(
         pair_id=pair.get("id", "?"),
@@ -100,6 +123,11 @@ def simulate_pair(
         return base  # note vanished from corpus or has no date
     newer = max(dates, key=lambda b: dates[b])
     older = [b for b in pair["notes"] if b != newer]
+    if corpus_tokens is not None:
+        nt = corpus_tokens.get(newer, set())
+        base.lexical_jaccard = max(
+            (_jaccard(nt, corpus_tokens.get(b, set())) for b in older), default=1.0
+        )
     if any(dates[b] == dates[newer] for b in older):
         base.status = "window-collision"
         return base
@@ -112,9 +140,10 @@ def simulate_pair(
         vault,
         f"{dates[newer]}T00:00:00",
         dismissals,
-        inject_bridges=bridges,
-        inject_entities=entities,
-        inject_dense=dense,
+        inject_bridges=cfg.bridges,
+        inject_entities=cfg.entities,
+        inject_dense=cfg.dense,
+        inject_graph=cfg.graph,
         as_of=dates[newer],
     )
     surfaced = {n.basename for n in cands.notes}
@@ -131,13 +160,12 @@ def run_config(
     pairs: List[dict],
     vault: Path,
     dismissals: DismissalStore,
-    bridges: int,
-    entities: int,
+    cfg: ChannelCfg,
     corpus_dates: Dict[str, str],
-    dense: int = 0,
+    corpus_tokens: Optional[Dict[str, set]] = None,
 ) -> List[PairResult]:
     return [
-        simulate_pair(p, vault, dismissals, bridges, entities, corpus_dates, dense)
+        simulate_pair(p, vault, dismissals, cfg, corpus_dates, corpus_tokens)
         for p in pairs
     ]
 
@@ -180,20 +208,48 @@ def render_report(
         add(f"| {name} | {rec:.0%} | {hits}/{denom} |")
 
     rec, hits, denom = recall_of(full)
-    verdict = (
+    blended = (
         "PASS (>=70%)"
         if rec >= H3_PASS
-        else (
-            "KILL (<50%) — fix preselection before anything else"
-            if rec < H3_KILL
-            else "GREY ZONE (50-70%) — iterate preselection"
-        )
+        else ("KILL (<50%)" if rec < H3_KILL else "GREY ZONE (50-70%)")
     )
-    add(f"\n**H3 verdict (full config): {rec:.0%} -> {verdict}**\n")
+    add(f"\nBlended recall (full config): {rec:.0%} -> {blended}\n")
 
-    add("## Full config — split by pair type\n")
-    for k, (r, h, d) in _split_recall(full, lambda x: x.pair_type).items():
-        add(f"- {k}: {r:.0%} ({h}/{d})")
+    # The verdict that matters: per-type GO thresholds on the SIGNAL types.
+    add("## Full config — split by pair type (the real verdict)\n")
+    by_type = _split_recall(full, lambda x: x.pair_type)
+    for k, (r, h, d) in by_type.items():
+        goal = TYPE_GO.get(k)
+        flag = ""
+        if goal is not None:
+            flag = f"  [GO ≥{goal:.0%}: {'✅' if r >= goal else '❌'}]"
+        add(f"- {k}: {r:.0%} ({h}/{d}){flag}")
+    go = all(
+        by_type.get(t, (0, 0, 0))[0] >= goal
+        for t, goal in TYPE_GO.items()
+        if t in by_type
+    ) and all(t in by_type for t in TYPE_GO)
+    add(
+        f"\n**H3 verdict: {'GO to H1' if go else 'ITERATE'} — "
+        f"contradiction and emergent must clear their GO thresholds.**\n"
+    )
+
+    # Lexically-disjoint slice: the pairs similarity channels cannot cheat.
+    disjoint = [
+        r
+        for r in full
+        if r.status in ("hit", "miss") and r.lexical_jaccard <= LEXICAL_DISJOINT_MAX
+    ]
+    if disjoint:
+        dr, dh, dd = recall_of(disjoint)
+        add(
+            f"## Lexically-disjoint slice (Jaccard ≤ {LEXICAL_DISJOINT_MAX:.0%}, "
+            f"{dd} pairs — the hard, uncheatable ones)\n"
+        )
+        add(f"- recall: {dr:.0%} ({dh}/{dd})")
+        for k, (r, h, d) in _split_recall(disjoint, lambda x: x.pair_type).items():
+            add(f"  - {k}: {r:.0%} ({h}/{d})")
+
     add("\n## Full config — split by source (bootstrap-bias detector)\n")
     for k, (r, h, d) in _split_recall(full, lambda x: x.source).items():
         add(f"- {k}: {r:.0%} ({h}/{d})")
@@ -212,6 +268,7 @@ def render_report(
     add("\n## Unique saves per distance channel\n")
     full_hits = {r.pair_id for r in full if r.status == "hit"}
     for name, label in (
+        ("no-graph", "graph"),
         ("no-dense", "dense"),
         ("no-entity", "entity"),
         ("no-bridge", "bridge"),
@@ -280,6 +337,7 @@ def synthesize_sample(
             inject_bridges=4,
             inject_entities=4,
             inject_dense=6,
+            inject_graph=6,
             as_of=dates[newer],
         )
         language = detect_language(" ".join(n.summary_md for n in cands.notes)[:5000])
@@ -326,16 +384,19 @@ def main() -> int:
         )
         return 1
     corpus_dates = {n.basename: n.date for n in corpus}
+    from src.connections.candidate_assembly import _tokenize
+
+    corpus_tokens = {n.basename: set(_tokenize(n.summary_md)) for n in corpus}
     dismissals = DismissalStore(vault).load()
 
     by_config: Dict[str, List[PairResult]] = {}
-    for name, bridges, entities, dense in CONFIGS:
+    for name, cfg in CONFIGS:
         print(
-            f"config {name} (bridges={bridges}, entities={entities}, "
-            f"dense={dense}) ..."
+            f"config {name} (bridges={cfg.bridges}, entities={cfg.entities}, "
+            f"dense={cfg.dense}, graph={cfg.graph}) ..."
         )
         by_config[name] = run_config(
-            confirmed, vault, dismissals, bridges, entities, corpus_dates, dense
+            confirmed, vault, dismissals, cfg, corpus_dates, corpus_tokens
         )
 
     synth_results = None
