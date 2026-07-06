@@ -160,3 +160,7 @@ release:
 
 
 
+
+resummarize:
+	@echo "Re-summarize transcript notes to v2 format (plan mode; add ARGS='--preview'/'--apply')..."
+	./venv312/bin/python scripts/resummarize_vault.py $(ARGS)
