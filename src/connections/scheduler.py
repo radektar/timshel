@@ -155,18 +155,33 @@ def _set_digest_ready(transcriber: object, path: Path) -> None:
             logger.debug("could not set digest_ready: %s", exc)
 
 
-def _record_digest_metrics(synthesizer, candidates, connections, path: Path) -> None:
-    """Append the per-digest cost + coverage record. Best-effort, never raises."""
+def _record_digest_metrics(
+    synthesizer, candidates, connections, path, verifier=None, verdicts=None
+) -> None:
+    """Append the per-digest cost + coverage record. Best-effort, never raises.
+
+    ``path`` may be ``None`` (all connections dropped in verification — the run
+    still cost money and must be recorded). ``verifier``/``verdicts`` carry the
+    verdict pass when it ran.
+    """
     from src.connections.insight_metrics import record_digest_metrics
 
+    verdict_dropped = 0
+    if verdicts is not None:
+        verdict_dropped = sum(1 for v in verdicts.verdicts if not v.verdict)
     record_digest_metrics(
         model=getattr(synthesizer, "model", ""),
         usage=getattr(synthesizer, "last_usage", None),
         candidates=len(candidates.notes),
         connections=len(connections),
         connection_types=[c.type for c in connections],
-        digest=path.name,
+        digest=path.name if path is not None else "",
         tester_mode=bool(getattr(config, "PROTOTYPE_TESTER_MODE", False)),
+        verdict_model=getattr(verifier, "model", "") if verifier is not None else "",
+        verdict_usage=(
+            getattr(verifier, "last_usage", None) if verifier is not None else None
+        ),
+        verdict_dropped=verdict_dropped,
     )
 
 
@@ -242,10 +257,58 @@ def run_digest_if_due(
             scheduler.mark_ran(now)  # reset weekly clock; write nothing
             return None
 
+        # Verdict pass (prototype): verify the proposed connections against
+        # fuller note text BEFORE anything is written, so the digest, the
+        # sidecar and the action instrument only ever see survivors. Fail
+        # OPEN on any recoverable problem — verification must never lose a
+        # digest to an API hiccup.
+        verifier = None
+        verdicts = None
+        if getattr(config, "VERDICT_ENABLED", False):
+            from src.connections.verdict import apply_verdicts, get_verifier
+
+            verifier = get_verifier()
+            if verifier is not None:
+                try:
+                    verdicts = verifier.verify(
+                        connections,
+                        {n.basename: n for n in candidates.notes},
+                        language,
+                    )
+                except APIBillingError as exc:
+                    disable_ai = getattr(transcriber, "_disable_ai", None)
+                    if callable(disable_ai):
+                        disable_ai("billing", exc)
+                    return None
+                kept = apply_verdicts(connections, verdicts)
+                dropped = len(connections) - len(kept)
+                if dropped:
+                    logger.info(
+                        "verdict: dropped %d/%d connections", dropped, len(connections)
+                    )
+                connections = kept
+
+        if not connections:
+            # Every proposal died in verification — a legitimate, PAID outcome:
+            # record the metrics (H1/H4 data point), reset the clock, write nothing.
+            logger.info("verdict: no connections survived verification")
+            scheduler.mark_ran(now)
+            _record_digest_metrics(
+                synthesizer, candidates, [], None, verifier=verifier, verdicts=verdicts
+            )
+            return None
+
         path, conn_meta = write_digest_note(connections, len(candidates.notes))
         dismissals.record_digest(path, conn_meta)
         scheduler.mark_ran(now, path)
-        _record_digest_metrics(synthesizer, candidates, connections, path)
+        _record_digest_metrics(
+            synthesizer,
+            candidates,
+            connections,
+            path,
+            verifier=verifier,
+            verdicts=verdicts,
+        )
         _set_digest_ready(transcriber, path)
         return path
     finally:

@@ -18,7 +18,14 @@ from src.config.config import config
 
 # Recognised pipeline stages. Explicit so a typo raises instead of silently
 # falling back to the global default.
-STAGES: Tuple[str, ...] = ("summary", "tags", "synthesis", "judge", "results_synthesis")
+STAGES: Tuple[str, ...] = (
+    "summary",
+    "tags",
+    "synthesis",
+    "judge",
+    "results_synthesis",
+    "verdict",
+)
 
 
 def resolve_model(stage: str) -> str:

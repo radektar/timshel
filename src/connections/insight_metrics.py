@@ -37,7 +37,9 @@ from src.config.config import config
 from src.logger import logger
 
 #: Schema version for the digest metrics record shape.
-METRICS_SCHEMA_VERSION = 1
+#: v2 adds the verdict pass: verdict_* fields, synthesis_cost_usd, and
+#: cost_usd becomes the TOTAL (synthesis + verdict). v1 rows stay parseable.
+METRICS_SCHEMA_VERSION = 2
 
 #: Per-million-token (input, output) USD list price, standard tier.
 #: Verified 2026-07-05; unknown models fall back to Opus (the safe over-estimate
@@ -132,17 +134,37 @@ def build_record(
     digest: str = "",
     batch: bool = False,
     tester_mode: bool = False,
+    verdict_model: str = "",
+    verdict_usage: object = None,
+    verdict_dropped: int = 0,
     now: Optional[datetime] = None,
 ) -> Dict[str, object]:
-    """Assemble one metrics record (pure — no I/O)."""
+    """Assemble one metrics record (pure — no I/O).
+
+    ``cost_usd`` is the run TOTAL; ``synthesis_cost_usd`` preserves the v1
+    meaning. Verdict fields are zero/empty when the pass did not run.
+    """
     tokens = usage_tokens(usage)
-    cost = estimate_cost_usd(
+    synthesis_cost = estimate_cost_usd(
         model,
         tokens["input_tokens"],
         tokens["output_tokens"],
         cache_read_tokens=tokens["cache_read_tokens"],
         cache_write_tokens=tokens["cache_write_tokens"],
         batch=batch,
+    )
+    v_tokens = usage_tokens(verdict_usage)
+    verdict_cost = (
+        estimate_cost_usd(
+            verdict_model,
+            v_tokens["input_tokens"],
+            v_tokens["output_tokens"],
+            cache_read_tokens=v_tokens["cache_read_tokens"],
+            cache_write_tokens=v_tokens["cache_write_tokens"],
+            batch=batch,
+        )
+        if verdict_model
+        else 0.0
     )
     stamp = (now or datetime.now()).isoformat(timespec="seconds")
     return {
@@ -155,7 +177,13 @@ def build_record(
         "candidates": int(candidates),
         "connections": int(connections),
         "connection_types": list(connection_types or []),
-        "cost_usd": cost,
+        "synthesis_cost_usd": synthesis_cost,
+        "verdict_model": verdict_model,
+        "verdict_input_tokens": v_tokens["input_tokens"],
+        "verdict_output_tokens": v_tokens["output_tokens"],
+        "verdict_cost_usd": verdict_cost,
+        "verdict_dropped": int(verdict_dropped),
+        "cost_usd": round(synthesis_cost + verdict_cost, 6),
         **tokens,
     }
 
@@ -170,6 +198,9 @@ def record_digest_metrics(
     digest: str = "",
     batch: bool = False,
     tester_mode: bool = False,
+    verdict_model: str = "",
+    verdict_usage: object = None,
+    verdict_dropped: int = 0,
     path: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> bool:
@@ -194,6 +225,9 @@ def record_digest_metrics(
             digest=digest,
             batch=batch,
             tester_mode=tester_mode,
+            verdict_model=verdict_model,
+            verdict_usage=verdict_usage,
+            verdict_dropped=verdict_dropped,
             now=now,
         )
         out.parent.mkdir(parents=True, exist_ok=True)

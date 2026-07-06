@@ -77,6 +77,38 @@ def test_build_record_shape():
     assert rec["ts"] == "2026-07-05T12:00:00"
 
 
+def test_build_record_v2_verdict_fields_and_total():
+    rec = im.build_record(
+        model="claude-sonnet-4-6",
+        usage=_Usage(i=100_000, o=10_000),
+        candidates=20,
+        connections=2,
+        digest="d.md",
+        verdict_model="claude-opus-4-8",
+        verdict_usage=_Usage(i=10_000, o=1_000),
+        verdict_dropped=1,
+    )
+    assert rec["v"] == 2
+    assert rec["verdict_model"] == "claude-opus-4-8"
+    assert rec["verdict_dropped"] == 1
+    assert rec["verdict_cost_usd"] > 0
+    assert rec["cost_usd"] == round(
+        rec["synthesis_cost_usd"] + rec["verdict_cost_usd"], 6
+    )
+
+
+def test_build_record_without_verdict_has_zero_verdict_cost():
+    rec = im.build_record(
+        model="claude-opus-4-8",
+        usage=_Usage(i=10_000, o=500),
+        candidates=5,
+        connections=1,
+    )
+    assert rec["verdict_model"] == ""
+    assert rec["verdict_cost_usd"] == 0.0
+    assert rec["cost_usd"] == rec["synthesis_cost_usd"]
+
+
 class _FakeSynth:
     def __init__(self, model, usage):
         self.model = model

@@ -107,6 +107,10 @@ class Config:
     # Results-synthesis: the one LLM in the recall (pull) path — the explicit
     # "synthesize these results" escalation. Independently swappable per the plan.
     LLM_MODEL_RESULTS_SYNTHESIS: Optional[str] = None
+    # Verdict pass (magic-insights prototype): verifies proposed connections
+    # against fuller note text before the digest is written. Independently
+    # swappable so the cascade can run synthesis and verdict on different models.
+    LLM_MODEL_VERDICT: Optional[str] = None
     # Candidate-assembly + synthesis budgets (bound the prompt regardless of corpus size).
     MAX_SYNTHESIS_NOTE_CHARS: int = 1200
     MAX_SYNTHESIS_NOTES: int = 25
@@ -114,7 +118,9 @@ class Config:
     # 4096 (was 2048): the verbose legacy prompt truncated mid tool-call at 2048
     # and returned zero connections. The production prompt is terse and fits, but
     # the headroom keeps a multi-connection digest from ever being cut off.
-    SYNTHESIS_MAX_TOKENS: int = 8192  # headroom for evidence + fuller directions (ADR-004)
+    SYNTHESIS_MAX_TOKENS: int = (
+        8192  # headroom for evidence + fuller directions (ADR-004)
+    )
     SYNTHESIS_TIMEOUT: float = 60.0
     # Cross-topic "bridge" notes injected per digest (distance channel): notes far
     # from the recent window in topic but joined by a shared rare token. 0 = pure
@@ -134,6 +140,11 @@ class Config:
     # Magic-insights prototype instrumentation. Each digest appends a cost +
     # coverage record to {vault}/.malinche/metrics.jsonl (H1/H4 evidence base).
     INSIGHT_METRICS_ENABLED: bool = True
+    # Verdict pass: verify proposed connections against fuller note text and
+    # drop the ones that do not survive. Off = baseline digest, byte-identical.
+    VERDICT_ENABLED: bool = False
+    # Fuller-text budget per linked note in the verdict prompt.
+    VERDICT_MAX_NOTE_CHARS: int = 4000
     # Prototype tester mode: routes the synthesis stage through the strongest
     # model (LLM_MODEL_SYNTHESIS, e.g. claude-opus-4-8), forces a digest run,
     # and always emits metrics. Off in normal operation.
@@ -281,27 +292,28 @@ tags: [{tags}]
                 self.LLM_API_KEY = "http://localhost:11434"
 
         # Connected LLM for the Insights action handoff (ADR-004).
-        self.LLM_HANDOFF_TOOL = getattr(
-            self._user_settings, "ai_handoff_tool", "claude"
-        ) or "claude"
+        self.LLM_HANDOFF_TOOL = (
+            getattr(self._user_settings, "ai_handoff_tool", "claude") or "claude"
+        )
 
         # How note/transcript clicks open files: Obsidian deep link by default,
         # but configurable so Malinche doesn't assume Obsidian (see
         # ui/obsidian_link.file_open_argv). "obsidian" | "finder" | "default" |
         # "app:<Name>".
-        self.NOTE_OPENER = getattr(
-            self._user_settings, "note_opener", "obsidian"
-        ) or "obsidian"
+        self.NOTE_OPENER = (
+            getattr(self._user_settings, "note_opener", "obsidian") or "obsidian"
+        )
 
         # Local recall engine ("ask your corpus"). Embeddings are local + no API key;
         # provider/model are swappable (no hardcoded provider). Indexing at
         # transcription time is opt-in until the feature ships.
-        self.EMBED_PROVIDER = getattr(
-            self._user_settings, "embed_provider", ""
-        ) or "fastembed"
-        self.EMBED_MODEL = getattr(
-            self._user_settings, "embed_model", ""
-        ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        self.EMBED_PROVIDER = (
+            getattr(self._user_settings, "embed_provider", "") or "fastembed"
+        )
+        self.EMBED_MODEL = (
+            getattr(self._user_settings, "embed_model", "")
+            or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
         # Recall is on by default (Faza 5): search is 100% local, so indexing the vault
         # in the background is safe and makes the lens "just work". A user who saved the
         # setting keeps their choice; only an absent setting falls back to enabled.
