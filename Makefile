@@ -129,8 +129,8 @@ clean:
 
 dev-setup:
 	@echo "Setting up development environment..."
-	python3 -m venv venv
-	@echo "Virtual environment created!"
+	python3.12 -m venv venv
+	@echo "Virtual environment created (Python 3.12 — required by src/, e.g. X | None syntax)!"
 	@echo "Now run: source venv/bin/activate && make install"
 
 icon:
