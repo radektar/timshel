@@ -145,6 +145,34 @@ def test_add_manual_pair_rejects_unknown_basename(tmp_path, monkeypatch):
     assert saved[0]["notes"] == ["noteA", "noteB"]  # ghost was re-prompted away
 
 
+def test_normalize_basename_variants():
+    n = bpp.normalize_basename
+    assert n("26-07-01 - Zmiana nazwy") == "26-07-01 - Zmiana nazwy"
+    assert n("[[26-07-01 - Zmiana nazwy]]") == "26-07-01 - Zmiana nazwy"
+    assert n("11-Transcripts/26-07-01 - Zmiana nazwy.md") == "26-07-01 - Zmiana nazwy"
+    # obsidian:// deep link, URL-encoded, with zsh-escaped \? and \&
+    url = (
+        "obsidian://open\\?vault=Obsidian\\&file=11-Transcripts%2F"
+        "26-07-01%20-%20Zmiana%20nazwy%20projektu%20i%20poszukiwanie"
+        "%20inspiracji%20literackiej"
+    )
+    assert (
+        n(url) == "26-07-01 - Zmiana nazwy projektu i poszukiwanie inspiracji"
+        " literackiej"
+    )
+
+
+def test_add_manual_pair_accepts_obsidian_link(tmp_path, monkeypatch):
+    p = tmp_path / "planted_pairs.json"
+    data = bpp.load_pairs(p)
+    url = "obsidian://open?vault=Obsidian&file=11-Transcripts%2FnoteA"
+    answers = iter([url, "[[noteB]]", "", "", "bo tak"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    bpp.add_manual_pair(p, data, corpus_basenames={"noteA", "noteB"})
+    saved = json.loads(p.read_text(encoding="utf-8"))["pairs"]
+    assert saved[0]["notes"] == ["noteA", "noteB"]
+
+
 def test_next_id_sequential(tmp_path):
     data = bpp.load_pairs(tmp_path / "x.json")
     assert bpp._next_id(data) == "pp-001"

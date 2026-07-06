@@ -354,19 +354,51 @@ def confirm_loop(path: Path, data: Dict[str, Any]) -> None:
     print("done; progress saved")
 
 
+def normalize_basename(raw: str) -> str:
+    """Accept whatever the user pastes and reduce it to a bare basename.
+
+    Handles: a plain basename, a `[[wikilink]]`, a vault-relative or absolute
+    path (with or without .md), and an `obsidian://open?...&file=...` deep link
+    (URL-encoded, possibly with shell-escaped `\\?`/`\\&`).
+    """
+    from urllib.parse import unquote
+
+    s = raw.strip().replace("\\", "")
+    if s.startswith("obsidian://"):
+        # take the file= param (last one wins), URL-decode it
+        for part in s.split("&"):
+            if part.startswith("file="):
+                s = unquote(part[len("file=") :])
+    s = s.strip().strip("[]").strip()
+    if s.lower().endswith(".md"):
+        s = s[: -len(".md")]
+    # vault path -> last segment
+    s = s.rsplit("/", 1)[-1]
+    return s.strip()
+
+
 def add_manual_pair(
     path: Path, data: Dict[str, Any], corpus_basenames: Set[str]
 ) -> None:
     """Interactive manual entry — the bias guard against the LLM bootstrap."""
-    print("Manual pair (bias guard). Enter exact basenames (no .md, no [[ ]]).")
+    print(
+        "Manual pair (bias guard). Paste a note name, [[wikilink]], path or "
+        "obsidian:// link.\nNOTE: pairs must be TRANSCRIPT notes "
+        "(11-Transcripts) — that is the prototype corpus."
+    )
     notes: List[str] = []
     while True:
-        b = input(f"note {len(notes) + 1} basename (empty = done): ").strip()
-        if not b:
+        raw = input(f"note {len(notes) + 1} (empty = done): ").strip()
+        if not raw:
             break
+        b = normalize_basename(raw)
         if b not in corpus_basenames:
-            print("  ! not found in corpus — check the exact basename")
+            print(f"  ! '{b}' not in the transcript corpus")
+            close = [c for c in corpus_basenames if b.lower() in c.lower()]
+            for c in sorted(close)[:5]:
+                print(f"    did you mean: {c}")
             continue
+        print(f"  ok: {b}")
         notes.append(b)
     if len(notes) < 2:
         print("need at least 2 notes; aborted")
