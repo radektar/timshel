@@ -456,6 +456,17 @@ class TestPromptConnectionSections:
             assert heading in prompt
         # The lead section heading itself is mandatory (one preview dropped it).
         assert "This heading is REQUIRED" in prompt
+        # Second preview batch: tier labels drifted to English inside a
+        # Polish note — they are pinned too.
+        for label in ('"**Krytyczne:**"', '"**Ważne:**"', '"**Informacyjne:**"'):
+            assert label in prompt
+
+    def test_abbreviation_guard_is_always_on(self, prompt):
+        """SIO got expanded to an invented 'Fundusz Inicjatyw Obywatelskich'
+        while the glossary was empty — the no-expansion rule must live in
+        GROUNDING (always present), not only in the optional KNOWN TERMS
+        block."""
+        assert "NEVER expand an abbreviation the recording does not itself" in prompt
 
     def test_stance_guards_cover_preview_failures(self, prompt):
         """Regressions from the first preview batch: a relayed preference

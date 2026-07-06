@@ -259,7 +259,11 @@ class ClaudeSummarizer(BaseSummarizer):
 
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=1024,
+                # 2048: the v2 format (Stances/Open threads + quotes) can
+                # exceed the old 1024 cap — a preview batch produced an action
+                # item cut mid-sentence. Real summaries stay well under; this
+                # is headroom, not a target.
+                max_tokens=2048,
                 timeout=30.0,  # 30 second timeout
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -355,6 +359,8 @@ transcript. Do not invent tasks, deadlines, names, numbers, decisions or conclus
 that are not there. No editorialising such as "the project will succeed if…". If
 there is little to report, write less or omit a section — fewer true points beat a
 padded, invented template. Never add content just to fill the structure.
+NEVER expand an abbreviation the recording does not itself expand — write "SIO"
+as "SIO"; a guessed expansion is an invented fact.
 
 VOCABULARY — preserve distinctive terms VERBATIM: proper names, product names,
 place names and domain-specific terms must appear exactly as spoken ("Digitakt"
@@ -382,6 +388,9 @@ Produce:
      - ⚠️ **Critical:** decisions, commitments, deadlines stated directly
      - ⚡ **Important:** significant topics needing follow-up
      - 📝 **Info:** context, background
+   - The tier labels translate with the note — in Polish EXACTLY:
+     "**Krytyczne:**", "**Ważne:**", "**Informacyjne:**" (never English labels
+     inside a Polish note).
    - Skip a tier entirely if nothing fits it. Do not manufacture points.
 
    ## Stances
