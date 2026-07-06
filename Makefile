@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release eval-synthesis signal-report
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release eval-synthesis signal-report magic-digest recall-eval
 
 help:
 	@echo "Malinche - Development Commands"
@@ -62,6 +62,14 @@ test-coverage:
 eval-synthesis:
 	@echo "Comparing synthesis models on gold cases (needs a Claude key in settings)..."
 	python scripts/eval_synthesis.py
+
+magic-digest:
+	@echo "Magic-insights tester digest (Opus 4.8 + verdict + metrics)..."
+	./venv312/bin/python scripts/magic_digest.py
+
+recall-eval:
+	@echo "H3 recall harness over confirmed planted pairs (local, no API)..."
+	./venv312/bin/python scripts/recall_eval.py
 
 signal-report:
 	@echo "Computing action-rate over the Insights signal log (ADR-004)..."
