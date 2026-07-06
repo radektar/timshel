@@ -164,7 +164,9 @@ class BaseSummarizer(ABC):
     """
 
     @abstractmethod
-    def generate(self, transcript: str, known_terms_block: str = "") -> Dict[str, str]:
+    def generate(
+        self, transcript: str, known_terms_block: str = "", correction: str = ""
+    ) -> Dict[str, str]:
         """Generate summary and title from transcript.
 
         Args:
@@ -172,6 +174,8 @@ class BaseSummarizer(ABC):
             known_terms_block: Optional personal-glossary lines (see
                 :class:`src.vocabulary.VocabularyIndex.known_terms_block`);
                 empty string disables the KNOWN TERMS prompt block.
+            correction: Optional named alias misses from a prior attempt,
+                triggering a corrective rewrite ("" = first attempt).
 
         Returns:
             Dict with 'title' and 'summary' keys
@@ -223,13 +227,17 @@ class ClaudeSummarizer(BaseSummarizer):
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
 
-    def generate(self, transcript: str, known_terms_block: str = "") -> Dict[str, str]:
+    def generate(
+        self, transcript: str, known_terms_block: str = "", correction: str = ""
+    ) -> Dict[str, str]:
         """Generate summary and title from transcript using Claude API.
 
         Args:
             transcript: Full transcription text
             known_terms_block: Personal-glossary lines for the KNOWN TERMS
                 prompt block ("" = no block).
+            correction: Named alias misses from a prior attempt, triggering a
+                corrective rewrite ("" = first attempt).
 
         Returns:
             Dict with 'title' and 'summary' keys
@@ -251,21 +259,29 @@ class ClaudeSummarizer(BaseSummarizer):
             )
             transcript = transcript[-max_transcript_length:]
 
-        prompt = self._build_prompt(transcript, known_terms_block)
+        prompt = self._build_prompt(transcript, known_terms_block, correction)
 
         try:
             logger.debug(f"Calling Claude API (model: {self.model})")
             start_time = time.time()
 
+            # Low temperature, not zero: canonicalisation and format adherence
+            # are near-mechanical, and high temperature is what let the model
+            # drift on headings and skip alias replacement. Reasoning models
+            # (Opus 4.x) reject `temperature` (deprecated) — omit it there.
+            extra = {}
+            if not self.model.startswith("claude-opus-4"):
+                extra["temperature"] = 0.2
             message = self.client.messages.create(
                 model=self.model,
-                # 2048: the v2 format (Stances/Open threads + quotes) can
-                # exceed the old 1024 cap — a preview batch produced an action
-                # item cut mid-sentence. Real summaries stay well under; this
-                # is headroom, not a target.
-                max_tokens=2048,
-                timeout=30.0,  # 30 second timeout
+                # 4096: the v2 format (Stances/Open threads + quotes) plus a
+                # long recording overran the old 1024/2048 caps — a preview
+                # produced an action item cut mid-sentence. Real summaries stay
+                # well under; billed on actual output, so this is free headroom.
+                max_tokens=4096,
+                timeout=60.0,
                 messages=[{"role": "user", "content": prompt}],
+                **extra,
             )
 
             elapsed = time.time() - start_time
@@ -296,12 +312,16 @@ class ClaudeSummarizer(BaseSummarizer):
             logger.warning("Falling back to simple title generation")
             return self._fallback_summary(transcript)
 
-    def _build_prompt(self, transcript: str, known_terms_block: str = "") -> str:
+    def _build_prompt(
+        self, transcript: str, known_terms_block: str = "", correction: str = ""
+    ) -> str:
         """Build prompt for Claude API.
 
         Args:
             transcript: Transcription text
             known_terms_block: Personal-glossary lines ("" = no block)
+            correction: Named alias misses from a prior attempt, triggering a
+                corrective rewrite ("" = first attempt)
 
         Returns:
             Formatted prompt string
@@ -320,30 +340,61 @@ class ClaudeSummarizer(BaseSummarizer):
         else:
             lang_directive = ""
 
-        # The user's confirmed vocabulary: canonicalise clear variants, under
-        # strict no-invention rules. Injected only when the glossary is
-        # non-empty, so a fresh vault gets the baseline prompt unchanged.
+        # The user's confirmed vocabulary. The preview batch showed models play
+        # it safe and leave even a listed alias un-canonicalised, so the block
+        # is structured as a 3-level authority (mandatory for listed aliases)
+        # with a worked example. Injected only when the glossary is non-empty,
+        # so a fresh vault gets the baseline prompt unchanged.
         if known_terms_block:
             known_terms_directive = f"""
-KNOWN TERMS — the user's confirmed vocabulary. This is the ONE exception to
-the VERBATIM rule above: speech-to-text mangles proper names phonetically,
-and the canonical spelling IS the term as actually spoken. When the
-transcript CLEARLY refers to one of the terms below — phonetically close, a
-listed alias, or unambiguous from context — write it in its canonical form
-everywhere in the notes (title, summary, key points, stances). Strict rules:
-- Canonicalise ONLY on a clear match. When unsure, keep exactly what was
-  transcribed — a wrong "correction" is worse than a mangled name.
-- NEVER mention a known term the recording does not refer to. This list says
-  what the user's world contains, not what this recording is about.
-- NEVER expand an abbreviation unless the expansion is given in this list or
-  spoken in the recording.
-- The "Quotes" section stays verbatim as transcribed, even when mangled —
-  quotes are evidence.
+KNOWN TERMS — the user's confirmed vocabulary, each with the mangled/alias
+forms speech-to-text produces for it. Transcription RELIABLY corrupts these
+proper names, so this list is an authority that OVERRIDES the VERBATIM rule
+above. Apply three levels, in order:
 
+1. LISTED ALIAS → MANDATORY. If a token in the transcript matches an alias
+   below (case-insensitive — e.g. "TekTutoreski"), it IS that term: a
+   confirmed transcription error. Write the canonical form everywhere in the
+   notes (title, summary, key points, stances, open threads, action items).
+   This is NOT a judgment call and NOT optional — leaving the alias is a bug.
+2. UNLISTED but clearly the same term (phonetically close, or unambiguous from
+   context) → canonicalise when confident; when unsure, keep what was
+   transcribed.
+3. Not related to any known term → VERBATIM, exactly as the rule above.
+
+Hard limits:
+- This list is NOT a list of this recording's topics. If a term does not
+  actually occur in the transcript (as itself or a listed alias), it MUST NOT
+  appear ANYWHERE in the notes — not in stances, not with a "(nie dotyczy)" /
+  "N/A" marker, not at all. Only canonicalise terms that ARE spoken.
+- NEVER expand an abbreviation unless the expansion is given here or spoken.
+- The "Quotes" section stays verbatim as transcribed, even when mangled — an
+  alias inside a quote is LEFT as-is, because quotes are evidence.
+
+WORKED EXAMPLE — glossary entry "Tech to the Rescue" with alias "TekTutoreski":
+  transcript says: "Strategia TekTutoreski rośnie, po rozmowie z Gosią."
+  → in the summary / key points / stances write: "Strategia Tech to the Rescue
+    rośnie…"  (alias replaced by canonical)
+  → but if you quote that sentence, the quote keeps "TekTutoreski" verbatim.
+
+KNOWN TERMS:
 {known_terms_block}
 """
         else:
             known_terms_directive = ""
+
+        # Judge-driven retry (see scripts/resummarize_vault.py): when a prior
+        # attempt left confirmed aliases un-canonicalised, the caller re-runs
+        # with the specific misses named. Empty on the first attempt.
+        correction_directive = ""
+        if correction:
+            correction_directive = (
+                "\nCORRECTION — your previous attempt left these CONFIRMED aliases "
+                "un-canonicalised in the notes (outside Quotes):\n"
+                f"{correction}\n"
+                "Each is a listed alias, so this is mandatory: rewrite the notes so "
+                "every one appears in its canonical form. Quotes stay verbatim.\n"
+            )
 
         return f"""{lang_directive}Analyse the audio transcript below and produce concise, well-structured notes.
 
@@ -410,6 +461,9 @@ Produce:
      mianownik — write [[Fundacja Ziemi]] even if the recording says
      "Fundacji Ziemi"). Never bracket generic nouns ("pomysł", "spotkanie"),
      processes ("proces doboru mentorów") or abstract concepts.
+   - Only about subjects the recording ACTUALLY discusses. Never add a stance
+     line for a glossary term the speaker did not mention (no "(nie dotyczy)"
+     placeholder lines).
    - These are NOT stances — never list them: neutral facts or reports
      ("spotkałem się z X"), plans without judgement, someone else's opinion
      or preference the speaker merely relays ("Syri chce ręcznie dobierać
@@ -450,7 +504,7 @@ TITLE: [title in the transcript's language]
 SUMMARY: [markdown summary; section headings in the transcript's language]
 
 REMINDER: respond ENTIRELY in the transcript's own language (title, headings, body).
-
+{correction_directive}
 Transcript:
 {transcript}"""
 
@@ -595,6 +649,66 @@ Nie udało się wygenerować podsumowania.
 - Wyciągnąć kluczowe wnioski ze spotkania"""
 
         return {"title": title, "summary": summary}
+
+
+class OpenAISummarizer(ClaudeSummarizer):
+    """OpenAI-backed summarizer — ONLY for the one-off v2 corpus migration.
+
+    Production summaries run on Haiku (the cost model depends on it); this
+    exists so ``scripts/resummarize_vault.py`` can rebuild the existing,
+    transcription-mangled corpus on a stronger model than Haiku for the H1
+    baseline. It subclasses :class:`ClaudeSummarizer` deliberately: the prompt
+    (with all its v2 sections and anti-hallucination guards) IS the product
+    here, so we reuse ``_build_prompt`` / ``_parse_response`` /
+    ``_fallback_summary`` verbatim and override only client construction and
+    the single API call. Not wired into :func:`get_summarizer` — never a
+    production path.
+    """
+
+    def __init__(self, api_key: str, model: str = "gpt-4.1"):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError(
+                "openai package not installed. Install with: pip install openai"
+            )
+        self.client = OpenAI(api_key=api_key)
+        self.model = model
+        logger.info("🔑 OpenAI client built — model=%s", model)
+        self.max_words = config.SUMMARY_MAX_WORDS
+        self.title_max_length = config.TITLE_MAX_LENGTH
+
+    def generate(
+        self, transcript: str, known_terms_block: str = "", correction: str = ""
+    ) -> Dict[str, str]:
+        if not transcript or not transcript.strip():
+            return self._fallback_summary()
+
+        max_transcript_length = 10000
+        if len(transcript) > max_transcript_length:
+            transcript = transcript[-max_transcript_length:]
+
+        prompt = self._build_prompt(transcript, known_terms_block, correction)
+        try:
+            start_time = time.time()
+            response = self.client.chat.completions.create(
+                model=self.model,
+                # 4096: a 4:43 recording's v2 summary hit the 2048 ceiling and
+                # truncated mid-section. Migration is one-off — headroom is cheap.
+                max_completion_tokens=4096,
+                temperature=0.2,
+                timeout=90.0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            logger.debug("OpenAI call completed in %.2fs", time.time() - start_time)
+            text = response.choices[0].message.content or ""
+            title, summary = self._parse_response(text)
+            if len(title) > self.title_max_length:
+                title = title[: self.title_max_length - 3] + "..."
+            return {"title": title.strip(), "summary": summary.strip()}
+        except Exception as e:  # noqa: BLE001 — return fallback, script skips it
+            logger.error("OpenAI API error: %s", e, exc_info=True)
+            return self._fallback_summary(transcript)
 
 
 def get_summarizer() -> Optional[BaseSummarizer]:

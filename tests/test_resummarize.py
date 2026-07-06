@@ -90,6 +90,49 @@ class TestEligibility:
         assert ok
 
 
+class _FakeVocab:
+    """Minimal vocab double: reports the one alias we care about, wherever it
+    appears in the text handed to it."""
+
+    def find_alias_hits(self, text):
+        return (
+            [("TekTutoreski", "Tech to the Rescue")] if "TekTutoreski" in text else []
+        )
+
+
+class TestFindAliasMisses:
+    """The judge detects (never rewrites) aliases the model left, and treats
+    the Quotes section as evidence — an alias there is not a miss."""
+
+    def test_miss_outside_quotes_is_reported(self):
+        summary = "## Podsumowanie\n\nStrategia TekTutoreski rośnie.\n"
+        assert rsv.find_alias_misses(summary, _FakeVocab()) == [
+            ("TekTutoreski", "Tech to the Rescue")
+        ]
+
+    def test_alias_only_in_quotes_is_not_a_miss(self):
+        summary = (
+            "## Podsumowanie\n\nStrategia Tech to the Rescue rośnie.\n\n"
+            '## Cytaty\n\n> "TekTutoreski. Po rozmowie..."\n\n'
+            "## Wątki otwarte\n\n- Czy skaluje?\n"
+        )
+        assert rsv.find_alias_misses(summary, _FakeVocab()) == []
+
+    def test_miss_after_quotes_section_still_caught(self):
+        summary = (
+            "## Podsumowanie\n\nOK.\n\n"
+            '## Cytaty\n\n> "cytat"\n\n'
+            "## Wątki otwarte\n\n- Czy TekTutoreski skaluje?\n"
+        )
+        assert rsv.find_alias_misses(summary, _FakeVocab()) == [
+            ("TekTutoreski", "Tech to the Rescue")
+        ]
+
+    def test_clean_summary_has_no_misses(self):
+        summary = "## Podsumowanie\n\nStrategia Tech to the Rescue rośnie.\n"
+        assert rsv.find_alias_misses(summary, _FakeVocab()) == []
+
+
 class TestGuards:
     def test_fallback_summaries_detected(self):
         assert rsv.is_fallback_summary("## Podsumowanie\n\nBrak podsumowania AI. ...")

@@ -41,7 +41,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.config import config
 from src.connections.entities import _RUN_RE, _WIKILINK_RE
@@ -244,6 +244,30 @@ class VocabularyIndex:
             out.append(name)
             used += cost
         return ", ".join(out)
+
+    def find_alias_hits(self, text: str) -> List[Tuple[str, str]]:
+        """Detect confirmed aliases the MODEL should have canonicalised.
+
+        The model owns canonicalisation (a deterministic code substitution
+        would stop the vocabulary from learning new variants). This is the
+        JUDGE half: it only *reports* which listed aliases still appear in
+        ``text`` — as ``(alias_as_found, canonical)`` pairs — so the caller can
+        re-prompt the model with the specific misses named. It never rewrites.
+
+        Caller passes text with quote/transcript sections already excluded
+        (those keep aliases verbatim as evidence).
+        """
+        if not (config.VOCABULARY_ENABLED and text):
+            return []
+        hits: List[Tuple[str, str]] = []
+        for term in self.build().values():
+            for alias in term.aliases:
+                if not alias or alias.casefold() == term.canonical.casefold():
+                    continue
+                match = re.search(rf"\b{re.escape(alias)}\b", text, flags=re.I)
+                if match:
+                    hits.append((match.group(0), term.canonical))
+        return hits
 
 
 def get_vocabulary_index() -> VocabularyIndex:

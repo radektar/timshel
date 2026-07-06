@@ -152,3 +152,41 @@ class TestViews:
         idx = VocabularyIndex(vault)
         assert idx.whisper_prompt() == ""
         assert "Haetta" in idx.known_terms_block()
+
+
+class TestFindAliasHits:
+    """Detection only — the judge half of canonicalisation (never rewrites)."""
+
+    @pytest.fixture
+    def idx(self, vault):
+        malinche = vault / ".malinche"
+        malinche.mkdir()
+        (malinche / "vocabulary.json").write_text(
+            json.dumps(
+                {
+                    "terms": [
+                        {
+                            "canonical": "Tech to the Rescue",
+                            "aliases": ["TTTR", "TekTutoreski"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return VocabularyIndex(vault)
+
+    def test_reports_alias_and_canonical(self, idx):
+        hits = idx.find_alias_hits("Strategia TekTutoreski rośnie.")
+        assert hits == [("TekTutoreski", "Tech to the Rescue")]
+
+    def test_case_insensitive_but_reports_found_form(self, idx):
+        hits = idx.find_alias_hits("mowa o tttr wczoraj")
+        assert hits == [("tttr", "Tech to the Rescue")]
+
+    def test_canonical_form_is_not_a_miss(self, idx):
+        assert idx.find_alias_hits("Strategia Tech to the Rescue rośnie.") == []
+
+    def test_disabled_switch_reports_nothing(self, idx, monkeypatch):
+        monkeypatch.setattr(config, "VOCABULARY_ENABLED", False)
+        assert idx.find_alias_hits("Strategia TekTutoreski rośnie.") == []

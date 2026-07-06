@@ -35,7 +35,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple  # noqa: F401 — Tuple used in annotations
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -106,6 +106,35 @@ def is_fallback_summary(summary_md: str) -> bool:
     return any(marker in summary_md for marker in _FALLBACK_MARKERS)
 
 
+_QUOTE_HEADING_RE = re.compile(r"^##\s+(Cytaty|Quotes)\s*$", re.MULTILINE)
+
+
+def _strip_quotes_section(summary_md: str) -> str:
+    """Return the summary with the ``## Cytaty`` / ``## Quotes`` block removed.
+
+    Quotes keep aliases verbatim as evidence, so they are excluded before the
+    judge looks for un-canonicalised aliases (an alias inside a quote is
+    correct, not a miss)."""
+    match = _QUOTE_HEADING_RE.search(summary_md)
+    if match is None:
+        return summary_md
+    head = summary_md[: match.start()]
+    rest = summary_md[match.start() :]
+    next_section = re.search(r"\n##\s+(?!#)", rest[3:])
+    tail = rest[3 + next_section.start() :] if next_section else ""
+    return head + tail
+
+
+def find_alias_misses(summary_md: str, vocab) -> List[Tuple[str, str]]:
+    """Judge (never rewrite): confirmed aliases the model left un-canonicalised
+    outside the Quotes section, as ``(alias_as_found, canonical)`` pairs.
+
+    The model does the canonicalisation; this only detects misses so the caller
+    can re-prompt it — keeping the vocabulary a learning system, not a static
+    find-and-replace."""
+    return vocab.find_alias_hits(_strip_quotes_section(summary_md))
+
+
 def discover_notes(root: Path) -> List[Path]:
     """Transcript notes only — top level of TRANSCRIBE_DIR, oldest first.
 
@@ -167,11 +196,22 @@ def main() -> int:
         metavar="SUBSTR",
         help="filter by basename substring (repeatable)",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--provider",
+        choices=("claude", "openai"),
+        default="claude",
+        help="claude (Haiku, prod parity) or openai (gpt-4.1, stronger migration)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="override model (default: Haiku for claude, gpt-4.1 for openai)",
+    )
     parser.add_argument(
         "--yes", action="store_true", help="skip the --apply confirmation prompt"
     )
     args = parser.parse_args()
+    model = args.model or ("gpt-4.1" if args.provider == "openai" else DEFAULT_MODEL)
 
     vault = Path(config.TRANSCRIBE_DIR)
     if not vault.exists():
@@ -191,7 +231,7 @@ def main() -> int:
         print("Nothing to do — no eligible notes in selection.")
         return 0
 
-    print(f"\nBatch: {len(batch)} notes (model: {args.model})")
+    print(f"\nBatch: {len(batch)} notes ({args.provider}: {model})")
     for path in batch:
         print(f"  •  {path.name}")
 
@@ -203,17 +243,33 @@ def main() -> int:
         return 0
 
     # Glossary + summarizer, built once for the whole batch.
-    from src.summarizer import APIBillingError, ClaudeSummarizer  # noqa: E402
+    from src.env_loader import load_env_file  # noqa: E402
+    from src.summarizer import (  # noqa: E402
+        APIBillingError,
+        ClaudeSummarizer,
+        OpenAISummarizer,
+    )
     from src.vocabulary import VocabularyIndex  # noqa: E402
 
-    if not config.LLM_API_KEY:
-        print("❌ No Claude API key configured (settings/ANTHROPIC_API_KEY).")
-        return 1
+    load_env_file()  # OPENAI_API_KEY / ANTHROPIC_API_KEY from .env
+    if args.provider == "openai":
+        import os
+
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            print("❌ OPENAI_API_KEY not set (.env or environment).")
+            return 1
+        summarizer = OpenAISummarizer(api_key=key, model=model)
+    else:
+        if not config.LLM_API_KEY:
+            print("❌ No Claude API key configured (settings/ANTHROPIC_API_KEY).")
+            return 1
+        summarizer = ClaudeSummarizer(api_key=config.LLM_API_KEY, model=model)
+
     vocab = VocabularyIndex()
     vocab.build(force_refresh=True)
     known_terms = vocab.known_terms_block()
-    print(f"\nGlossary: {len(known_terms.splitlines())} known terms")
-    summarizer = ClaudeSummarizer(api_key=config.LLM_API_KEY, model=args.model)
+    print(f"Glossary: {len(known_terms.splitlines())} known terms")
 
     if args.apply and not args.yes:
         answer = input(f"\nOverwrite summaries of {len(batch)} notes? [y/N] ")
@@ -227,6 +283,7 @@ def main() -> int:
 
     done = failed = 0
     stances_notes = 0
+    alias_miss_notes = 0
     for path in batch:
         text = path.read_text(encoding="utf-8")
         frontmatter, _old, transcript_block = split_note(text)  # type: ignore[misc]
@@ -242,9 +299,33 @@ def main() -> int:
             failed += 1
             continue
 
+        # Judge: did the model leave any confirmed alias un-canonicalised
+        # (outside Quotes)? If so, ONE corrective re-prompt naming the misses —
+        # the model fixes it, we don't. A surviving miss is logged as a model-
+        # quality signal, not silently patched.
+        misses = find_alias_misses(new_summary, vocab)
+        if misses:
+            correction = "\n".join(f"- '{a}' → '{c}'" for a, c in misses)
+            try:
+                retry = summarizer.generate(
+                    transcript, known_terms_block=known_terms, correction=correction
+                )
+            except APIBillingError as exc:
+                print(f"\n❌ Permanent API error — aborting run: {exc}")
+                return 1
+            retry_summary = retry.get("summary", "")
+            if retry_summary and not is_fallback_summary(retry_summary):
+                new_summary = retry_summary
+                result = retry
+                misses = find_alias_misses(new_summary, vocab)
+
         rebuilt = rebuild_note(frontmatter, new_summary, transcript_block)
         has_stances = "## Stanowiska" in new_summary or "## Stances" in new_summary
         stances_notes += has_stances
+        alias_flag = ""
+        if misses:
+            alias_miss_notes += 1
+            alias_flag = "  ⚠ alias-miss: " + ", ".join(sorted({a for a, _ in misses}))
         marker = "✅+st" if has_stances else "✅   "
 
         if args.preview:
@@ -255,12 +336,13 @@ def main() -> int:
             (backup_dir / path.name).write_text(text, encoding="utf-8")
             path.write_text(rebuilt, encoding="utf-8")
         done += 1
-        print(f"  {marker} {path.name}  (new title suggestion: {result.get('title')})")
+        print(f"  {marker} {path.name}{alias_flag}")
 
     where = preview_dir if args.preview else f"vault (backups: {backup_dir})"
     print(
         f"\nDone: {done} rewritten, {failed} failed/kept · "
-        f"{stances_notes} notes gained a Stanowiska section\n→ {where}"
+        f"{stances_notes} notes gained a Stanowiska section · "
+        f"{alias_miss_notes} notes with a surviving alias-miss\n→ {where}"
     )
     if args.preview:
         print("Inspect the previews, then re-run with --apply.")
