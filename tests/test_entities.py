@@ -44,3 +44,21 @@ def test_shared_entity_across_two_notes_matches():
     n1 = extract_entities("Decyzja z Bank Ochrony Środowiska w marcu.")
     n2 = extract_entities("Wracam do ustaleń Bank Ochrony Środowiska — zmiana zdania.")
     assert "bank ochrony środowiska" in (n1 & n2)
+
+
+def test_entity_keys_match_across_polish_inflection():
+    from src.connections.entities import entity_keys
+
+    # 'Fundacja Ziemi' (mianownik) vs 'Fundacji Ziemi' (dopełniacz) — exact
+    # forms differ, stemmed keys must match.
+    a = entity_keys("Rozmowa o [[Fundacja Ziemi]] wczoraj.")
+    b = entity_keys("Wracam do pomysłu [[Fundacji Ziemi]] — zmiana zdania.")
+    assert a & b, f"no shared key: {a} vs {b}"
+
+
+def test_entity_keys_do_not_overmerge_distinct_names():
+    from src.connections.entities import entity_keys
+
+    a = entity_keys("[[Radek Taraszka]]")
+    b = entity_keys("[[Radek Tarnowski]]")
+    assert not (a & b)

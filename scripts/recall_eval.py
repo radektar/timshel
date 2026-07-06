@@ -45,11 +45,13 @@ from src.connections.dismissals import DismissalStore  # noqa: E402
 H3_PASS = 0.70
 H3_KILL = 0.50
 
+# (name, bridges, entities, dense)
 CONFIGS = [
-    ("full", 4, 4),
-    ("no-entity", 4, 0),
-    ("no-bridge", 0, 4),
-    ("similarity-only", 0, 0),
+    ("full", 4, 4, 6),
+    ("no-dense", 4, 4, 0),
+    ("no-entity", 4, 0, 6),
+    ("no-bridge", 0, 4, 6),
+    ("similarity-only", 0, 0, 0),
 ]
 
 
@@ -61,6 +63,9 @@ class PairResult:
     status: str  # hit | miss | window-collision | skipped
     older_channels: Dict[str, List[str]] = field(default_factory=dict)
     missing: List[str] = field(default_factory=list)
+    # subset of `missing` that a channel DID rank but the note-count cap /
+    # char budget cut — a budget problem, not a discovery problem.
+    missing_but_ranked: List[str] = field(default_factory=list)
     linked_by_llm: Optional[bool] = None
 
 
@@ -82,6 +87,7 @@ def simulate_pair(
     bridges: int,
     entities: int,
     corpus_dates: Dict[str, str],
+    dense: int = 0,
 ) -> PairResult:
     base = PairResult(
         pair_id=pair.get("id", "?"),
@@ -108,10 +114,12 @@ def simulate_pair(
         dismissals,
         inject_bridges=bridges,
         inject_entities=entities,
+        inject_dense=dense,
         as_of=dates[newer],
     )
     surfaced = {n.basename for n in cands.notes}
     base.missing = [b for b in older if b not in surfaced]
+    base.missing_but_ranked = [b for b in base.missing if b in cands.precap_basenames]
     base.older_channels = {
         b: sorted(cands.channel_map.get(b, set())) for b in older if b in surfaced
     }
@@ -126,9 +134,10 @@ def run_config(
     bridges: int,
     entities: int,
     corpus_dates: Dict[str, str],
+    dense: int = 0,
 ) -> List[PairResult]:
     return [
-        simulate_pair(p, vault, dismissals, bridges, entities, corpus_dates)
+        simulate_pair(p, vault, dismissals, bridges, entities, corpus_dates, dense)
         for p in pairs
     ]
 
@@ -202,15 +211,34 @@ def render_report(
 
     add("\n## Unique saves per distance channel\n")
     full_hits = {r.pair_id for r in full if r.status == "hit"}
-    for name, label in (("no-entity", "entity"), ("no-bridge", "bridge")):
+    for name, label in (
+        ("no-dense", "dense"),
+        ("no-entity", "entity"),
+        ("no-bridge", "bridge"),
+    ):
+        if name not in by_config:
+            continue
         off_hits = {r.pair_id for r in by_config[name] if r.status == "hit"}
         saves = sorted(full_hits - off_hits)
         add(f"- {label}: {len(saves)} pairs only reachable with it: {saves}")
 
     add("\n## Misses (full config) — diagnostics\n")
+    cut = found_never = 0
     for r in full:
         if r.status == "miss":
-            add(f"- {r.pair_id} [{r.pair_type}] missing: {r.missing}")
+            ranked_cut = set(r.missing_but_ranked)
+            cut += len(ranked_cut)
+            found_never += len([b for b in r.missing if b not in ranked_cut])
+            detail = ", ".join(
+                f"{b} (RANKED-BUT-CUT)" if b in ranked_cut else f"{b} (never found)"
+                for b in r.missing
+            )
+            add(f"- {r.pair_id} [{r.pair_type}]: {detail}")
+    add(
+        f"\nMiss anatomy: {cut} notes ranked-but-cut (budget problem: raise "
+        f"MAX_SYNTHESIS_NOTES / rebalance channels) vs {found_never} never found "
+        f"(discovery problem: channels blind to them)."
+    )
 
     if synth_results is not None:
         linked = sum(1 for v in synth_results.values() if v)
@@ -251,6 +279,7 @@ def synthesize_sample(
             dismissals,
             inject_bridges=4,
             inject_entities=4,
+            inject_dense=6,
             as_of=dates[newer],
         )
         language = detect_language(" ".join(n.summary_md for n in cands.notes)[:5000])
@@ -300,10 +329,13 @@ def main() -> int:
     dismissals = DismissalStore(vault).load()
 
     by_config: Dict[str, List[PairResult]] = {}
-    for name, bridges, entities in CONFIGS:
-        print(f"config {name} (bridges={bridges}, entities={entities}) ...")
+    for name, bridges, entities, dense in CONFIGS:
+        print(
+            f"config {name} (bridges={bridges}, entities={entities}, "
+            f"dense={dense}) ..."
+        )
         by_config[name] = run_config(
-            confirmed, vault, dismissals, bridges, entities, corpus_dates
+            confirmed, vault, dismissals, bridges, entities, corpus_dates, dense
         )
 
     synth_results = None

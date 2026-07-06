@@ -48,6 +48,30 @@ def _normalize(entity: str) -> str:
     return re.sub(r"\s+", " ", entity).strip().casefold()
 
 
+def _token_key(token: str) -> str:
+    """Inflection-tolerant key for one token of an entity name.
+
+    Polish declension changes word endings ('Fundacja Ziemi' vs 'Fundacji
+    Ziemi'), so exact-form matching misses the same entity across notes — the
+    recall eval showed the exact-match channel scoring near zero on a real
+    Polish corpus. Trimming up to 3 trailing chars (never below 4) collapses
+    case endings while keeping enough stem to stay distinctive.
+    """
+    return token if len(token) <= 4 else token[: max(4, len(token) - 3)]
+
+
+def entity_keys(text: str) -> Set[str]:
+    """Inflection-tolerant match keys for the entities of ``text``.
+
+    Same extraction as :func:`extract_entities`, but each token reduced to its
+    :func:`_token_key` stem — use THESE for cross-note joins.
+    """
+    return {
+        " ".join(_token_key(t) for t in entity.split())
+        for entity in extract_entities(text)
+    }
+
+
 def extract_entities(text: str) -> Set[str]:
     """Return the normalised entity set of ``text``.
 

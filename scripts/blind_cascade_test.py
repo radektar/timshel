@@ -319,9 +319,10 @@ def main() -> int:
         dismissals,
         first_run_window=args.window,
         inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
-        # Entity channel is off in the production default (unvalidated); the
-        # blind test evaluates the full prototype pipeline, so turn it on here.
+        # Entity + dense channels are off in the production default
+        # (unvalidated); the blind test evaluates the full prototype pipeline.
         inject_entities=4,
+        inject_dense=6,
     )
     if len(base.notes) < 4:
         print(

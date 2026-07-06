@@ -177,6 +177,57 @@ def test_entities_off_by_default_no_entity_channel(vault):
     assert "entity" not in all_channels
 
 
+def test_dense_channel_uses_engine_and_attributes(vault, monkeypatch):
+    import src.connections.candidate_assembly as ca
+
+    _write_raw_note(vault, "older_sem", "2026-05-01", tags="a", body="kompost las")
+    _write_raw_note(vault, "newer", "2026-06-20", tags="b", body="ogrod projekt")
+
+    class _FakeEngine:
+        def knn_note_ids(self, query, k=20):
+            return ["older_sem"]
+
+    monkeypatch.setattr(ca, "_get_recall_engine", lambda vault_dir: _FakeEngine())
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_dense=3
+    )
+    names = {n.basename for n in cs.notes}
+    assert "older_sem" in names
+    assert "dense" in cs.channel_map.get("older_sem", set())
+
+
+def test_dense_channel_fails_soft_without_engine(vault, monkeypatch):
+    import src.connections.candidate_assembly as ca
+
+    _write_raw_note(vault, "older", "2026-05-01", tags="a", body="kompost")
+    _write_raw_note(vault, "newer", "2026-06-20", tags="b", body="ogrod")
+    monkeypatch.setattr(ca, "_get_recall_engine", lambda vault_dir: None)
+    cs = assemble_candidates(
+        vault, "2026-06-10T00:00:00", DismissalStore(vault), inject_dense=3
+    )
+    assert cs.window_basenames == {"newer"}  # no crash, channel just empty
+
+
+def test_precap_basenames_records_ranked_but_cut(vault, monkeypatch):
+    monkeypatch.setattr(config, "MAX_SYNTHESIS_NOTES", 2)
+    _write_note(vault, "newer", "2026-06-20", tags="t", summary="alpha beta")
+    _write_note(vault, "n1", "2026-05-02", tags="t", summary="alpha beta")
+    _write_note(vault, "n2", "2026-05-01", tags="t", summary="alpha beta")
+    cs = assemble_candidates(vault, "2026-06-10T00:00:00", DismissalStore(vault))
+    kept = {n.basename for n in cs.notes}
+    assert len(kept) == 2  # cap enforced
+    # the cut note was still RANKED by a channel -> visible in precap
+    cut = {"n1", "n2"} - kept
+    assert cut and cut <= cs.precap_basenames
+
+
+def _write_raw_note(vault, name, date, tags="", body=""):
+    (vault / f"{name}.md").write_text(
+        f'---\ntitle: "{name}"\ndate: {date}\ntags: [{tags}]\n---\n\n{body}\n',
+        encoding="utf-8",
+    )
+
+
 def test_as_of_excludes_future_notes(vault):
     _write_note(vault, "past", "2026-05-01", tags="t", summary="alpha")
     _write_note(vault, "cutoff_day", "2026-06-10", tags="t", summary="alpha")

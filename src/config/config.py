@@ -134,6 +134,11 @@ class Config:
     # magic-insights prototype turns it on explicitly (magic_digest.py,
     # blind_cascade_test.py); recall_eval.py sweeps it as a variable.
     SYNTHESIS_ENTITY_COUNT: int = 0
+    # Dense semantic channel: KNN over the vault's local embedding index (the
+    # recall engine — zero API cost). 0 = OFF, production baseline, same rule
+    # as the entity channel: unvalidated until H3 passes. Prototype tools turn
+    # it on explicitly.
+    SYNTHESIS_DENSE_COUNT: int = 0
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6

@@ -25,7 +25,9 @@ class RecallEngine:
     def __init__(self, vault_dir, *, db_path=None, provider=None, model=None):
         self._vault = Path(vault_dir)
         self._embedder = resolve_embedder(provider, model)
-        self._db_path = Path(db_path) if db_path else self._vault / ".malinche" / DB_FILENAME
+        self._db_path = (
+            Path(db_path) if db_path else self._vault / ".malinche" / DB_FILENAME
+        )
         self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
 
@@ -35,7 +37,8 @@ class RecallEngine:
             if existing is not None and existing != self._embedder.dim:
                 logger.info(
                     "recall: embedding dim changed (%s -> %s); rebuilding store",
-                    existing, self._embedder.dim,
+                    existing,
+                    self._embedder.dim,
                 )
                 self._db_path.unlink()
         store = VaultVectorStore(self._db_path, self._embedder.dim)
@@ -61,10 +64,30 @@ class RecallEngine:
         """Hybrid search plus the top dense cosine similarity (confidence signal)."""
         return self._retriever.search_scored(query, k=k)
 
+    def knn_note_ids(self, query: str, k: int = 20) -> List[str]:
+        """Pure-dense neighbours: unique note ids by ascending vector distance.
+
+        The seam the digest lane's dense preselection channel uses — no BM25,
+        no fusion, just 'which notes live near this text in embedding space'.
+        """
+        hits = self._store.knn(self._embedder.embed_query(query), k=k * 4)
+        out: List[str] = []
+        seen = set()
+        for h in hits:
+            if h.note_id in seen:
+                continue
+            seen.add(h.note_id)
+            out.append(h.note_id)
+            if len(out) >= k:
+                break
+        return out
+
     def index_path(self, path) -> int:
         return index_note(Path(path), self._store, self._embedder)
 
-    def backfill(self, *, progress: Optional[Callable] = None, incremental: bool = False) -> int:
+    def backfill(
+        self, *, progress: Optional[Callable] = None, incremental: bool = False
+    ) -> int:
         """Index every top-level transcript in the vault. One bad note never stops it.
 
         ``incremental`` skips notes already indexed at their current content hash — so
@@ -112,7 +135,9 @@ class RecallEngine:
         except Exception:  # pragma: no cover
             pass
         return [
-            p for p in sorted(self._vault.glob("*.md")) if p.parent.name != digest_dir_name
+            p
+            for p in sorted(self._vault.glob("*.md"))
+            if p.parent.name != digest_dir_name
         ]
 
     def count(self) -> int:
