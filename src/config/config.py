@@ -94,6 +94,22 @@ class Config:
     MAX_TAGGER_SUMMARY_CHARS: int = 3000
     MAX_TAGGER_TRANSCRIPT_CHARS: int = 1500
 
+    # Personal vocabulary (canonical terms harvested from the vault; grows
+    # with use — see src/vocabulary.py). Feeds whisper-cli --prompt and the
+    # summarizer's KNOWN TERMS block so proper names survive transcription.
+    VOCABULARY_ENABLED: bool = True
+    # Feed the glossary to whisper-cli as an initial prompt (separately
+    # switchable: it biases *decoding*, the riskier of the two levels).
+    WHISPER_GLOSSARY_ENABLED: bool = True
+    # Caps: prompt-block terms for the summarizer / chars for whisper's
+    # initial prompt (whisper reads ~224 tokens of prompt; ~600 chars of
+    # Polish names stays safely under).
+    VOCABULARY_MAX_PROMPT_TERMS: int = 60
+    VOCABULARY_WHISPER_MAX_CHARS: int = 600
+    # A bare capitalised-run entity must appear in at least this many notes
+    # before it counts as "confirmed" (wikilinked/curated terms skip this).
+    VOCABULARY_MIN_ENTITY_NOTES: int = 2
+
     # Connection synthesis ("Zestawianie") configuration
     ENABLE_CONNECTION_SYNTHESIS: bool = True
     # Connected LLM for the Insights action handoff (claude | chatgpt).

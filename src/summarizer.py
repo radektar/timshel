@@ -164,11 +164,14 @@ class BaseSummarizer(ABC):
     """
 
     @abstractmethod
-    def generate(self, transcript: str) -> Dict[str, str]:
+    def generate(self, transcript: str, known_terms_block: str = "") -> Dict[str, str]:
         """Generate summary and title from transcript.
 
         Args:
             transcript: Full transcription text
+            known_terms_block: Optional personal-glossary lines (see
+                :class:`src.vocabulary.VocabularyIndex.known_terms_block`);
+                empty string disables the KNOWN TERMS prompt block.
 
         Returns:
             Dict with 'title' and 'summary' keys
@@ -220,11 +223,13 @@ class ClaudeSummarizer(BaseSummarizer):
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
 
-    def generate(self, transcript: str) -> Dict[str, str]:
+    def generate(self, transcript: str, known_terms_block: str = "") -> Dict[str, str]:
         """Generate summary and title from transcript using Claude API.
 
         Args:
             transcript: Full transcription text
+            known_terms_block: Personal-glossary lines for the KNOWN TERMS
+                prompt block ("" = no block).
 
         Returns:
             Dict with 'title' and 'summary' keys
@@ -246,7 +251,7 @@ class ClaudeSummarizer(BaseSummarizer):
             )
             transcript = transcript[-max_transcript_length:]
 
-        prompt = self._build_prompt(transcript)
+        prompt = self._build_prompt(transcript, known_terms_block)
 
         try:
             logger.debug(f"Calling Claude API (model: {self.model})")
@@ -287,11 +292,12 @@ class ClaudeSummarizer(BaseSummarizer):
             logger.warning("Falling back to simple title generation")
             return self._fallback_summary(transcript)
 
-    def _build_prompt(self, transcript: str) -> str:
+    def _build_prompt(self, transcript: str, known_terms_block: str = "") -> str:
         """Build prompt for Claude API.
 
         Args:
             transcript: Transcription text
+            known_terms_block: Personal-glossary lines ("" = no block)
 
         Returns:
             Formatted prompt string
@@ -309,6 +315,31 @@ class ClaudeSummarizer(BaseSummarizer):
             )
         else:
             lang_directive = ""
+
+        # The user's confirmed vocabulary: canonicalise clear variants, under
+        # strict no-invention rules. Injected only when the glossary is
+        # non-empty, so a fresh vault gets the baseline prompt unchanged.
+        if known_terms_block:
+            known_terms_directive = f"""
+KNOWN TERMS — the user's confirmed vocabulary. This is the ONE exception to
+the VERBATIM rule above: speech-to-text mangles proper names phonetically,
+and the canonical spelling IS the term as actually spoken. When the
+transcript CLEARLY refers to one of the terms below — phonetically close, a
+listed alias, or unambiguous from context — write it in its canonical form
+everywhere in the notes (title, summary, key points, stances). Strict rules:
+- Canonicalise ONLY on a clear match. When unsure, keep exactly what was
+  transcribed — a wrong "correction" is worse than a mangled name.
+- NEVER mention a known term the recording does not refer to. This list says
+  what the user's world contains, not what this recording is about.
+- NEVER expand an abbreviation unless the expansion is given in this list or
+  spoken in the recording.
+- The "Quotes" section stays verbatim as transcribed, even when mangled —
+  quotes are evidence.
+
+{known_terms_block}
+"""
+        else:
+            known_terms_directive = ""
 
         return f"""{lang_directive}Analyse the audio transcript below and produce concise, well-structured notes.
 
@@ -329,7 +360,7 @@ VOCABULARY — preserve distinctive terms VERBATIM: proper names, product names,
 place names and domain-specific terms must appear exactly as spoken ("Digitakt"
 stays "Digitakt", never "music hardware"). These exact words are how notes are
 found and cross-linked later — a genericising paraphrase breaks that.
-
+{known_terms_directive}
 Produce:
 
 1. A SHORT TITLE (max {self.title_max_length} characters) — concise and descriptive, in the transcript's language.

@@ -442,6 +442,45 @@ class TestPromptConnectionSections:
         assert "VERBATIM" in prompt
 
 
+class TestPromptKnownTerms:
+    """The KNOWN TERMS block: personal glossary + its no-invention guards."""
+
+    @pytest.fixture
+    def summarizer(self):
+        with patch("src.summarizer.Anthropic"):
+            return ClaudeSummarizer(api_key="test-key", model="m")
+
+    def test_block_absent_without_glossary(self, summarizer):
+        """A fresh vault gets the baseline prompt — no dangling KNOWN TERMS."""
+        prompt = summarizer._build_prompt("Zwykła notatka o planach.")
+        assert "KNOWN TERMS" not in prompt
+
+    def test_block_present_with_glossary_and_guards(self, summarizer):
+        block = "- Tech to the Rescue (aliases: TTTR, TekTutoreski)"
+        prompt = summarizer._build_prompt("Notatka o TTTR.", known_terms_block=block)
+        assert "KNOWN TERMS" in prompt
+        assert "- Tech to the Rescue (aliases: TTTR, TekTutoreski)" in prompt
+        # The defensive contract, verbatim anchors:
+        assert "Canonicalise ONLY on a clear match" in prompt
+        assert "NEVER mention a known term the recording does not refer to" in prompt
+        assert "NEVER expand an abbreviation" in prompt
+        # Quotes stay evidence — mangled forms survive there.
+        assert 'The "Quotes" section stays verbatim' in prompt
+
+    def test_generate_threads_block_into_prompt(self, summarizer):
+        """generate(known_terms_block=...) must reach _build_prompt."""
+        captured = {}
+
+        def fake_build(transcript, block=""):
+            captured["block"] = block
+            return "PROMPT"
+
+        summarizer._build_prompt = fake_build
+        summarizer.client.messages.create.side_effect = Exception("stop here")
+        summarizer.generate("Notatka.", known_terms_block="- Haetta")
+        assert captured["block"] == "- Haetta"
+
+
 class TestDetectLanguage:
     """Pure, API-free output-language detection (drives the prompt directive)."""
 

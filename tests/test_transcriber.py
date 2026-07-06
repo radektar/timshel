@@ -19,20 +19,20 @@ from src.config.settings import UserSettings
 
 def update_transcriber_config(transcriber, monkeypatch, **kwargs):
     """Helper to update both transcriber.config and global config.
-    
+
     Args:
         transcriber: Transcriber instance
         monkeypatch: pytest monkeypatch fixture
         **kwargs: Config attributes to update (e.g., TRANSCRIBE_DIR=path)
     """
     from src import config as config_module
-    
+
     from src import config as config_module
-    
+
     # Update transcriber's injected config
     for key, value in kwargs.items():
         setattr(transcriber.config, key, value)
-    
+
     # Also update global config for state_manager functions
     for key, value in kwargs.items():
         monkeypatch.setattr(config_module.config, key, value)
@@ -53,7 +53,7 @@ def transcriber(monkeypatch, tmp_path):
     # Support dir.
     test_config.STATE_FILE = tmp_path / "state.json"
 
-    with patch('src.transcriber.logger'):
+    with patch("src.transcriber.logger"):
         # Pass config explicitly for dependency injection
         return Transcriber(config=test_config)
 
@@ -63,15 +63,15 @@ def mock_recorder_path(tmp_path):
     """Create a mock recorder directory with audio files."""
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
-    
+
     # Create some audio files
     audio_dir = recorder / "Music"
     audio_dir.mkdir()
-    
+
     (audio_dir / "recording1.mp3").touch()
     (audio_dir / "recording2.wav").touch()
     (audio_dir / "document.txt").touch()  # Non-audio file
-    
+
     return recorder
 
 
@@ -147,8 +147,9 @@ def test_find_recorders_manual_mode_detects_trusted_volumes(
     )
     monkeypatch.setattr(
         "src.transcriber.find_matching_volumes",
-        lambda s: __import__("src.volume_utils", fromlist=["find_matching_volumes"])
-        .find_matching_volumes(s, volumes_root=volumes_root),
+        lambda s: __import__(
+            "src.volume_utils", fromlist=["find_matching_volumes"]
+        ).find_matching_volumes(s, volumes_root=volumes_root),
     )
     transcriber.config.RECORDER_NAMES = []
 
@@ -184,8 +185,9 @@ def test_find_recorders_skips_system_volumes_even_when_trusted(
     )
     monkeypatch.setattr(
         "src.transcriber.find_matching_volumes",
-        lambda s: __import__("src.volume_utils", fromlist=["find_matching_volumes"])
-        .find_matching_volumes(s, volumes_root=volumes_root),
+        lambda s: __import__(
+            "src.volume_utils", fromlist=["find_matching_volumes"]
+        ).find_matching_volumes(s, volumes_root=volumes_root),
     )
     transcriber.config.RECORDER_NAMES = []
 
@@ -213,8 +215,9 @@ def test_find_recorders_manual_mode_ignores_unknown_volume(
     )
     monkeypatch.setattr(
         "src.transcriber.find_matching_volumes",
-        lambda s: __import__("src.volume_utils", fromlist=["find_matching_volumes"])
-        .find_matching_volumes(s, volumes_root=volumes_root),
+        lambda s: __import__(
+            "src.volume_utils", fromlist=["find_matching_volumes"]
+        ).find_matching_volumes(s, volumes_root=volumes_root),
     )
     transcriber.config.RECORDER_NAMES = []
 
@@ -230,16 +233,15 @@ def test_find_recorders_specific_mode_uses_watched_volumes(
     _make_volume_with_audio(volumes_root, "LS-P1")
     _make_volume_with_audio(volumes_root, "RANDOM_STICK")
 
-    settings = UserSettings(
-        watch_mode="specific", watched_volumes=["LS-P1"]
-    )
+    settings = UserSettings(watch_mode="specific", watched_volumes=["LS-P1"])
     monkeypatch.setattr(
         "src.transcriber.UserSettings.load", classmethod(lambda cls: settings)
     )
     monkeypatch.setattr(
         "src.transcriber.find_matching_volumes",
-        lambda s: __import__("src.volume_utils", fromlist=["find_matching_volumes"])
-        .find_matching_volumes(s, volumes_root=volumes_root),
+        lambda s: __import__(
+            "src.volume_utils", fromlist=["find_matching_volumes"]
+        ).find_matching_volumes(s, volumes_root=volumes_root),
     )
     transcriber.config.RECORDER_NAMES = list(settings.watched_volumes)
 
@@ -248,9 +250,7 @@ def test_find_recorders_specific_mode_uses_watched_volumes(
     assert [r.name for r in recorders] == ["LS-P1"]
 
 
-def test_find_recorders_manual_mode_returns_empty(
-    transcriber, tmp_path, monkeypatch
-):
+def test_find_recorders_manual_mode_returns_empty(transcriber, tmp_path, monkeypatch):
     """Manual mode must never auto-detect, even when audio is present."""
     volumes_root = tmp_path / "Volumes"
     volumes_root.mkdir()
@@ -262,8 +262,9 @@ def test_find_recorders_manual_mode_returns_empty(
     )
     monkeypatch.setattr(
         "src.transcriber.find_matching_volumes",
-        lambda s: __import__("src.volume_utils", fromlist=["find_matching_volumes"])
-        .find_matching_volumes(s, volumes_root=volumes_root),
+        lambda s: __import__(
+            "src.volume_utils", fromlist=["find_matching_volumes"]
+        ).find_matching_volumes(s, volumes_root=volumes_root),
     )
     transcriber.config.RECORDER_NAMES = []
 
@@ -273,12 +274,12 @@ def test_find_recorders_manual_mode_returns_empty(
 def test_get_last_sync_time_no_file(transcriber, tmp_path, monkeypatch):
     """Test get_last_sync_time when no state file exists."""
     from src import config as config_module
-    
+
     state_file = tmp_path / "state.json"
-    monkeypatch.setattr(config_module.config, 'STATE_FILE', state_file)
-    
+    monkeypatch.setattr(config_module.config, "STATE_FILE", state_file)
+
     result = transcriber.get_last_sync_time()
-    
+
     # Should return approximately 7 days ago
     expected = datetime.now() - timedelta(days=7)
     assert abs((result - expected).total_seconds()) < 60  # Within 1 minute
@@ -287,15 +288,15 @@ def test_get_last_sync_time_no_file(transcriber, tmp_path, monkeypatch):
 def test_get_last_sync_time_with_file(transcriber, tmp_path, monkeypatch):
     """Test get_last_sync_time when state file exists."""
     from src import config as config_module
-    
+
     state_file = tmp_path / "state.json"
     test_time = datetime(2025, 1, 1, 12, 0, 0)
-    
-    with open(state_file, 'w') as f:
+
+    with open(state_file, "w") as f:
         json.dump({"last_sync": test_time.isoformat()}, f)
-    
-    monkeypatch.setattr(config_module.config, 'STATE_FILE', state_file)
-    
+
+    monkeypatch.setattr(config_module.config, "STATE_FILE", state_file)
+
     result = transcriber.get_last_sync_time()
     assert result == test_time
 
@@ -303,17 +304,17 @@ def test_get_last_sync_time_with_file(transcriber, tmp_path, monkeypatch):
 def test_save_sync_time(transcriber, tmp_path, monkeypatch):
     """Test save_sync_time writes to state file."""
     from src import config as config_module
-    
+
     state_file = tmp_path / "state.json"
-    monkeypatch.setattr(config_module.config, 'STATE_FILE', state_file)
-    
+    monkeypatch.setattr(config_module.config, "STATE_FILE", state_file)
+
     transcriber.save_sync_time()
-    
+
     assert state_file.exists()
-    
-    with open(state_file, 'r') as f:
+
+    with open(state_file, "r") as f:
         data = json.load(f)
-    
+
     assert "last_sync" in data
     # Should be very recent
     sync_time = datetime.fromisoformat(data["last_sync"])
@@ -323,9 +324,9 @@ def test_save_sync_time(transcriber, tmp_path, monkeypatch):
 def test_find_audio_files(transcriber, mock_recorder_path):
     """Test find_audio_files finds correct files."""
     since = datetime.now() - timedelta(days=1)
-    
+
     files = transcriber.find_audio_files(mock_recorder_path, since)
-    
+
     # Should find 2 audio files (mp3 and wav), not txt
     assert len(files) == 2
     assert all(f.suffix in {".mp3", ".wav"} for f in files)
@@ -335,56 +336,65 @@ def test_find_audio_files_filters_by_time(transcriber, mock_recorder_path):
     """Test find_audio_files filters by modification time."""
     # Set 'since' to future, should find no files
     since = datetime.now() + timedelta(days=1)
-    
+
     files = transcriber.find_audio_files(mock_recorder_path, since)
-    
+
     assert len(files) == 0
 
 
 def test_find_audio_files_respects_max_depth(transcriber, tmp_path):
     """Test find_audio_files respects MAX_SCAN_DEPTH limit."""
     from src.config.defaults import defaults
-    
+
     # Create directory structure with files at different depths
     recorder = tmp_path / "TEST_VOLUME"
     recorder.mkdir()
-    
+
     # Depth 1: recorder/level1/file.mp3
     (recorder / "level1").mkdir()
     file_depth1 = recorder / "level1" / "file1.mp3"
     file_depth1.touch()
-    
+
     # Depth 2: recorder/level1/level2/file.mp3
     (recorder / "level1" / "level2").mkdir()
     file_depth2 = recorder / "level1" / "level2" / "file2.mp3"
     file_depth2.touch()
-    
+
     # Depth 3: recorder/level1/level2/level3/file.mp3 (should be found)
     (recorder / "level1" / "level2" / "level3").mkdir()
     file_depth3 = recorder / "level1" / "level2" / "level3" / "file3.mp3"
     file_depth3.touch()
-    
+
     # Depth 4: recorder/level1/level2/level3/level4/file.mp3 (should be ignored)
     (recorder / "level1" / "level2" / "level3" / "level4").mkdir()
     file_depth4 = recorder / "level1" / "level2" / "level3" / "level4" / "file4.mp3"
     file_depth4.touch()
-    
+
     # Set all files to recent modification time
     since = datetime.now() - timedelta(hours=1)
     for f in [file_depth1, file_depth2, file_depth3, file_depth4]:
         import os
+
         os.utime(f, (since.timestamp(), since.timestamp()))
-    
+
     # Find files
     files = transcriber.find_audio_files(recorder, since - timedelta(minutes=30))
-    
+
     # Should find files at depth 1, 2, 3 (≤ max_depth=3)
     found_paths = {f.relative_to(recorder) for f in files}
-    
-    assert file_depth1.relative_to(recorder) in found_paths, "Depth 1 file should be found"
-    assert file_depth2.relative_to(recorder) in found_paths, "Depth 2 file should be found"
-    assert file_depth3.relative_to(recorder) in found_paths, "Depth 3 file should be found"
-    assert file_depth4.relative_to(recorder) not in found_paths, "Depth 4 file should be ignored (depth > max_depth)"
+
+    assert (
+        file_depth1.relative_to(recorder) in found_paths
+    ), "Depth 1 file should be found"
+    assert (
+        file_depth2.relative_to(recorder) in found_paths
+    ), "Depth 2 file should be found"
+    assert (
+        file_depth3.relative_to(recorder) in found_paths
+    ), "Depth 3 file should be found"
+    assert (
+        file_depth4.relative_to(recorder) not in found_paths
+    ), "Depth 4 file should be ignored (depth > max_depth)"
 
 
 def test_transcribe_file_no_whisper(transcriber, tmp_path):
@@ -392,9 +402,9 @@ def test_transcribe_file_no_whisper(transcriber, tmp_path):
     transcriber.whisper_available = False
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
-    
+
     result = transcriber.transcribe_file(audio_file)
-    
+
     assert result is False
 
 
@@ -402,26 +412,26 @@ def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypa
     """Test transcribe_file when TXT output already exists."""
     # Patch global config for state_manager functions
     from src import config as config_module
-    
+
     transcriber.whisper_available = True
     # Avoid calling real whisper.cpp if logic regresses
     transcriber._run_macwhisper = MagicMock(return_value=None)  # type: ignore[arg-type]
-    
+
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
-    
+
     output_dir = tmp_path / "output"
     output_dir.mkdir()
     output_file = output_dir / "test.txt"
     output_file.write_text("Test transcript")
-    
+
     # Update transcriber's injected config (not global config)
     transcriber.config.TRANSCRIBE_DIR = output_dir
     # Also patch global for state_manager functions
-    monkeypatch.setattr(config_module.config, 'TRANSCRIBE_DIR', output_dir)
-    
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+
     result = transcriber.transcribe_file(audio_file)
-    
+
     assert result is True  # Already exists counts as success (via post-process)
 
 
@@ -429,21 +439,23 @@ def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
     """Test successful post-processing of transcript."""
     output_dir = tmp_path / "output"
     output_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, DELETE_TEMP_TXT=True)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, DELETE_TEMP_TXT=True
+    )
+
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
     transcript_file = output_dir / "test.txt"
     transcript_file.write_text("Test transcript content")
-    
+
     # Mock summarizer
     mock_summarizer = MagicMock(spec=BaseSummarizer)
     mock_summarizer.generate.return_value = {
         "title": "Test Title",
-        "summary": "Test summary"
+        "summary": "Test summary",
     }
     transcriber.summarizer = mock_summarizer
-    
+
     # Mock markdown generator
     mock_md_gen = MagicMock(spec=MarkdownGenerator)
     mock_md_gen.extract_audio_metadata.return_value = {
@@ -451,12 +463,12 @@ def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
         "extension": ".mp3",
         "recording_datetime": datetime.now(),
         "duration_seconds": 60,
-        "duration_formatted": "00:01:00"
+        "duration_formatted": "00:01:00",
     }
     mock_md_path = output_dir / "2025-11-19_Test_Title.md"
     mock_md_gen.create_markdown_document.return_value = mock_md_path
     transcriber.markdown_generator = mock_md_gen
-    
+
     result = transcriber._postprocess_transcript(
         audio_file, transcript_file, fingerprint="sha256:test"
     )
@@ -473,15 +485,15 @@ def test_postprocess_transcript_no_summarizer(transcriber, tmp_path, monkeypatch
     output_dir = tmp_path / "output"
     output_dir.mkdir()
     update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir)
-    
+
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
     transcript_file = output_dir / "test.txt"
     transcript_file.write_text("Test transcript")
-    
+
     # No summarizer
     transcriber.summarizer = None
-    
+
     # Mock markdown generator
     mock_md_gen = MagicMock(spec=MarkdownGenerator)
     mock_md_gen.extract_audio_metadata.return_value = {
@@ -489,12 +501,12 @@ def test_postprocess_transcript_no_summarizer(transcriber, tmp_path, monkeypatch
         "extension": ".mp3",
         "recording_datetime": datetime.now(),
         "duration_seconds": 60,
-        "duration_formatted": "00:01:00"
+        "duration_formatted": "00:01:00",
     }
     mock_md_path = output_dir / "2025-11-19_test.md"
     mock_md_gen.create_markdown_document.return_value = mock_md_path
     transcriber.markdown_generator = mock_md_gen
-    
+
     result = transcriber._postprocess_transcript(
         audio_file, transcript_file, fingerprint="sha256:test"
     )
@@ -569,7 +581,9 @@ def test_postprocess_transcript_passes_tags(monkeypatch, tmp_path, transcriber):
 
     output_dir = tmp_path / "output"
     output_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, ENABLE_LLM_TAGGING=False)
+    update_transcriber_config(
+        transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, ENABLE_LLM_TAGGING=False
+    )
 
     audio_file = tmp_path / "sample.mp3"
     audio_file.touch()
@@ -601,7 +615,7 @@ def test_postprocess_transcript_passes_tags(monkeypatch, tmp_path, transcriber):
 
 def test_process_recorder_no_recorder(transcriber):
     """Test process_recorder when no recorder is found."""
-    with patch.object(transcriber, 'find_recorders', return_value=[]):
+    with patch.object(transcriber, "find_recorders", return_value=[]):
         transcriber.process_recorder()
 
         assert not transcriber.recorder_monitoring
@@ -609,18 +623,21 @@ def test_process_recorder_no_recorder(transcriber):
 
 def test_process_recorder_with_files(transcriber, mock_recorder_path):
     """Test process_recorder with new files."""
-    with patch.object(transcriber, 'find_recorders', return_value=[mock_recorder_path]):
+    with patch.object(transcriber, "find_recorders", return_value=[mock_recorder_path]):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(mock_recorder_path / "Music" / "recording1.mp3", "fp-1")],
         ):
-            with patch.object(transcriber, 'get_last_sync_time', 
-                             return_value=datetime.now() - timedelta(days=1)):
-                with patch.object(transcriber, 'transcribe_file', return_value=True):
-                    with patch.object(transcriber, 'save_sync_time'):
+            with patch.object(
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
+            ):
+                with patch.object(transcriber, "transcribe_file", return_value=True):
+                    with patch.object(transcriber, "save_sync_time"):
                         transcriber.process_recorder()
-                        
+
                         assert transcriber.recorder_monitoring
 
 
@@ -628,14 +645,16 @@ def test_stage_audio_file_success(transcriber, tmp_path, monkeypatch):
     """Test successful staging of audio file."""
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder_file = tmp_path / "recorder" / "test.mp3"
     recorder_file.parent.mkdir()
     recorder_file.write_bytes(b"fake audio data")
-    
+
     staged_path = transcriber._stage_audio_file(recorder_file)
-    
+
     assert staged_path is not None
     assert staged_path == staging_dir / "test.mp3"
     assert staged_path.exists()
@@ -646,12 +665,14 @@ def test_stage_audio_file_not_found(transcriber, tmp_path, monkeypatch):
     """Test staging when recorder file doesn't exist."""
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder_file = tmp_path / "nonexistent.mp3"
-    
+
     staged_path = transcriber._stage_audio_file(recorder_file)
-    
+
     assert staged_path is None
 
 
@@ -659,15 +680,17 @@ def test_stage_audio_file_reuse_existing(transcriber, tmp_path, monkeypatch):
     """Test staging reuses existing copy if it matches."""
     from src import config as config_module
     import time
-    
+
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder_file = tmp_path / "recorder" / "test.mp3"
     recorder_file.parent.mkdir()
     recorder_file.write_bytes(b"fake audio data")
-    
+
     # Create existing staged file with same content
     staged_file = staging_dir / "test.mp3"
     staged_file.write_bytes(b"fake audio data")
@@ -675,9 +698,9 @@ def test_stage_audio_file_reuse_existing(transcriber, tmp_path, monkeypatch):
     staged_file.touch()
     time.sleep(0.1)  # Small delay to ensure mtime is set
     recorder_file.touch()
-    
+
     staged_path = transcriber._stage_audio_file(recorder_file)
-    
+
     assert staged_path is not None
     assert staged_path == staged_file
 
@@ -685,26 +708,37 @@ def test_stage_audio_file_reuse_existing(transcriber, tmp_path, monkeypatch):
 def test_process_recorder_staging_integration(transcriber, tmp_path, monkeypatch):
     """Test process_recorder uses staging before transcription."""
     from src import config as config_module
-    
+
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
     audio_file = recorder / "test.mp3"
     audio_file.write_bytes(b"fake audio")
-    
-    with patch.object(transcriber, 'find_recorders', return_value=([] if recorder is None else [recorder])):
+
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if recorder is None else [recorder]),
+    ):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(audio_file, "fp-test")],
         ):
-            with patch.object(transcriber, 'get_last_sync_time',
-                             return_value=datetime.now() - timedelta(days=1)):
-                with patch.object(transcriber, 'transcribe_file', return_value=True) as mock_transcribe:
-                    with patch.object(transcriber, 'save_sync_time'):
+            with patch.object(
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
+            ):
+                with patch.object(
+                    transcriber, "transcribe_file", return_value=True
+                ) as mock_transcribe:
+                    with patch.object(transcriber, "save_sync_time"):
                         transcriber.process_recorder()
 
                         # Verify transcribe_file was called with staged path
@@ -717,62 +751,83 @@ def test_process_recorder_staging_integration(transcriber, tmp_path, monkeypatch
 def test_process_recorder_batch_failure_handling(transcriber, tmp_path, monkeypatch):
     """Test that last_sync is not updated if any file fails."""
     from src import config as config_module
-    
+
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
     audio_file1 = recorder / "test1.mp3"
     audio_file1.write_bytes(b"fake audio")
     audio_file2 = recorder / "test2.mp3"
     audio_file2.write_bytes(b"fake audio")
-    
-    with patch.object(transcriber, 'find_recorders', return_value=([] if recorder is None else [recorder])):
+
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if recorder is None else [recorder]),
+    ):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(audio_file1, "fp-1"), (audio_file2, "fp-2")],
         ):
-            with patch.object(transcriber, 'get_last_sync_time',
-                             return_value=datetime.now() - timedelta(days=1)):
+            with patch.object(
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
+            ):
                 # First succeeds, second fails
-                with patch.object(transcriber, 'transcribe_file',
-                                side_effect=[True, False]) as mock_transcribe:
-                    with patch.object(transcriber, 'save_sync_time') as mock_save:
+                with patch.object(
+                    transcriber, "transcribe_file", side_effect=[True, False]
+                ) as mock_transcribe:
+                    with patch.object(transcriber, "save_sync_time") as mock_save:
                         transcriber.process_recorder()
 
                         # Should NOT save sync time because one file failed
                         mock_save.assert_not_called()
 
 
-def test_process_recorder_batch_success_updates_sync(transcriber, tmp_path, monkeypatch):
+def test_process_recorder_batch_success_updates_sync(
+    transcriber, tmp_path, monkeypatch
+):
     """Test that last_sync is updated when all files succeed."""
     from src import config as config_module
-    
+
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
-    
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
     audio_file1 = recorder / "test1.mp3"
     audio_file1.write_bytes(b"fake audio")
     audio_file2 = recorder / "test2.mp3"
     audio_file2.write_bytes(b"fake audio")
-    
-    with patch.object(transcriber, 'find_recorders', return_value=([] if recorder is None else [recorder])):
+
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if recorder is None else [recorder]),
+    ):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(audio_file1, "fp-1"), (audio_file2, "fp-2")],
         ):
-            with patch.object(transcriber, 'get_last_sync_time',
-                             return_value=datetime.now() - timedelta(days=1)):
+            with patch.object(
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
+            ):
                 # Both succeed
-                with patch.object(transcriber, 'transcribe_file', return_value=True):
-                    with patch.object(transcriber, 'save_sync_time') as mock_save:
+                with patch.object(transcriber, "transcribe_file", return_value=True):
+                    with patch.object(transcriber, "save_sync_time") as mock_save:
                         transcriber.process_recorder()
 
                         # Should save sync time because all files succeeded
@@ -789,7 +844,12 @@ def test_process_recorder_skips_files_with_existing_markdown(
     staging_dir.mkdir()
     transcript_dir = tmp_path / "transcripts"
     transcript_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir, TRANSCRIBE_DIR=transcript_dir)
+    update_transcriber_config(
+        transcriber,
+        monkeypatch,
+        LOCAL_RECORDINGS_DIR=staging_dir,
+        TRANSCRIBE_DIR=transcript_dir,
+    )
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
     processed_file = recorder / "processed.mp3"
@@ -813,18 +873,30 @@ def test_process_recorder_skips_files_with_existing_markdown(
 
     staged_new = staging_dir / "new.mp3"
     staged_new.write_bytes(b"new")
-    with patch.object(transcriber, "find_recorders", return_value=([] if recorder is None else [recorder])):
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if recorder is None else [recorder]),
+    ):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(processed_file, "fp-processed"), (new_file, "fp-new")],
         ):
             with patch.object(
-                transcriber, "get_last_sync_time", return_value=datetime.now() - timedelta(days=1)
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
             ):
-                with patch.object(transcriber, "_stage_audio_file", return_value=staged_new) as mock_stage:
-                    with patch.object(transcriber, "transcribe_file", return_value=True) as mock_transcribe:
-                        with patch.object(transcriber, "save_sync_time") as mock_save_sync:
+                with patch.object(
+                    transcriber, "_stage_audio_file", return_value=staged_new
+                ) as mock_stage:
+                    with patch.object(
+                        transcriber, "transcribe_file", return_value=True
+                    ) as mock_transcribe:
+                        with patch.object(
+                            transcriber, "save_sync_time"
+                        ) as mock_save_sync:
                             transcriber.process_recorder()
 
     mock_stage.assert_called_once()
@@ -885,22 +957,21 @@ def test_run_whisper_transcription_disables_metal_for_cpu(
     from src import config as config_module
 
     audio_file = tmp_path / "sample.mp3"
-    audio_file.touch()    # Point config to temporary paths so command construction works
+    audio_file.touch()  # Point config to temporary paths so command construction works
     update_transcriber_config(
-        transcriber, monkeypatch,
+        transcriber,
+        monkeypatch,
         WHISPER_CPP_MODELS_DIR=tmp_path,
         WHISPER_MODEL="small",
         WHISPER_CPP_PATH=tmp_path / "whisper-cli",
-        TRANSCRIBE_DIR=tmp_path
+        TRANSCRIBE_DIR=tmp_path,
     )
 
     captured = {}
 
     def fake_stream(cmd, *, env, use_coreml, audio_file):
         captured["env"] = env
-        return subprocess.CompletedProcess(
-            args=cmd, returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(transcriber, "_run_whisper_streaming", fake_stream)
 
@@ -910,6 +981,44 @@ def test_run_whisper_transcription_disables_metal_for_cpu(
     assert env is not None
     assert env.get("WHISPER_COREML") == "0"
     assert env.get("GGML_METAL_DISABLE") == "1"
+
+
+def test_run_whisper_transcription_injects_glossary_prompt(
+    transcriber, tmp_path, monkeypatch
+):
+    """The personal glossary reaches whisper-cli as --prompt (and only when
+    non-empty — an empty glossary must leave the command untouched)."""
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    update_transcriber_config(
+        transcriber,
+        monkeypatch,
+        WHISPER_CPP_MODELS_DIR=tmp_path,
+        WHISPER_MODEL="small",
+        WHISPER_CPP_PATH=tmp_path / "whisper-cli",
+        TRANSCRIBE_DIR=tmp_path,
+    )
+
+    captured = {}
+
+    def fake_stream(cmd, *, env, use_coreml, audio_file):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(transcriber, "_run_whisper_streaming", fake_stream)
+    monkeypatch.setattr(
+        transcriber.vocabulary, "whisper_prompt", lambda: "Tech to the Rescue, TTTR"
+    )
+
+    _ = transcriber._run_whisper_transcription(audio_file, use_coreml=True)
+    cmd = captured["cmd"]
+    assert "--prompt" in cmd
+    assert cmd[cmd.index("--prompt") + 1] == "Tech to the Rescue, TTTR"
+
+    # Empty glossary (fresh vault / feature off) -> no --prompt flag at all.
+    monkeypatch.setattr(transcriber.vocabulary, "whisper_prompt", lambda: "")
+    _ = transcriber._run_whisper_transcription(audio_file, use_coreml=True)
+    assert "--prompt" not in captured["cmd"]
 
 
 class _FakePipeProc:
@@ -942,7 +1051,9 @@ class _FakePipeProc:
         self.returncode = -9
 
 
-def test_streaming_aborts_coreml_early_on_metal_error(transcriber, tmp_path, monkeypatch):
+def test_streaming_aborts_coreml_early_on_metal_error(
+    transcriber, tmp_path, monkeypatch
+):
     """A Metal marker in stderr must kill the GPU attempt immediately (not after
     the full run) and surface as a failure so the caller retries on CPU."""
     payload = (
@@ -1113,9 +1224,9 @@ def test_process_lock_ignores_leftover_file_contents(tmp_path):
 
     leftovers = [
         f"{os.getpid()}\n{time_module.time():.0f}",  # our own (live) PID
-        f"1\n{time_module.time():.0f}",              # PID 1 — always alive
-        "",                                          # empty: killed mid-acquire
-        "garbage-not-a-pid",                         # corrupt
+        f"1\n{time_module.time():.0f}",  # PID 1 — always alive
+        "",  # empty: killed mid-acquire
+        "garbage-not-a-pid",  # corrupt
     ]
     for leftover in leftovers:
         lock_path.write_text(leftover, encoding="utf-8")
@@ -1150,19 +1261,28 @@ def test_force_retranscribe_busy_when_workflow_lock_held(transcriber, tmp_path):
         transcriber._workflow_lock.release()
 
 
-@patch('src.transcriber.send_notification')
-def test_process_recorder_no_notification_when_no_new_files(mock_notification, transcriber, mock_recorder_path):
+@patch("src.transcriber.send_notification")
+def test_process_recorder_no_notification_when_no_new_files(
+    mock_notification, transcriber, mock_recorder_path
+):
     """No system notification on recorder detection — the menu-bar status shows it."""
-    with patch.object(transcriber, 'find_recorders', return_value=([] if mock_recorder_path is None else [mock_recorder_path])):
-        with patch.object(transcriber, 'get_last_sync_time',
-                         return_value=datetime.now() + timedelta(days=1)):  # Future date = no new files
-            with patch.object(transcriber, 'save_sync_time'):
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if mock_recorder_path is None else [mock_recorder_path]),
+    ):
+        with patch.object(
+            transcriber,
+            "get_last_sync_time",
+            return_value=datetime.now() + timedelta(days=1),
+        ):  # Future date = no new files
+            with patch.object(transcriber, "save_sync_time"):
                 transcriber.process_recorder()
 
                 assert mock_notification.call_count == 0
 
 
-@patch('src.transcriber.send_notification')
+@patch("src.transcriber.send_notification")
 def test_process_recorder_emits_no_status_notifications_when_files_found(
     mock_notification, transcriber, mock_recorder_path, tmp_path, monkeypatch
 ):
@@ -1176,26 +1296,33 @@ def test_process_recorder_emits_no_status_notifications_when_files_found(
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
-    update_transcriber_config(transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir)
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
 
-    with patch.object(transcriber, 'find_recorders', return_value=([] if mock_recorder_path is None else [mock_recorder_path])):
+    with patch.object(
+        transcriber,
+        "find_recorders",
+        return_value=([] if mock_recorder_path is None else [mock_recorder_path]),
+    ):
         with patch.object(
             transcriber,
             "find_pending_audio_files",
             return_value=[(mock_recorder_path / "Music" / "recording1.mp3", "fp-1")],
         ):
-            with patch.object(transcriber, 'get_last_sync_time',
-                             return_value=datetime.now() - timedelta(days=1)):  # Past date = new files
-                with patch.object(transcriber, 'transcribe_file', return_value=True):
-                    with patch.object(transcriber, 'save_sync_time'):
+            with patch.object(
+                transcriber,
+                "get_last_sync_time",
+                return_value=datetime.now() - timedelta(days=1),
+            ):  # Past date = new files
+                with patch.object(transcriber, "transcribe_file", return_value=True):
+                    with patch.object(transcriber, "save_sync_time"):
                         transcriber.process_recorder()
 
                         assert mock_notification.call_count == 0
 
 
-def test_process_recorder_does_not_force_idle_when_lock_held(
-    transcriber, monkeypatch
-):
+def test_process_recorder_does_not_force_idle_when_lock_held(transcriber, monkeypatch):
     """Lock contention should not reset status to IDLE (avoid UI flicker)."""
     from src import transcriber as transcriber_module
 
@@ -1249,14 +1376,20 @@ def test_find_pending_audio_files_returns_files_without_fingerprint(
     assert pending == [(unknown, "fp-unknown")]
 
 
-def test_process_recorder_sets_recorder_idle_when_all_transcribed(transcriber, tmp_path):
+def test_process_recorder_sets_recorder_idle_when_all_transcribed(
+    transcriber, tmp_path
+):
     """Connected recorder with no pending files should set RECORDER_IDLE."""
     recorder = tmp_path / "LS-P1"
     recorder.mkdir()
 
-    with patch.object(transcriber, "find_recorders", return_value=[recorder]), patch.object(
+    with patch.object(
+        transcriber, "find_recorders", return_value=[recorder]
+    ), patch.object(
         transcriber, "find_pending_audio_files", return_value=[]
-    ), patch.object(transcriber, "find_audio_files", return_value=[]):
+    ), patch.object(
+        transcriber, "find_audio_files", return_value=[]
+    ):
         updates = []
         transcriber.set_state_updater(
             lambda status, current, err, rec_name, pending: updates.append(
@@ -1282,9 +1415,13 @@ def test_process_recorder_sets_recorder_pending_when_files_missing(
         path.write_bytes(b"x")
 
     pending_tuples = [(p, f"fp-{p.name}") for p in pending_files]
-    with patch.object(transcriber, "find_recorders", return_value=[recorder]), patch.object(
+    with patch.object(
+        transcriber, "find_recorders", return_value=[recorder]
+    ), patch.object(
         transcriber, "find_pending_audio_files", return_value=pending_tuples
-    ), patch.object(transcriber, "find_audio_files", return_value=[]):
+    ), patch.object(
+        transcriber, "find_audio_files", return_value=[]
+    ):
         updates = []
         transcriber.set_state_updater(
             lambda status, current, err, rec_name, pending: updates.append(
@@ -1326,7 +1463,10 @@ def test_extract_fallback_title_empty_string_returns_empty():
 
 def test_extract_fallback_title_brak_marker_returns_empty():
     """Marker '(Brak rozpoznawalnej mowy...)' nie jest tytułem."""
-    assert Transcriber._extract_fallback_title("(Brak rozpoznawalnej mowy w nagraniu)") == ""
+    assert (
+        Transcriber._extract_fallback_title("(Brak rozpoznawalnej mowy w nagraniu)")
+        == ""
+    )
 
 
 def test_wait_for_output_file_returns_true_immediately(tmp_path):
@@ -1337,16 +1477,20 @@ def test_wait_for_output_file_returns_true_immediately(tmp_path):
 
 def test_wait_for_output_file_returns_false_on_timeout(tmp_path):
     target = tmp_path / "missing.txt"
-    assert Transcriber._wait_for_output_file(target, timeout=0.2, interval=0.05) is False
+    assert (
+        Transcriber._wait_for_output_file(target, timeout=0.2, interval=0.05) is False
+    )
 
 
 def test_wait_for_output_file_picks_up_late_arrival(tmp_path):
     """Symulujemy iCloud lag: plik pojawia się po 200ms."""
     import threading
+
     target = tmp_path / "delayed.txt"
 
     def create_late():
         import time as _t
+
         _t.sleep(0.2)
         target.write_text("late")
 
@@ -1369,7 +1513,9 @@ def test_force_retranscribe_lock_busy_raises(transcriber, tmp_path, monkeypatch)
         transcriber.force_retranscribe(audio)
 
 
-def test_reconcile_indexes_unindexed_markdown_and_cleans_txt(transcriber, tmp_path, monkeypatch):
+def test_reconcile_indexes_unindexed_markdown_and_cleans_txt(
+    transcriber, tmp_path, monkeypatch
+):
     """reconcile_existing_markdowns dodaje do vault_index brakujący wpis i usuwa osierocony .txt."""
     from src import config as config_module
 
@@ -1489,7 +1635,9 @@ def test_reconcile_counts_orphan_txt_for_recovery(transcriber, tmp_path, monkeyp
     assert (transcribe_dir / "260430_0173.txt").exists()
 
 
-def test_force_retranscribe_clears_vault_index_entry(transcriber, tmp_path, monkeypatch):
+def test_force_retranscribe_clears_vault_index_entry(
+    transcriber, tmp_path, monkeypatch
+):
     """force_retranscribe usuwa wpis z vault_index przed transcribe_file."""
     from src import config as config_module
     from src.vault_index import IndexEntry
@@ -1504,6 +1652,7 @@ def test_force_retranscribe_clears_vault_index_entry(transcriber, tmp_path, monk
 
     # Symuluj istniejący wpis (po wcześniejszej transkrypcji).
     from src.fingerprint import compute_fingerprint
+
     fp = compute_fingerprint(audio)
     transcriber.vault_index.add(
         fp,
@@ -1531,7 +1680,9 @@ def test_wait_for_output_file_requires_nonempty(tmp_path):
     """Pusty plik (size==0) NIE liczy się jako gotowy."""
     target = tmp_path / "empty.txt"
     target.write_text("")  # size=0
-    assert Transcriber._wait_for_output_file(target, timeout=0.2, interval=0.05) is False
+    assert (
+        Transcriber._wait_for_output_file(target, timeout=0.2, interval=0.05) is False
+    )
     target.write_text("some content")
     assert Transcriber._wait_for_output_file(target, timeout=0.5, interval=0.05) is True
 
@@ -1541,7 +1692,9 @@ def test_wait_for_output_file_requires_nonempty(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_whisper_transcription_uses_utf8_encoding(transcriber, tmp_path, monkeypatch):
+def test_run_whisper_transcription_uses_utf8_encoding(
+    transcriber, tmp_path, monkeypatch
+):
     """Regression: the whisper Popen musi mieć encoding='utf-8' i errors='replace'.
 
     W py2app środowisku locale.getpreferredencoding() to często ASCII, co
@@ -1632,8 +1785,7 @@ def test_subprocess_with_text_true_must_have_encoding_utf8():
     assert not offenders, (
         "subprocess.run(...) z text=True ale BEZ encoding='utf-8' "
         "spowoduje UnicodeDecodeError w py2app (ASCII locale). "
-        "Dodaj encoding='utf-8', errors='replace':\n  "
-        + "\n  ".join(offenders)
+        "Dodaj encoding='utf-8', errors='replace':\n  " + "\n  ".join(offenders)
     )
 
 
@@ -1645,6 +1797,7 @@ def test_filehandler_uses_utf8_encoding():
     """
     import inspect
     from src.logger import setup_logger
+
     source = inspect.getsource(setup_logger)
     assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source, (
         "setup_logger.FileHandler musi używać encoding='utf-8' "
