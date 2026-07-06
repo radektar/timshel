@@ -140,12 +140,20 @@ _PROPOSE_SYSTEM = (
 )
 
 
+# Per-note text budget in the mining prompt. The first run sent full summaries
+# (193k input tokens) — slow prefill, fragile stream, $1+ per attempt. ~700
+# chars still carries the stance/entities a pair check needs, and quotes are
+# verified later against fuller text anyway (confirm shows them; verdict/H3
+# re-read the notes).
+_PROPOSE_NOTE_CHARS = 700
+
+
 def _corpus_prompt(corpus: List[NoteRef]) -> str:
     lines = ["NOTES (whole corpus, oldest to newest):"]
     for note in sorted(corpus, key=lambda n: n.date):
         tags = ", ".join(note.tags) if note.tags else "—"
         lines.append(f"\n[[{note.basename}]] | {note.date} | tags: {tags}")
-        lines.append(note.summary_md.strip())
+        lines.append(note.summary_md.strip()[:_PROPOSE_NOTE_CHARS])
     return "\n".join(lines)
 
 
@@ -201,27 +209,51 @@ def propose_pairs(
 ) -> List[Dict[str, Any]]:
     """One Opus call over the whole corpus -> validated, deduped pair dicts."""
     import anthropic
+    import httpx
 
-    client = anthropic.Anthropic(api_key=api_key)
+    # Generous read timeout (long prefill on a big corpus sends no bytes for a
+    # while) + connection retries at the SDK layer.
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        timeout=httpx.Timeout(connect=30.0, read=900.0, write=60.0, pool=30.0),
+        max_retries=2,
+    )
     tool = {
         "name": _TOOL_NAME,
         "description": "Return the candidate planted pairs you mined.",
         "input_schema": PlantedPairList.model_json_schema(),
     }
+    prompt = _corpus_prompt(corpus)
     print(f"mining pairs with {model} over {len(corpus)} notes ...")
     # 32k output headroom: 40+ pairs with verbatim quotes truncated at 16k
     # (a truncated forced-tool call yields unparseable JSON = 0 pairs, money
-    # burned). Streaming keeps long generations under SDK timeout rules.
-    with client.messages.stream(
-        model=model,
-        max_tokens=32768,
-        timeout=600.0,
-        system=_PROPOSE_SYSTEM,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": _TOOL_NAME},
-        messages=[{"role": "user", "content": _corpus_prompt(corpus)}],
-    ) as stream:
-        message = stream.get_final_message()
+    # burned). Streaming keeps long generations alive; dots = progress.
+    message = None
+    for attempt in range(1, 4):
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=32768,
+                system=_PROPOSE_SYSTEM,
+                tools=[tool],
+                tool_choice={"type": "tool", "name": _TOOL_NAME},
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                n_events = 0
+                for _event in stream:
+                    n_events += 1
+                    if n_events % 250 == 0:
+                        print(".", end="", flush=True)
+                message = stream.get_final_message()
+            print()
+            break
+        except (httpx.TimeoutException, anthropic.APIConnectionError) as exc:
+            print(f"\n  ! attempt {attempt}/3 failed mid-stream: {exc}")
+            if attempt == 3:
+                print("  giving up — check the network and re-run propose")
+                return []
+    if message is None:
+        return []
     usage = getattr(message, "usage", None)
     if usage:
         print(
