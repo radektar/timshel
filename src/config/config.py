@@ -128,9 +128,12 @@ class Config:
     SYNTHESIS_BRIDGE_COUNT: int = 4
     # Entity distance-channel (Challenge #3): notes joined to the recent window
     # by a shared named entity (person/project/org) even after topic vocabulary
-    # drifts — the channel that catches contradictions BM25/tags miss. 0 = off
-    # (baseline). Enabled in the magic-insights prototype.
-    SYNTHESIS_ENTITY_COUNT: int = 4
+    # drifts — the channel that catches contradictions BM25/tags miss. 0 = OFF,
+    # the production baseline: this channel is UNVALIDATED (that is what H3
+    # measures), so it must not silently change every user's digest. The
+    # magic-insights prototype turns it on explicitly (magic_digest.py,
+    # blind_cascade_test.py); recall_eval.py sweeps it as a variable.
+    SYNTHESIS_ENTITY_COUNT: int = 0
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6
@@ -139,15 +142,20 @@ class Config:
     DIGEST_DIR_NAME: str = "Malinche Digests"
     # Magic-insights prototype instrumentation. Each digest appends a cost +
     # coverage record to {vault}/.malinche/metrics.jsonl (H1/H4 evidence base).
-    INSIGHT_METRICS_ENABLED: bool = True
+    # OFF by default: a normal user's daemon should not write a telemetry file
+    # (with private note basenames) into their vault. The prototype dogfood
+    # (magic_digest.py) turns it on for the measured runs.
+    INSIGHT_METRICS_ENABLED: bool = False
     # Verdict pass: verify proposed connections against fuller note text and
     # drop the ones that do not survive. Off = baseline digest, byte-identical.
     VERDICT_ENABLED: bool = False
     # Fuller-text budget per linked note in the verdict prompt.
     VERDICT_MAX_NOTE_CHARS: int = 4000
-    # Prototype tester mode: routes the synthesis stage through the strongest
-    # model (LLM_MODEL_SYNTHESIS, e.g. claude-opus-4-8), forces a digest run,
-    # and always emits metrics. Off in normal operation.
+    # Prototype tester mode: a LABEL only, written into each metrics row so a
+    # dogfood run can be told apart from a normal one. It does NOT itself route
+    # models, force runs, or toggle metrics — magic_digest.py sets those knobs
+    # (LLM_MODEL_*, force=True, VERDICT_ENABLED, INSIGHT_METRICS_ENABLED)
+    # explicitly alongside it. Off in normal operation.
     PROTOTYPE_TESTER_MODE: bool = False
 
     # Markdown template

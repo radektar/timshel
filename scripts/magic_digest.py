@@ -78,10 +78,13 @@ def main() -> int:
         return 1
 
     vault = Path(config.TRANSCRIBE_DIR)
-    # In-process overrides only (die with the process).
+    # In-process overrides only (die with the process). The entity channel is
+    # off in the production baseline (unvalidated); the dogfood turns it on so
+    # the digest we measure is the full prototype pipeline.
     config.PROTOTYPE_TESTER_MODE = True
     config.INSIGHT_METRICS_ENABLED = True
     config.VERDICT_ENABLED = not args.no_verdict
+    config.SYNTHESIS_ENTITY_COUNT = 4
     config.LLM_MODEL_SYNTHESIS = args.model
     config.LLM_MODEL_VERDICT = args.model
 

@@ -26,7 +26,11 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError
 
 from src.config import config
-from src.connections.candidate_assembly import NoteRef, _summary_or_excerpt
+from src.connections.candidate_assembly import (
+    NoteRef,
+    _body_after_frontmatter,
+    _excerpt,
+)
 from src.connections.synthesis import Connection
 from src.llm.model_router import resolve_model
 from src.logger import logger
@@ -102,8 +106,16 @@ _SYSTEM_PROMPT = (
 
 
 def _fuller_text(note: NoteRef, max_chars: int) -> str:
-    """Re-read the note's markdown for verification context; fall back to the
-    summary the synthesis pass already had."""
+    """Re-read the note and return summary + TRANSCRIPT (bounded head/tail).
+
+    Verification only means something against the ground truth, i.e. the actual
+    recording. ``_summary_or_excerpt`` (what synthesis uses) strips the
+    transcript whenever a summary block exists, so verifying against it would
+    check a quote against the very summary it may have been extracted from —
+    circular. We take the whole body after the frontmatter (summary AND
+    transcript) and bound it head/tail. Falls back to the summary only when the
+    file can't be re-read.
+    """
     try:
         full = note.md_path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -111,7 +123,7 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
             "verdict: cannot re-read %s (%s); using summary", note.md_path, exc
         )
         return note.summary_md
-    return _summary_or_excerpt(full, max_chars)
+    return _excerpt(_body_after_frontmatter(full).strip(), max_chars)
 
 
 def _build_user_prompt(

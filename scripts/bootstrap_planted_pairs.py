@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field, ValidationError  # noqa: E402
 from src.config import config  # noqa: E402
 from src.connections.candidate_assembly import NoteRef, load_corpus  # noqa: E402
 from src.connections.dismissals import DismissalStore  # noqa: E402
+from src.connections.insight_metrics import estimate_cost_usd  # noqa: E402
 from src.connections.signature import connection_signature  # noqa: E402
 
 PAIRS_SCHEMA_VERSION = 1
@@ -212,11 +213,12 @@ def propose_pairs(
     import httpx
 
     # Generous read timeout (long prefill on a big corpus sends no bytes for a
-    # while) + connection retries at the SDK layer.
+    # while). max_retries=1 so the SDK's connection-establishment retries don't
+    # compound with our own outer stream-retry loop below.
     client = anthropic.Anthropic(
         api_key=api_key,
         timeout=httpx.Timeout(connect=30.0, read=900.0, write=60.0, pool=30.0),
-        max_retries=2,
+        max_retries=1,
     )
     tool = {
         "name": _TOOL_NAME,
@@ -228,6 +230,15 @@ def propose_pairs(
     # 32k output headroom: 40+ pairs with verbatim quotes truncated at 16k
     # (a truncated forced-tool call yields unparseable JSON = 0 pairs, money
     # burned). Streaming keeps long generations alive; dots = progress.
+    # Catch ANY transport failure, not just timeouts: a peer/proxy closing the
+    # connection mid-stream surfaces as httpx.RemoteProtocolError (an HTTPError,
+    # NOT a TimeoutException) and the SDK does not wrap errors raised while
+    # iterating the SSE body — so a narrow except would let it escape and crash
+    # propose after the input was already billed. Backoff between attempts, and
+    # each attempt re-sends the full prompt, so cap at 3 to bound spend.
+    import time
+
+    retryable = (httpx.HTTPError, anthropic.APIError)
     message = None
     for attempt in range(1, 4):
         try:
@@ -247,18 +258,20 @@ def propose_pairs(
                 message = stream.get_final_message()
             print()
             break
-        except (httpx.TimeoutException, anthropic.APIConnectionError) as exc:
+        except retryable as exc:
             print(f"\n  ! attempt {attempt}/3 failed mid-stream: {exc}")
             if attempt == 3:
                 print("  giving up — check the network and re-run propose")
                 return []
+            time.sleep(2 * attempt)  # brief backoff before re-sending
     if message is None:
         return []
     usage = getattr(message, "usage", None)
     if usage:
+        cost = estimate_cost_usd(model, usage.input_tokens, usage.output_tokens)
         print(
             f"  tokens: in={usage.input_tokens} out={usage.output_tokens} "
-            f"(~${(usage.input_tokens * 5 + usage.output_tokens * 25) / 1e6:.2f})"
+            f"(~${cost:.2f})"
         )
     truncated = getattr(message, "stop_reason", None) == "max_tokens"
     if truncated:

@@ -163,7 +163,10 @@ def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
         if fm.get("type") == "malinche-digest":
             continue
         note_date = (fm.get("date") or fm.get("recording_date") or "")[:10]
-        if as_of and note_date and note_date > as_of:
+        # Under a time-travel replay, a note dated after the cutoff — OR with no
+        # usable date at all — cannot be placed on the timeline, so it must not
+        # leak into the replayed corpus. (as_of is None in production: no effect.)
+        if as_of and (not note_date or note_date > as_of):
             continue
         tags = _parse_tags(fm.get("tags", ""))
         notes.append(

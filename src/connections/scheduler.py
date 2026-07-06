@@ -156,19 +156,18 @@ def _set_digest_ready(transcriber: object, path: Path) -> None:
 
 
 def _record_digest_metrics(
-    synthesizer, candidates, connections, path, verifier=None, verdicts=None
+    synthesizer, candidates, connections, path, verifier=None, verdict_dropped=0
 ) -> None:
     """Append the per-digest cost + coverage record. Best-effort, never raises.
 
-    ``path`` may be ``None`` (all connections dropped in verification — the run
-    still cost money and must be recorded). ``verifier``/``verdicts`` carry the
-    verdict pass when it ran.
+    ``path`` may be ``None`` (paid run that wrote no digest — synthesis found
+    nothing, or verdict dropped everything). ``verifier`` is passed only when a
+    verdict actually completed; ``verdict_dropped`` is the real number removed
+    by :func:`~src.connections.verdict.apply_verdicts` (threaded in, not
+    re-derived, so the ledger can never disagree with the digest).
     """
     from src.connections.insight_metrics import record_digest_metrics
 
-    verdict_dropped = 0
-    if verdicts is not None:
-        verdict_dropped = sum(1 for v in verdicts.verdicts if not v.verdict)
     record_digest_metrics(
         model=getattr(synthesizer, "model", ""),
         usage=getattr(synthesizer, "last_usage", None),
@@ -253,8 +252,12 @@ def run_digest_if_due(
             if len(c.notes) >= 2 and all(b in known for b in c.notes)
         ]
         if not connections:
+            # Synthesis ran and was PAID for but produced nothing — a real
+            # H1/H4 data point (a paid run that yielded zero connections), so
+            # record it, exactly like the verdict-all-dropped branch below.
             logger.info("synthesis: no genuine connections this run")
-            scheduler.mark_ran(now)  # reset weekly clock; write nothing
+            scheduler.mark_ran(now)  # reset weekly clock; write no digest
+            _record_digest_metrics(synthesizer, candidates, [], None)
             return None
 
         # Verdict pass (prototype): verify the proposed connections against
@@ -262,8 +265,8 @@ def run_digest_if_due(
         # sidecar and the action instrument only ever see survivors. Fail
         # OPEN on any recoverable problem — verification must never lose a
         # digest to an API hiccup.
-        verifier = None
-        verdicts = None
+        verdict_verifier = None  # set only when a verdict actually completed
+        verdict_dropped = 0
         if getattr(config, "VERDICT_ENABLED", False):
             from src.connections.verdict import apply_verdicts, get_verifier
 
@@ -280,13 +283,20 @@ def run_digest_if_due(
                     if callable(disable_ai):
                         disable_ai("billing", exc)
                     return None
-                kept = apply_verdicts(connections, verdicts)
-                dropped = len(connections) - len(kept)
-                if dropped:
-                    logger.info(
-                        "verdict: dropped %d/%d connections", dropped, len(connections)
-                    )
-                connections = kept
+                # verify() returns None on a recoverable error (fail open): keep
+                # all, and do NOT stamp a verdict model/cost onto the ledger — a
+                # verdict that never completed must not read as one that ran clean.
+                if verdicts is not None:
+                    kept = apply_verdicts(connections, verdicts)
+                    verdict_dropped = len(connections) - len(kept)
+                    if verdict_dropped:
+                        logger.info(
+                            "verdict: dropped %d/%d connections",
+                            verdict_dropped,
+                            len(connections),
+                        )
+                    connections = kept
+                    verdict_verifier = verifier
 
         if not connections:
             # Every proposal died in verification — a legitimate, PAID outcome:
@@ -294,7 +304,12 @@ def run_digest_if_due(
             logger.info("verdict: no connections survived verification")
             scheduler.mark_ran(now)
             _record_digest_metrics(
-                synthesizer, candidates, [], None, verifier=verifier, verdicts=verdicts
+                synthesizer,
+                candidates,
+                [],
+                None,
+                verifier=verdict_verifier,
+                verdict_dropped=verdict_dropped,
             )
             return None
 
@@ -306,8 +321,8 @@ def run_digest_if_due(
             candidates,
             connections,
             path,
-            verifier=verifier,
-            verdicts=verdicts,
+            verifier=verdict_verifier,
+            verdict_dropped=verdict_dropped,
         )
         _set_digest_ready(transcriber, path)
         return path

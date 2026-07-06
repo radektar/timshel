@@ -177,6 +177,20 @@ def test_report_contains_verdict_and_unique_saves():
     assert "pp" not in report or True  # smoke: renders without crash
 
 
-def test_day_before():
-    assert rev._day_before("2026-07-01") == "2026-06-30"
-    assert rev._day_before("2026-01-01") == "2025-12-31"
+def test_newer_note_is_sole_window_member(vault):
+    # An older note dated one day before the newer note must NOT get a free
+    # "window" hit — it has to be reached by a real preselection channel.
+    _write_raw_note(vault, "older", "2026-06-09", tags="x", body="alpha beta")
+    _write_raw_note(vault, "newer", "2026-06-10", tags="y", body="gamma delta")
+    res = rev.simulate_pair(
+        _pair("pp-adj", ["older", "newer"]),
+        vault,
+        DismissalStore(vault),
+        bridges=0,
+        entities=0,
+        corpus_dates=_dates(vault),
+    )
+    # no shared tag/word/entity -> older is unreachable, so this is a MISS,
+    # not a spurious window hit.
+    assert res.status == "miss"
+    assert "older" not in res.older_channels

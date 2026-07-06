@@ -33,9 +33,8 @@ import json
 import sys
 from dataclasses import dataclass, field
 from datetime import date as _date
-from datetime import timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -63,11 +62,6 @@ class PairResult:
     older_channels: Dict[str, List[str]] = field(default_factory=dict)
     missing: List[str] = field(default_factory=list)
     linked_by_llm: Optional[bool] = None
-
-
-def _day_before(iso_date: str) -> str:
-    d = _date.fromisoformat(iso_date)
-    return (d - timedelta(days=1)).isoformat()
 
 
 def note_dates(pair: dict, corpus_dates: Dict[str, str]) -> Optional[Dict[str, str]]:
@@ -104,9 +98,13 @@ def simulate_pair(
         base.status = "window-collision"
         return base
 
+    # last_digest_at = the newer note's OWN date, not the day before. The window
+    # is `note.date >= cutoff`, so the newer note (== cutoff) is the sole window
+    # member, while an older note dated one day earlier is now < cutoff and must
+    # be reached by a real preselection channel — not handed a free "window" hit.
     cands = assemble_candidates(
         vault,
-        f"{_day_before(dates[newer])}T00:00:00",
+        f"{dates[newer]}T00:00:00",
         dismissals,
         inject_bridges=bridges,
         inject_entities=entities,
@@ -243,11 +241,13 @@ def synthesize_sample(
     out: Dict[str, bool] = {}
     for pair in hit_pairs[:limit]:
         dates = note_dates(pair, corpus_dates)
+        if not dates:
+            continue  # defensive: a hit pair should always have dates
         newer = max(dates, key=lambda b: dates[b])
         older = [b for b in pair["notes"] if b != newer]
         cands = assemble_candidates(
             vault,
-            f"{_day_before(dates[newer])}T00:00:00",
+            f"{dates[newer]}T00:00:00",
             dismissals,
             inject_bridges=4,
             inject_entities=4,

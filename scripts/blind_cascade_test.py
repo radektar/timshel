@@ -269,7 +269,7 @@ def reveal(ratings_path: Path, key_path: Path) -> int:
         if m and current:
             scores[current].append(int(m.group(1)))
 
-    interval = getattr(config, "CONNECTIONS_DIGEST_INTERVAL_DAYS", 7)
+    interval = getattr(config, "CONNECTIONS_DIGEST_INTERVAL_DAYS", 7) or 7
     print("=== REVEAL ===")
     for label, cond_key in key["label_to_condition"].items():
         cond = next(c for c in key["conditions"] if c["key"] == cond_key)
@@ -319,7 +319,9 @@ def main() -> int:
         dismissals,
         first_run_window=args.window,
         inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
-        inject_entities=config.SYNTHESIS_ENTITY_COUNT,
+        # Entity channel is off in the production default (unvalidated); the
+        # blind test evaluates the full prototype pipeline, so turn it on here.
+        inject_entities=4,
     )
     if len(base.notes) < 4:
         print(

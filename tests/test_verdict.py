@@ -81,7 +81,11 @@ def test_fuller_text_reads_file_and_falls_back(tmp_path):
         summary_md="SUMMARY-ONLY",
         fingerprint="",
     )
-    assert "SUMMARY" in vd._fuller_text(note, 4000)
+    fuller = vd._fuller_text(note, 4000)
+    assert "SUMMARY" in fuller
+    # The whole point of the verdict pass: it must see the TRANSCRIPT (ground
+    # truth), not just the summary the synthesis pass already had.
+    assert "FULL BODY" in fuller
     note_missing = NoteRef(
         md_path=tmp_path / "ghost.md",
         basename="ghost",
@@ -236,3 +240,21 @@ def test_all_dropped_no_digest_but_metrics_written(digest_env, monkeypatch):
     assert metrics[-1]["connections"] == 0
     assert metrics[-1]["verdict_dropped"] == 1
     assert metrics[-1]["digest"] == ""
+
+
+def test_synthesis_empty_still_records_metrics(digest_env, monkeypatch):
+    # A paid synthesis run that yields zero connections is a real H1/H4 data
+    # point — it must be recorded, not silently dropped.
+    empty = ConnectionList(connections=[])
+    path, _ = _run(monkeypatch, empty, enabled=False)
+    assert path is None
+    metrics = [
+        json.loads(ln)
+        for ln in (digest_env / ".malinche" / "metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert metrics[-1]["connections"] == 0
+    assert metrics[-1]["digest"] == ""
+    assert metrics[-1]["verdict_model"] == ""  # verdict never ran
+    assert metrics[-1]["verdict_dropped"] == 0

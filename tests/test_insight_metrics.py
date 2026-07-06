@@ -133,6 +133,7 @@ def test_scheduler_helper_writes_metrics(tmp_path, monkeypatch):
     from src.connections import scheduler
 
     monkeypatch.setattr(config, "TRANSCRIBE_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)  # off by default now
     synth = _FakeSynth("claude-opus-4-8", _Usage(i=15_000, o=900, cr=6_000))
     conns = [_Conn("contradiction-over-time"), _Conn("shared-thread")]
 
@@ -150,7 +151,8 @@ def test_scheduler_helper_writes_metrics(tmp_path, monkeypatch):
     assert rows[0]["cost_usd"] > 0
 
 
-def test_record_appends_and_is_readable(tmp_path):
+def test_record_appends_and_is_readable(tmp_path, monkeypatch):
+    monkeypatch.setattr(im.config, "INSIGHT_METRICS_ENABLED", True)  # off by default
     p = tmp_path / "metrics.jsonl"
     ok1 = im.record_digest_metrics(
         model="claude-opus-4-8",
