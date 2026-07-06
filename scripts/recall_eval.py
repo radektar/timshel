@@ -59,6 +59,7 @@ class ChannelCfg:
     dense: int = 0
     graph: int = 0
     stance: int = 0
+    dense_skip: int = 0
 
 
 _FULL = dict(bridges=4, entities=4, dense=6, graph=6, stance=4)
@@ -69,6 +70,9 @@ CONFIGS = [
     ("no-dense", ChannelCfg(**{**_FULL, "dense": 0})),
     ("no-entity", ChannelCfg(**{**_FULL, "entities": 0})),
     ("no-bridge", ChannelCfg(**{**_FULL, "bridges": 0})),
+    # Goldilocks band: skip the 2 nearest dense neighbours (near-duplicates).
+    # If recall holds or rises, the mid-band is the better dense setting.
+    ("full-band", ChannelCfg(**{**_FULL, "dense_skip": 2})),
     ("similarity-only", ChannelCfg(bridges=0, entities=0, dense=0, graph=0, stance=0)),
 ]
 
@@ -148,6 +152,7 @@ def simulate_pair(
         inject_dense=cfg.dense,
         inject_graph=cfg.graph,
         inject_stance=cfg.stance,
+        dense_skip=cfg.dense_skip,
         as_of=dates[newer],
     )
     surfaced = {n.basename for n in cands.notes}

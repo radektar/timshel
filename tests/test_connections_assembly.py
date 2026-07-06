@@ -273,6 +273,31 @@ def test_dense_channel_uses_engine_and_attributes(vault, monkeypatch):
     assert "dense" in cs.channel_map.get("older_sem", set())
 
 
+def test_dense_skip_drops_nearest(vault, monkeypatch):
+    import src.connections.candidate_assembly as ca
+
+    _write_raw_note(vault, "nearest", "2026-05-02", tags="a", body="x")
+    _write_raw_note(vault, "second", "2026-05-01", tags="b", body="y")
+    _write_raw_note(vault, "newer", "2026-06-20", tags="c", body="z")
+
+    class _FakeEngine:
+        def knn_note_ids(self, query, k=20):
+            return ["nearest", "second"]  # rank order
+
+    monkeypatch.setattr(ca, "_get_recall_engine", lambda vault_dir: _FakeEngine())
+    cs = assemble_candidates(
+        vault,
+        "2026-06-10T00:00:00",
+        DismissalStore(vault),
+        inject_dense=1,
+        dense_skip=1,
+    )
+    names = {n.basename for n in cs.notes}
+    # skip=1 drops the nearest; the second-nearest surfaces via dense instead
+    assert "second" in names and "dense" in cs.channel_map.get("second", set())
+    assert "dense" not in cs.channel_map.get("nearest", set())
+
+
 def test_dense_channel_fails_soft_without_engine(vault, monkeypatch):
     import src.connections.candidate_assembly as ca
 

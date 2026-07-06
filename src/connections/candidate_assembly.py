@@ -371,6 +371,7 @@ def _dense_neighbors(
     older: List[NoteRef],
     exclude: Set[str],
     max_n: int,
+    skip: int = 0,
 ) -> List[NoteRef]:
     """Semantic neighbours from the local embedding index (recall engine).
 
@@ -378,6 +379,11 @@ def _dense_neighbors(
     the digest lane never used: embed the window notes, KNN over the vault's
     existing sqlite-vec index, keep the nearest OLDER notes. Purely local,
     zero API cost. Fails soft: no index / no deps -> empty contribution.
+
+    ``skip`` drops the ``skip`` nearest neighbours before taking ``max_n`` — the
+    Goldilocks / "one step beyond the profile" band (Orwig 2025): the very
+    closest notes are near-duplicates of the window and carry no surprise. 0 =
+    plain top-K (default; recall harness sweeps this).
     """
     if max_n <= 0 or not older:
         return []
@@ -395,7 +401,9 @@ def _dense_neighbors(
             query = note.summary_md.strip()[:800]
             if not query:
                 continue
-            for rank, note_id in enumerate(engine.knn_note_ids(query, k=max_n * 3)):
+            for rank, note_id in enumerate(
+                engine.knn_note_ids(query, k=(skip + max_n) * 3)
+            ):
                 if note_id in older_by_name:
                     if note_id not in best_rank or rank < best_rank[note_id]:
                         best_rank[note_id] = rank
@@ -403,7 +411,7 @@ def _dense_neighbors(
         logger.warning("dense channel query failed (%s)", exc)
         return []
     ranked = sorted(best_rank.items(), key=lambda kv: kv[1])
-    return [older_by_name[name] for name, _ in ranked[:max_n]]
+    return [older_by_name[name] for name, _ in ranked[skip : skip + max_n]]
 
 
 def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
@@ -474,6 +482,7 @@ def assemble_candidates(
     inject_dense: int = 0,
     inject_graph: int = 0,
     inject_stance: int = 0,
+    dense_skip: int = 0,
     as_of: Optional[str] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
@@ -563,6 +572,7 @@ def assemble_candidates(
             older,
             window_basenames | bridge_basenames | entity_basenames,
             inject_dense,
+            skip=dense_skip,
         )
         dense_basenames = {n.basename for n in dense}
 
