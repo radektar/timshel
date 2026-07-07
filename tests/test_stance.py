@@ -7,6 +7,7 @@ from pathlib import Path
 from src.connections.candidate_assembly import NoteRef
 from src.connections.stance import (
     _has_cue,
+    parse_stances,
     polarity_score,
     stance_flip_neighbors,
 )
@@ -95,6 +96,109 @@ def test_stance_no_anchor_no_pairs():
     older = [_note("o", "2026-02-01", "świetny pomysł, warto")]
     # no shared entity/tag anchor -> no pairing even with opposite polarity
     assert stance_flip_neighbors(window, older, set(), 3) == []
+
+
+_V2 = (
+    "## Podsumowanie\n\nTreść.\n\n"
+    "## Stanowiska\n\n"
+    "- [[Fundacja Ziemi]] ✅ warto założyć, daje niezależność\n"
+    "- [[Kredyt hipoteczny]] ❌ za duże ryzyko\n"
+    "- Moduły ścienne 🔄 zmiana zdania — jednak tak\n\n"
+    "## Wątki otwarte\n\n- Czy X?\n"
+)
+
+
+class TestParseStances:
+    def test_parses_markers_subjects_and_section_bounds(self):
+        stances = parse_stances(_V2)
+        assert [(s.subject, s.polarity, s.changed) for s in stances] == [
+            ("Fundacja Ziemi", 1, False),
+            ("Kredyt hipoteczny", -1, False),
+            ("Moduły ścienne", 0, True),  # unbracketed subject accepted
+        ]
+
+    def test_pre_v2_note_returns_empty(self):
+        assert parse_stances("## Podsumowanie\n\nStara notatka bez sekcji.\n") == []
+
+    def test_english_heading_supported(self):
+        stances = parse_stances("## Stances\n\n- [[Impact Log]] ✅ good\n")
+        assert [s.subject for s in stances] == ["Impact Log"]
+
+    def test_keys_are_inflection_tolerant(self):
+        (fundacja, *_), _ = parse_stances(_V2), None
+        # "Fundacji Ziemi" (genitive) must share keys with "Fundacja Ziemi".
+        other = parse_stances("## Stanowiska\n\n- [[Fundacji Ziemi]] ❌ jednak nie\n")
+        assert fundacja.keys & other[0].keys
+
+
+class TestStructuredTier:
+    def test_opposite_stances_pair_across_inflection(self):
+        window = [
+            _note("newer", "2026-06-20", "## Stanowiska\n\n- [[Fundacji Ziemi]] ❌ x\n")
+        ]
+        hit = _note(
+            "older_flip", "2026-02-01", "## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ y\n"
+        )
+        same = _note(
+            "older_same", "2026-02-01", "## Stanowiska\n\n- [[Fundacja Ziemi]] ❌ z\n"
+        )
+        res = stance_flip_neighbors(window, [same, hit], set(), 3)
+        assert res[0].basename == "older_flip"
+        # Same-polarity note may only arrive via the lexicon fallback, never
+        # as a structured pair; with these bare summaries it does not pair.
+        assert all(n.basename != "older_same" for n in res)
+
+    def test_changed_mind_pairs_with_any_prior_stance(self):
+        window = [
+            _note("newer", "2026-06-20", "## Stanowiska\n\n- [[Moon 8]] 🔄 zmiana\n")
+        ]
+        prior = _note(
+            "older", "2026-02-01", "## Stanowiska\n\n- [[Moon 8]] ✅ świetny kierunek\n"
+        )
+        res = stance_flip_neighbors(window, [prior], set(), 3)
+        assert [n.basename for n in res] == ["older"]
+
+    def test_structured_outranks_lexicon(self):
+        # Window: structured ❌ on Fundacja Ziemi AND prose that the lexicon
+        # could pair with older_lex. The structured hit must come first.
+        window = [
+            _note(
+                "newer",
+                "2026-06-20",
+                "Bank Ochrony Środowiska to zły wybór, same problemy.\n\n"
+                "## Stanowiska\n\n- [[Fundacja Ziemi]] ❌ rezygnuję\n",
+            )
+        ]
+        structured_hit = _note(
+            "older_struct",
+            "2026-01-01",
+            "## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ tak\n",
+        )
+        lexicon_hit = _note(
+            "older_lex",
+            "2026-02-01",
+            "Bank Ochrony Środowiska to dobry wybór, warto i sensownie",
+        )
+        res = stance_flip_neighbors(window, [lexicon_hit, structured_hit], set(), 2)
+        assert [n.basename for n in res] == ["older_struct", "older_lex"]
+
+    def test_no_structured_stances_falls_back_to_lexicon(self):
+        window = [_note("w", "2026-06-20", "Bank Ochrony Środowiska to zły wybór")]
+        older = [
+            _note("o", "2026-02-01", "Bank Ochrony Środowiska to dobry wybór, warto")
+        ]
+        assert [n.basename for n in stance_flip_neighbors(window, older, set(), 3)] == [
+            "o"
+        ]
+
+    def test_structured_respects_exclude_and_cap(self):
+        window = [
+            _note("newer", "2026-06-20", "## Stanowiska\n\n- [[Fundacja Ziemi]] ❌ x\n")
+        ]
+        a = _note("a", "2026-01-01", "## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ y\n")
+        b = _note("b", "2026-02-01", "## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ z\n")
+        assert stance_flip_neighbors(window, [a, b], {"a", "b"}, 3) == []
+        assert len(stance_flip_neighbors(window, [a, b], set(), 1)) == 1
 
 
 def test_cue_does_not_pair_neutral_older_note():

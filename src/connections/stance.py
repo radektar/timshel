@@ -1,24 +1,33 @@
-"""Stance-flip channel — cheap candidate pairing for contradictions-over-time.
+"""Stance-flip channel — candidate pairing for contradictions-over-time.
 
 Contradiction detection (de Marneffe): two statements contradict only if they
 are about the SAME entity/topic and carry OPPOSITE polarity. Our worst-recall
-type (contradiction, ~46%) is exactly the case where the wording drifted, so
-similarity channels are silent — but the shared ANCHOR (a named entity or tag)
-survives the drift, and a polarity flip is a cheap, local signal.
+type (contradiction) is exactly the case where the wording drifted, so
+similarity channels are silent — but the shared ANCHOR (a named entity) survives
+the drift, and a polarity flip is a cheap, local signal.
 
-This is the "easy tier" of de Marneffe's typology (negation, sentiment flip)
-reframed as a *pairing* score, computed with a tiny built-in PL/EN valence
-lexicon + negation scope + stance-change cue phrases. No model, no download —
-mDeBERTa/plWordNet are the documented fallback if this proves too blunt.
+Two tiers, structured first:
 
-Score(window_note, older_note) = anchor_overlap × polarity_opposition, boosted
-when either note carries an explicit "changed my mind" cue. Purely local, $0.
+* **Structured (v2 summaries).** Since 2026-07-07 the summarizer emits a
+  ``## Stanowiska`` section — ``- [[Subject]] ✅/❌/🔄 reason`` — where a strong
+  LLM already did the hard part at note-creation time: named the subject in
+  base form and judged the polarity. Pairing is then near-exact: shared subject
+  keys + opposite markers (or an explicit 🔄 change-of-mind against any prior
+  stance on the same subject). This tier exists because the lexicon tier scored
+  ZERO unique saves in the v2 recall eval — guessing polarity from raw prose at
+  query time lost to stating it at write time.
+* **Lexicon fallback (pre-v2 notes / no stances).** The original tiny PL/EN
+  valence lexicon + negation scope + change cues. Kept for corpora that predate
+  the v2 format; mDeBERTa/plWordNet remain the documented upgrade if needed.
+
+Purely local, $0.
 """
 
 from __future__ import annotations
 
 import re
-from typing import List, Set
+from dataclasses import dataclass
+from typing import FrozenSet, List, Optional, Set
 
 from src.connections.candidate_assembly import NoteRef
 from src.connections.entities import entity_keys
@@ -146,6 +155,83 @@ def _has_cue(text: str) -> bool:
     return any(cue in low for cue in _CHANGE_CUES)
 
 
+# --------------------------------------------------------------------------- #
+# Structured tier: parse the summarizer's "## Stanowiska" section.
+# --------------------------------------------------------------------------- #
+
+_STANCE_SECTION_RE = re.compile(r"^##\s+(Stanowiska|Stances)\s*$", re.MULTILINE)
+_NEXT_SECTION_RE = re.compile(r"^##\s+", re.MULTILINE)
+# One stance line: "- [[Subject]] ✅ reason" (subject may lack brackets when a
+# weaker model drops them — accept both, brackets preferred).
+_STANCE_LINE_RE = re.compile(
+    r"^-\s*(?:\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|([^✅❌🔄\n]+?))\s*(✅|❌|🔄)\s*(.*)$",
+    re.MULTILINE,
+)
+_MARKER_POLARITY = {"✅": 1, "❌": -1, "🔄": 0}
+
+
+@dataclass(frozen=True)
+class Stance:
+    """One parsed stance line from a v2 summary."""
+
+    subject: str  # display form as written
+    keys: FrozenSet[str]  # inflection-tolerant match keys (entity_keys)
+    polarity: int  # +1 ✅ / -1 ❌ / 0 🔄
+    changed: bool  # 🔄 — explicit change of mind
+
+
+def parse_stances(summary_md: str) -> List[Stance]:
+    """Parse the ``## Stanowiska`` / ``## Stances`` section of a v2 summary.
+
+    Returns [] for pre-v2 notes (no section) — callers fall back to the
+    lexicon tier. Subject keys come from :func:`entity_keys` (the subject is
+    wrapped as a wikilink so single-word subjects qualify too), which makes
+    cross-note joins tolerant to Polish inflection.
+    """
+    match = _STANCE_SECTION_RE.search(summary_md)
+    if not match:
+        return []
+    rest = summary_md[match.end() :]
+    nxt = _NEXT_SECTION_RE.search(rest)
+    section = rest[: nxt.start()] if nxt else rest
+
+    stances: List[Stance] = []
+    for line in _STANCE_LINE_RE.finditer(section):
+        subject = (line.group(1) or line.group(2) or "").strip().strip("*_ ")
+        if not subject:
+            continue
+        keys = entity_keys(f"[[{subject}]]")
+        if not keys:
+            continue
+        marker = line.group(3)
+        stances.append(
+            Stance(
+                subject=subject,
+                keys=frozenset(keys),
+                polarity=_MARKER_POLARITY[marker],
+                changed=marker == "🔄",
+            )
+        )
+    return stances
+
+
+def _stance_conflict(a: Stance, b: Stance) -> Optional[float]:
+    """Score when two stances on a shared subject form a contradiction signal.
+
+    None = no signal. Opposite explicit polarities are the strongest pair; an
+    explicit 🔄 against ANY prior stance on the same subject also counts (the
+    speaker says the position moved — the old note holds the old position).
+    Same-polarity pairs are agreement, not contradiction.
+    """
+    if not (a.keys & b.keys):
+        return None
+    if a.polarity * b.polarity == -1:  # ✅ vs ❌
+        return 2.0
+    if a.changed or b.changed:  # 🔄 vs any stance
+        return 1.5
+    return None
+
+
 def _stem_hit(token: str, stems: Set[str]) -> bool:
     return any(token.startswith(s) for s in stems if " " not in s)
 
@@ -195,10 +281,57 @@ def stance_flip_neighbors(
     """Older notes that share an anchor with the window but carry OPPOSITE
     polarity — contradiction candidates the similarity channels miss.
 
-    Ranked by anchor_overlap × |Δpolarity|, boosted when either side has an
-    explicit stance-change cue. Returns at most ``max_n`` notes.
+    Structured tier first (parsed ``## Stanowiska`` on both sides — near-exact
+    signal), lexicon tier fills the remaining slots. Returns at most ``max_n``.
     """
     if max_n <= 0 or not older:
+        return []
+
+    structured = _structured_flip_neighbors(window, older, exclude, max_n)
+    if len(structured) >= max_n:
+        return structured[:max_n]
+    taken = exclude | {n.basename for n in structured}
+    lexicon = _lexicon_flip_neighbors(window, older, taken, max_n - len(structured))
+    return structured + lexicon
+
+
+def _structured_flip_neighbors(
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Pair via parsed stances on both sides: shared subject + conflict."""
+    win_stances: List[Stance] = []
+    for note in window:
+        win_stances.extend(parse_stances(note.summary_md))
+    if not win_stances:
+        return []
+
+    scored: List[tuple] = []
+    for note in older:
+        if note.basename in exclude:
+            continue
+        best = 0.0
+        for other in parse_stances(note.summary_md):
+            for mine in win_stances:
+                conflict = _stance_conflict(mine, other)
+                if conflict is not None:
+                    best = max(best, conflict * len(mine.keys & other.keys))
+        if best > 0:
+            scored.append((best, note.date, note))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [note for _, _, note in scored[:max_n]]
+
+
+def _lexicon_flip_neighbors(
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Original lexicon tier — polarity guessed from prose at query time."""
+    if max_n <= 0:
         return []
     win_anchors: Set[str] = set()
     win_pol = 0.0
