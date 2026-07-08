@@ -63,6 +63,10 @@ eval-synthesis:
 	@echo "Comparing synthesis models on gold cases (needs a Claude key in settings)..."
 	python scripts/eval_synthesis.py
 
+import-text:
+	@echo "Importing already-transcribed text (txt/md/vtt) — set SRC=<path>..."
+	./venv312/bin/python scripts/import_text.py $(SRC)
+
 magic-digest:
 	@echo "Magic-insights tester digest (Opus 4.8 + verdict + metrics)..."
 	./venv312/bin/python scripts/magic_digest.py

@@ -74,6 +74,16 @@ class MalincheTranscriber:
             raise RuntimeError("Transcriber not started yet")
         return self.transcriber.import_audio_file(source)
 
+    def import_text_file(self, source) -> bool:
+        """Import an already-transcribed text file (txt/md/vtt) as a note.
+
+        Forwards to the underlying :class:`Transcriber`. Raises if the daemon
+        has not finished starting (no transcriber yet).
+        """
+        if self.transcriber is None:
+            raise RuntimeError("Transcriber not started yet")
+        return self.transcriber.import_text_file(source)
+
     def reload_ai_config(self) -> None:
         """Re-read AI config live after a settings change.
 

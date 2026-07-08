@@ -180,6 +180,15 @@ class MarkdownGenerator:
                 f"\nprevious_version: {extra_frontmatter['previous_version']}"
             )
 
+        # Provenance for imported notes (txt/vtt/…). Empty for audio, so the
+        # rendered frontmatter stays byte-identical there. Lets digests and the
+        # UI tell an imported meeting apart from your own voice note.
+        provenance_line = ""
+        if extra_frontmatter.get("source_type"):
+            provenance_line = f"\nsource_type: {extra_frontmatter['source_type']}"
+            if extra_frontmatter.get("origin"):
+                provenance_line += f"\norigin: {extra_frontmatter['origin']}"
+
         # Fill template. Values are substituted VERBATIM — str.format() never
         # re-parses substituted values, only the (code-owned) template — so no
         # escaping is needed. The old brace-doubling "escape" here actively
@@ -196,6 +205,7 @@ class MarkdownGenerator:
             model=extra_frontmatter.get("model", ""),
             language=extra_frontmatter.get("language", ""),
             previous_version_line=previous_version_line,
+            provenance_line=provenance_line,
             duration=metadata["duration_formatted"],
             tags=tags_str,
             summary=summary.get("summary", "Brak podsumowania."),

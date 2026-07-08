@@ -198,7 +198,7 @@ source_volume: {source_volume}
 version: {version}
 transcribed_on: {hostname}
 model: {model}
-language: {language}{previous_version_line}
+language: {language}{previous_version_line}{provenance_line}
 duration: {duration}
 tags: [{tags}]
 ---
