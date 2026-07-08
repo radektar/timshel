@@ -38,11 +38,10 @@ def write_settings(tmp_path, monkeypatch):
     path = UserSettings.config_path()
     assert path == cfg_dir / "config.json"
 
-    def _write(api_key):
-        path.write_text(
-            json.dumps({"output_dir": str(tmp_path / "out"), "ai_api_key": api_key}),
-            encoding="utf-8",
-        )
+    def _write(api_key, **extra):
+        payload = {"output_dir": str(tmp_path / "out"), "ai_api_key": api_key}
+        payload.update(extra)
+        path.write_text(json.dumps(payload), encoding="utf-8")
 
     yield _write
     _config_mod._config_instance = None
@@ -74,3 +73,38 @@ def test_reload_config_disables_ai_when_key_removed(write_settings):
     assert reloaded.LLM_API_KEY is None
     assert reloaded.ENABLE_SUMMARIZATION is False
     assert reloaded.ENABLE_LLM_TAGGING is False
+
+
+def test_tester_mode_knobs_survive_reload(write_settings):
+    """The tester_mode → knob mapping must survive reload_config().
+
+    Regression for the proxy-wipe trap: magic_digest.py sets these knobs via an
+    in-process proxy assignment that reload_config() (which reconstructs Config)
+    would erase. Routing through UserSettings.__post_init__ keeps them stable
+    across a settings save + reload.
+    """
+    write_settings("sk-ant-key-DDDD", tester_mode=True)
+    cfg = reload_config()
+    assert cfg.VERDICT_ENABLED is True
+    assert cfg.INSIGHT_METRICS_ENABLED is True
+    assert cfg.PROTOTYPE_TESTER_MODE is True
+    assert cfg.LLM_MODEL_SYNTHESIS == "claude-opus-4-8"
+    assert cfg.SYNTHESIS_ENTITY_COUNT == 4
+
+    # A later save (e.g. user changes an unrelated setting) must NOT turn the
+    # instrumentation back off — this is the whole point of persisting it.
+    write_settings("sk-ant-key-DDDD", tester_mode=True)
+    cfg2 = reload_config()
+    assert cfg2.VERDICT_ENABLED is True
+    assert cfg2.LLM_MODEL_VERDICT == "claude-opus-4-8"
+
+
+def test_tester_mode_off_leaves_production_baseline(write_settings):
+    """Without tester_mode the digest stays the byte-identical prod baseline."""
+    write_settings("sk-ant-key-EEEE")  # no tester_mode key
+    cfg = reload_config()
+    assert cfg.VERDICT_ENABLED is False
+    assert cfg.INSIGHT_METRICS_ENABLED is False
+    assert cfg.PROTOTYPE_TESTER_MODE is False
+    assert cfg.SYNTHESIS_ENTITY_COUNT == 0
+    assert cfg.LLM_MODEL_SYNTHESIS is None

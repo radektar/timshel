@@ -403,6 +403,25 @@ tags: [{tags}]
         if self.ENABLE_LLM_TAGGING and not self.ENABLE_SUMMARIZATION:
             self.ENABLE_LLM_TAGGING = False
 
+        # Tester build: map the persisted tester_mode flag to the H1
+        # instrumentation knobs. Doing it HERE (not via an in-process proxy
+        # assignment like magic_digest.py) means the knobs survive
+        # reload_config() — which reconstructs Config() and re-runs this — so a
+        # settings save from the UI can't silently turn instrumentation back
+        # off. Covers both the scheduled daemon digest and the menu action,
+        # which both read config at call time. Same knob set as
+        # scripts/magic_digest.py.
+        if getattr(self._user_settings, "tester_mode", False):
+            self.PROTOTYPE_TESTER_MODE = True
+            self.INSIGHT_METRICS_ENABLED = True
+            self.VERDICT_ENABLED = True
+            self.SYNTHESIS_ENTITY_COUNT = 4
+            self.SYNTHESIS_DENSE_COUNT = 6
+            self.SYNTHESIS_GRAPH_COUNT = 6
+            self.SYNTHESIS_STANCE_COUNT = 4
+            self.LLM_MODEL_SYNTHESIS = "claude-opus-4-8"
+            self.LLM_MODEL_VERDICT = "claude-opus-4-8"
+
     def ensure_directories(self) -> None:
         """Create necessary directories if they don't exist."""
         self.TRANSCRIBE_DIR.mkdir(parents=True, exist_ok=True)

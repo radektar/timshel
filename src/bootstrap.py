@@ -179,6 +179,41 @@ def _remove_legacy_launch_agent(home: Path) -> None:
         pass
 
 
+def _bundle_tester_flag() -> bool:
+    """True when running from a tester DMG (Info.plist ``TimshelTesterBuild``).
+
+    Exception-safe: in a dev/CLI run there is no app bundle (or PyObjC), so this
+    returns False and the flag can still be set by hand in config.json.
+    """
+    try:
+        from Foundation import NSBundle
+
+        value = NSBundle.mainBundle().objectForInfoDictionaryKey_(
+            "TimshelTesterBuild"
+        )
+        return bool(value)
+    except Exception:  # noqa: BLE001 - not a bundle / PyObjC missing
+        return False
+
+
+def _adopt_tester_build_flag(settings: UserSettings) -> bool:
+    """One-shot: a tester DMG defaults ``tester_mode`` on at first launch.
+
+    Only fires when the persisted config has not yet recorded a ``tester_mode``
+    value AND the bundle is a tester build, so a user who later flips it off in
+    config.json is respected. Returns True when it changed and saved settings.
+    """
+    if not _bundle_tester_flag():
+        return False
+    raw = _safe_json_read(UserSettings.config_path())
+    if "tester_mode" in raw:
+        return False  # user/config already has an explicit value — respect it
+    settings.tester_mode = True
+    settings.save()
+    _logger().info("[bootstrap] tester build: enabled tester_mode")
+    return True
+
+
 def _newer_or_equal(src: Path, dst: Path) -> bool:
     """Return True when destination is newer or same age as source."""
     if not dst.exists():
@@ -305,6 +340,7 @@ def ensure_ready() -> UserSettings:
             # Vault-side rename is independent of app-support: still guard it on
             # the fast path (guarded + cheap — a no-op once renamed).
             _migrate_vault_sidecars(Path(fast_settings.output_dir))
+            _adopt_tester_build_flag(fast_settings)
             if fast_settings.setup_version != APP_VERSION:
                 fast_settings.setup_version = APP_VERSION
                 fast_settings.save()
@@ -368,6 +404,7 @@ def ensure_ready() -> UserSettings:
 
     # Vault-side rename (independent of app-support): guarded, non-destructive.
     moved_count += _migrate_vault_sidecars(Path(settings.output_dir))
+    _adopt_tester_build_flag(settings)
 
     if moved_count:
         _logger().info("[bootstrap] migrated %s items", moved_count)

@@ -1,10 +1,16 @@
 """Setup configuration for py2app to build Timshel.app bundle."""
 
+import os
 from setuptools import setup
 import py2app
 from pathlib import Path
 
 APP_VERSION = "2.0.0-beta.17"
+
+# Tester build: `make build-app-tester` / `release-tester` export TESTER_BUILD=1,
+# which stamps an Info.plist marker the app reads on first launch to turn on H1
+# instrumentation (src/bootstrap.py adoption -> UserSettings.tester_mode).
+TESTER_BUILD = os.environ.get("TESTER_BUILD") == "1"
 
 # Entry point - menu bar application
 APP = ['src/menu_app.py']
@@ -47,6 +53,7 @@ OPTIONS = {
             'Timshel needs Full Disk Access to automatically detect '
             'external recorders and SD cards for transcription.'
         ),
+        'TimshelTesterBuild': TESTER_BUILD,
     },
     'packages': [
         'rumps',

@@ -99,6 +99,14 @@ class UserSettings:
     index_migrated: bool = False
     legacy_migrated: bool = defaults.DEFAULT_LEGACY_MIGRATED
 
+    # Tester build: turns on the H1 instrumentation (verdict pass, metrics log,
+    # entity/dense/graph/stance synthesis channels, Opus synthesis+verdict) for
+    # BOTH the scheduled daemon digest and the "Generate digest now" menu action.
+    # Baked into a tester DMG (see setup_app.py TESTER_BUILD + bootstrap
+    # adoption). Persisted so it survives reload_config(); Config.__post_init__
+    # maps it to the runtime knobs.
+    tester_mode: bool = False
+
     def __post_init__(self) -> None:
         """Normalize types after init (e.g., JSON-loaded values)."""
         if isinstance(self.output_dir, str):
@@ -183,6 +191,7 @@ class UserSettings:
             "setup_stage": self.setup_stage,
             "index_migrated": self.index_migrated,
             "legacy_migrated": self.legacy_migrated,
+            "tester_mode": self.tester_mode,
         }
 
     def find_trusted_volume(self, uuid: str) -> Optional[TrustedVolume]:
