@@ -27,7 +27,7 @@ class TestClaudeSummarizer:
     @pytest.fixture
     def mock_anthropic(self):
         """Mock Anthropic client."""
-        with patch("src.summarizer.Anthropic") as mock:
+        with patch("src.summarizer.build_anthropic_client") as mock:
             client_instance = MagicMock()
             mock.return_value = client_instance
             yield client_instance
@@ -371,7 +371,7 @@ class TestPromptLanguageDirective:
 
     @pytest.fixture
     def summarizer(self):
-        with patch("src.summarizer.Anthropic"):
+        with patch("src.summarizer.build_anthropic_client"):
             return ClaudeSummarizer(api_key="test-key", model="m")
 
     def test_prompt_embeds_english_directive(self, summarizer):
@@ -406,7 +406,7 @@ class TestPromptConnectionSections:
 
     @pytest.fixture
     def prompt(self):
-        with patch("src.summarizer.Anthropic"):
+        with patch("src.summarizer.build_anthropic_client"):
             summarizer = ClaudeSummarizer(api_key="test-key", model="m")
         return summarizer._build_prompt("Fundacja Ziemi to świetny pomysł.")
 
@@ -482,7 +482,7 @@ class TestPromptKnownTerms:
 
     @pytest.fixture
     def summarizer(self):
-        with patch("src.summarizer.Anthropic"):
+        with patch("src.summarizer.build_anthropic_client"):
             return ClaudeSummarizer(api_key="test-key", model="m")
 
     def test_block_absent_without_glossary(self, summarizer):

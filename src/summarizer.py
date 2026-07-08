@@ -6,9 +6,8 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
 
 from src.config import config
+from src.llm.client import build_anthropic_client
 from src.logger import logger
-
-Anthropic = None  # type: ignore[assignment]
 
 
 def _fingerprint_key(key: Optional[str]) -> str:
@@ -202,18 +201,7 @@ class ClaudeSummarizer(BaseSummarizer):
                 the retired ``claude-3-haiku-20240307`` (now HTTP 404) was a
                 latent trap if any caller relied on the default.
         """
-        global Anthropic
-        try:
-            from anthropic import Anthropic as AnthropicClient
-        except ImportError:
-            raise ImportError(
-                "anthropic package not installed. "
-                "Install with: pip install anthropic"
-            )
-        if Anthropic is None:
-            Anthropic = AnthropicClient
-
-        self.client = Anthropic(api_key=api_key)
+        self.client = build_anthropic_client(api_key)
         self.model = model
         # Visibility for "valid key but 401": log the redacted fingerprint of the
         # key actually handed to the Anthropic client. Built at startup and on

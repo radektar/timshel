@@ -26,7 +26,7 @@ def _patch_anthropic(monkeypatch, response_text: str) -> None:
         def __init__(self, *_args, **_kwargs) -> None:
             self.messages = FakeMessages(response_text)
 
-    monkeypatch.setattr(tagger_module, "Anthropic", FakeClient)
+    monkeypatch.setattr(tagger_module, "build_anthropic_client", lambda api_key: FakeClient(api_key))
 
 
 def test_claude_tagger_parses_json(monkeypatch):
@@ -78,7 +78,7 @@ def test_claude_tagger_raises_api_billing_error(monkeypatch):
         def __init__(self, *_args, **_kwargs) -> None:
             self.messages = FakeMessages()
 
-    monkeypatch.setattr(tagger_module, "Anthropic", FakeClient)
+    monkeypatch.setattr(tagger_module, "build_anthropic_client", lambda api_key: FakeClient(api_key))
     monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", True)
 
     tagger = ClaudeTagger(api_key="test", model="claude-test")

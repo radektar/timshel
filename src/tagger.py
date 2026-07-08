@@ -7,11 +7,10 @@ from abc import ABC, abstractmethod
 from typing import Iterable, List, Optional
 
 from src.config import config
+from src.llm.client import build_anthropic_client
 from src.logger import logger
 from src.summarizer import APIBillingError, _is_permanent_api_error
 from src.tag_index import TagIndex
-
-Anthropic = None  # type: ignore[assignment]
 
 
 class BaseTagger(ABC):
@@ -33,18 +32,7 @@ class ClaudeTagger(BaseTagger):
 
     def __init__(self, api_key: str, model: str) -> None:
         """Initialize Claude client."""
-        global Anthropic
-        try:
-            from anthropic import Anthropic as AnthropicClient  # type: ignore[import]
-        except ImportError as exc:
-            raise ImportError(
-                "anthropic package not installed. Install via `pip install anthropic`."
-            ) from exc
-
-        if Anthropic is None:
-            Anthropic = AnthropicClient
-
-        self.client = Anthropic(api_key=api_key)
+        self.client = build_anthropic_client(api_key)
         self.model = model
 
     def generate_tags(

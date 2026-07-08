@@ -58,7 +58,7 @@ def _patch_client(monkeypatch, payload=None, raise_exc=None, stop_reason=None):
         def __init__(self, *_a, **_k):
             self.messages = FakeMessages()
 
-    monkeypatch.setattr(synth_module, "Anthropic", FakeClient)
+    monkeypatch.setattr(synth_module, "build_anthropic_client", lambda api_key: FakeClient(api_key))
 
 
 def test_connection_normalizes_wikilink_notes():
