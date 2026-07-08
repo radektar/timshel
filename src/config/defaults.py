@@ -4,15 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Ścieżki
-DEFAULT_OUTPUT_DIR = (
-    Path.home()
-    / "Library"
-    / "Mobile Documents"
-    / "iCloud~md~obsidian"
-    / "Documents"
-    / "Obsidian"
-    / "11-Transcripts"
-)
+# Neutralny domyślny katalog wyjściowy — wcześniej wskazywał prywatny vault
+# Obsidian dewelopera (iCloud), co u zewnętrznego usera tworzyło widmowe drzewo
+# iCloud~md~obsidian. Wizard nadal pozwala wskazać dowolny folder (w tym vault
+# Obsidian użytkownika).
+DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Malinche"
 CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Malinche"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 

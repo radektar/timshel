@@ -29,7 +29,10 @@ def test_config_paths():
     assert isinstance(config.LOG_FILE, Path)
     
     # Check paths contain expected components
-    assert "11-Transcripts" in str(config.TRANSCRIBE_DIR) or "Transcriptions" in str(config.TRANSCRIBE_DIR)
+    assert any(
+        marker in str(config.TRANSCRIBE_DIR)
+        for marker in ("11-Transcripts", "Transcriptions", "Malinche", "Timshel")
+    )
     assert "Application Support/Malinche/logs" in str(config.LOG_DIR)
     assert "Application Support/Malinche" in str(config.LOCAL_RECORDINGS_DIR)
     assert "recordings" in str(config.LOCAL_RECORDINGS_DIR)
