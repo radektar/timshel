@@ -1420,117 +1420,23 @@ class Transcriber:
             with open(transcript_path, "r", encoding="utf-8") as f:
                 transcript_text = f.read()
 
-            # Pusty transcript = legalny scenariusz (cisza, muzyka bez wokalu).
-            # Generujemy markdown-placeholder z notatką, żeby plik został
-            # zaindeksowany i nie wracał w pętlę retry.
-            empty_transcript = not transcript_text.strip()
-            if empty_transcript:
-                logger.info(
-                    "Pusty transkrypt dla %s — generuję markdown-placeholder",
-                    audio_file.name,
-                )
-                transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
-
-            # Generate summary (if summarizer available and AI not disabled).
-            # Pomijamy AI dla pustego transcriptu (nic do podsumowania, oszczędza koszty).
-            summary = None
-            if empty_transcript:
-                summary = {
-                    "title": audio_file.stem.replace("_", " ").title(),
-                    "summary": "(Brak rozpoznawalnej mowy w nagraniu)",
-                }
-            elif self.summarizer and self._ai_disabled_reason is None:
-                try:
-                    logger.info("📝 Generating summary...")
-                    summary = self.summarizer.generate(
-                        transcript_text,
-                        known_terms_block=self.vocabulary.known_terms_block(),
-                    )
-                    logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
-                except APIBillingError as exc:
-                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
-                    summary = None
-                except Exception as e:
-                    logger.error(f"Summary generation failed: {e}", exc_info=True)
-                    logger.warning("Continuing without summary")
-                    summary = None
-
-            # Fallback summary if summarizer unavailable
-            if not summary:
-                logger.debug("Using fallback summary")
-                fallback_title = self._extract_fallback_title(transcript_text)
-                if not fallback_title:
-                    fallback_title = audio_file.stem.replace("_", " ").title()
-                summary = {
-                    "title": fallback_title,
-                    "summary": """## Podsumowanie
-
-Brak podsumowania AI. Możliwe przyczyny:
-- klucz Claude API (ANTHROPIC_API_KEY) nie jest skonfigurowany
-- konto Anthropic nie ma kredytów (https://console.anthropic.com/settings/billing)
-- przejściowy błąd sieci
-
-## Lista działań (To-do)
-
-- Przejrzeć transkrypcję ręcznie
-- Wyciągnąć kluczowe wnioski ze spotkania""",
-                }
-
-            # Extract audio metadata
-            logger.debug("Extracting audio metadata...")
             metadata = self.markdown_generator.extract_audio_metadata(audio_file)
-
-            # Generate tags
-            tags = ["transcription"]
-            if empty_transcript:
-                tags.append("transcript-empty")
-            if (
-                not empty_transcript
-                and self.config.ENABLE_LLM_TAGGING
-                and self.tagger
-                and self._ai_disabled_reason is None
-            ):
-                try:
-                    existing_tags = self.tag_index.existing_tags()
-                    generated_tags = self.tagger.generate_tags(
-                        transcript=transcript_text,
-                        summary_markdown=summary.get("summary", ""),
-                        existing_tags=existing_tags,
-                    )
-                    for tag in generated_tags:
-                        if tag not in tags:
-                            tags.append(tag)
-                except APIBillingError as exc:
-                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
-                except Exception as error:  # noqa: BLE001
-                    logger.error(
-                        "Tag generation failed for %s: %s",
-                        audio_file.name,
-                        error,
-                        exc_info=True,
-                    )
-
-            # Create markdown document
-            logger.info("📄 Creating markdown document...")
-            md_path = self.markdown_generator.create_markdown_document(
-                transcript=transcript_text,
-                summary=summary,
-                metadata=metadata,
-                output_dir=self.config.TRANSCRIBE_DIR,
-                tags=tags,
+            md_path = self._finalize_note(
+                transcript_text,
+                metadata,
+                fingerprint,
+                version=version,
+                previous_version=previous_version,
+                output_filename=output_filename,
+                fallback_title=audio_file.stem.replace("_", " ").title(),
                 extra_frontmatter={
-                    "fingerprint": fingerprint,
                     "source_volume": audio_file.parent.name,
-                    "version": version,
-                    "transcribed_on": get_hostname(),
                     "model": self.config.WHISPER_MODEL,
                     "language": self.config.WHISPER_LANGUAGE,
-                    "previous_version": previous_version or "",
                 },
-                output_filename=output_filename,
             )
-
-            logger.info(f"✓ Markdown document created: {md_path.name}")
+            if md_path is None:
+                return None
 
             # Delete temporary TXT file if configured
             if self.config.DELETE_TEMP_TXT:
@@ -1550,6 +1456,119 @@ Brak podsumowania AI. Możliwe przyczyny:
                 f"Post-processing failed for {audio_file.name}: {e}", exc_info=True
             )
             return None
+
+    def _finalize_note(
+        self,
+        transcript_text: str,
+        metadata: Dict[str, str],
+        fingerprint: str,
+        *,
+        version: int = 1,
+        previous_version: Optional[str] = None,
+        output_filename: Optional[str] = None,
+        fallback_title: str = "Nagranie",
+        extra_frontmatter: Optional[Dict[str, str]] = None,
+    ) -> Optional[Path]:
+        """Summarize → tag → render one note. The single 'text → note' tail,
+        shared by audio post-processing and text import (``src.ingest``).
+
+        ``metadata`` is the dict :meth:`MarkdownGenerator.extract_audio_metadata`
+        returns (``source_file``, ``recording_datetime``, ``duration_*``); the
+        import path synthesizes it without audio. ``extra_frontmatter`` carries
+        source-specific keys (audio: source_volume/model/language; import:
+        source_type/origin) merged over the common fingerprint/version block.
+        """
+        # Empty transcript is legal (silence, music) — write a placeholder note
+        # so the file is indexed and doesn't loop in the retry queue.
+        empty_transcript = not transcript_text.strip()
+        if empty_transcript:
+            logger.info("Pusty transkrypt — generuję markdown-placeholder")
+            transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
+
+        summary = None
+        if empty_transcript:
+            summary = {
+                "title": fallback_title,
+                "summary": "(Brak rozpoznawalnej mowy w nagraniu)",
+            }
+        elif self.summarizer and self._ai_disabled_reason is None:
+            try:
+                logger.info("📝 Generating summary...")
+                summary = self.summarizer.generate(
+                    transcript_text,
+                    known_terms_block=self.vocabulary.known_terms_block(),
+                )
+                logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
+            except APIBillingError as exc:
+                self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+                summary = None
+            except Exception as e:
+                logger.error(f"Summary generation failed: {e}", exc_info=True)
+                logger.warning("Continuing without summary")
+                summary = None
+
+        if not summary:
+            logger.debug("Using fallback summary")
+            title = self._extract_fallback_title(transcript_text) or fallback_title
+            summary = {
+                "title": title,
+                "summary": """## Podsumowanie
+
+Brak podsumowania AI. Możliwe przyczyny:
+- klucz Claude API (ANTHROPIC_API_KEY) nie jest skonfigurowany
+- konto Anthropic nie ma kredytów (https://console.anthropic.com/settings/billing)
+- przejściowy błąd sieci
+
+## Lista działań (To-do)
+
+- Przejrzeć transkrypcję ręcznie
+- Wyciągnąć kluczowe wnioski ze spotkania""",
+            }
+
+        tags = ["transcription"]
+        if empty_transcript:
+            tags.append("transcript-empty")
+        if (
+            not empty_transcript
+            and self.config.ENABLE_LLM_TAGGING
+            and self.tagger
+            and self._ai_disabled_reason is None
+        ):
+            try:
+                existing_tags = self.tag_index.existing_tags()
+                generated_tags = self.tagger.generate_tags(
+                    transcript=transcript_text,
+                    summary_markdown=summary.get("summary", ""),
+                    existing_tags=existing_tags,
+                )
+                for tag in generated_tags:
+                    if tag not in tags:
+                        tags.append(tag)
+            except APIBillingError as exc:
+                self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+            except Exception as error:  # noqa: BLE001
+                logger.error("Tag generation failed: %s", error, exc_info=True)
+
+        frontmatter = {
+            "fingerprint": fingerprint,
+            "version": version,
+            "transcribed_on": get_hostname(),
+            "previous_version": previous_version or "",
+        }
+        frontmatter.update(extra_frontmatter or {})
+
+        logger.info("📄 Creating markdown document...")
+        md_path = self.markdown_generator.create_markdown_document(
+            transcript=transcript_text,
+            summary=summary,
+            metadata=metadata,
+            output_dir=self.config.TRANSCRIBE_DIR,
+            tags=tags,
+            extra_frontmatter=frontmatter,
+            output_filename=output_filename,
+        )
+        logger.info(f"✓ Markdown document created: {md_path.name}")
+        return md_path
 
     def _find_existing_markdown_for_audio(self, audio_file: Path) -> Optional[Path]:
         """Find existing markdown note for given audio file.
