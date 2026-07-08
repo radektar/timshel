@@ -185,7 +185,9 @@ def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
             logger.debug("skip unreadable note %s: %s", md_path, exc)
             continue
         fm = _frontmatter(full)
-        if fm.get("type") == "malinche-digest":
+        # Accept the pre-rename marker too: a migrated vault still holds digests
+        # stamped ``malinche-digest`` that must keep self-excluding.
+        if fm.get("type") in ("timshel-digest", "malinche-digest"):
             continue
         note_date = (fm.get("date") or fm.get("recording_date") or "")[:10]
         # Under a time-travel replay, a note dated after the cutoff — OR with no

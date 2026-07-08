@@ -48,6 +48,26 @@ def _fingerprint_key(key: Optional[str]) -> str:
 # generic in-prompt rule.
 # --------------------------------------------------------------------------- #
 
+# Fallback-summary detection. ``_fallback_summary`` is emitted when the API
+# fails; both its branches (with/without transcript) carry this line, so a
+# single marker reliably tells a real summary from a placeholder. Callers use
+# it to reject a corrective retry that itself degraded to a fallback.
+# Markers must be specific to the canned fallback text — a phrase a real
+# summary could plausibly emit (e.g. "Przejrzeć transkrypcję ręcznie" as an
+# action item) would wrongly reject a good summary. The two below appear in the
+# fallback branches (the first in BOTH) and are not natural summary content.
+_FALLBACK_MARKERS = (
+    "wymagana ręczna analiza transkrypcji",  # both fallback branches
+    "Nie udało się wygenerować podsumowania",  # no-transcript branch
+    "Brak podsumowania AI",  # legacy marker
+)
+
+
+def is_fallback_summary(summary_md: str) -> bool:
+    """True when ``summary_md`` is a placeholder produced by API failure."""
+    return any(marker in (summary_md or "") for marker in _FALLBACK_MARKERS)
+
+
 _PL_DIACRITICS = set("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ")
 _PL_STOPWORDS = {
     "się",

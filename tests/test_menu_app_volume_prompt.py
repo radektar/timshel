@@ -12,12 +12,12 @@ from pathlib import Path
 
 from src.config.settings import UserSettings
 from src.file_monitor import DECISION_NONE
-from src.menu_app import MalincheMenuApp
+from src.menu_app import TimshelMenuApp
 
 
 def _make_app():
     """Bare instance — the prompt method needs no initialized state."""
-    return MalincheMenuApp.__new__(MalincheMenuApp)
+    return TimshelMenuApp.__new__(TimshelMenuApp)
 
 
 def test_prompt_timeout_returns_none_decision(monkeypatch):

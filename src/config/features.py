@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 
 class FeatureTier(Enum):
-    """Available subscription tiers for Malinche."""
+    """Available subscription tiers for Timshel."""
 
     FREE = "free"
     PRO = "pro"  # PRO Individual (Monthly Subscription)

@@ -17,8 +17,8 @@ Three modes, escalating trust:
 
   (default)   plan only — list the batch, no API calls, no writes
   --preview   generate via API, write rebuilt notes to
-              .malinche/resummarize-preview/ — the VAULT IS NOT TOUCHED
-  --apply     generate + back up originals to .malinche/resummarize-backup/
+              .timshel/resummarize-preview/ — the VAULT IS NOT TOUCHED
+  --apply     generate + back up originals to .timshel/resummarize-backup/
               + overwrite the summary layer in place
 
 Run from a terminal with Full Disk Access (the vault lives in iCloud):
@@ -47,16 +47,6 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 _TRANSCRIPT_HEADING_RE = re.compile(
     r"^##\s+(Transkrypcja|Transcript)\s*$", re.MULTILINE
-)
-
-# ClaudeSummarizer.generate() falls back to a canned template on transient API
-# errors instead of raising. Overwriting a real summary with that template
-# would be data loss — detect and skip. These markers exist ONLY in the
-# fallback/canned texts of src/summarizer.py.
-_FALLBACK_MARKERS = (
-    "Brak podsumowania AI",
-    "Przejrzeć transkrypcję ręcznie",
-    "Nie udało się wygenerować podsumowania",
 )
 
 # Placeholder transcripts (silence/music) — nothing to summarize.
@@ -102,43 +92,16 @@ def raw_transcript(transcript_block: str) -> str:
     return transcript_block.split("\n", 1)[1] if "\n" in transcript_block else ""
 
 
-def is_fallback_summary(summary_md: str) -> bool:
-    return any(marker in summary_md for marker in _FALLBACK_MARKERS)
-
-
-_QUOTE_HEADING_RE = re.compile(r"^##\s+(Cytaty|Quotes)\s*$", re.MULTILINE)
-
-
-def _strip_quotes_section(summary_md: str) -> str:
-    """Return the summary with the ``## Cytaty`` / ``## Quotes`` block removed.
-
-    Quotes keep aliases verbatim as evidence, so they are excluded before the
-    judge looks for un-canonicalised aliases (an alias inside a quote is
-    correct, not a miss)."""
-    match = _QUOTE_HEADING_RE.search(summary_md)
-    if match is None:
-        return summary_md
-    head = summary_md[: match.start()]
-    rest = summary_md[match.start() :]
-    next_section = re.search(r"\n##\s+(?!#)", rest[3:])
-    tail = rest[3 + next_section.start() :] if next_section else ""
-    return head + tail
-
-
-def find_alias_misses(summary_md: str, vocab) -> List[Tuple[str, str]]:
-    """Judge (never rewrite): confirmed aliases the model left un-canonicalised
-    outside the Quotes section, as ``(alias_as_found, canonical)`` pairs.
-
-    The model does the canonicalisation; this only detects misses so the caller
-    can re-prompt it — keeping the vocabulary a learning system, not a static
-    find-and-replace."""
-    return vocab.find_alias_hits(_strip_quotes_section(summary_md))
+# NOTE: the alias judge/retry helpers (``find_alias_misses``) and the fallback
+# detector (``is_fallback_summary``) are shared with the production summary path
+# (src/transcriber.py) and imported inside main() alongside the summarizer, so
+# the two stay in parity instead of duplicating the logic here.
 
 
 def discover_notes(root: Path) -> List[Path]:
     """Transcript notes only — top level of TRANSCRIBE_DIR, oldest first.
 
-    Subfolders (Malinche Digests / Malinche Recall) are products of the
+    Subfolders (Timshel Digests / Timshel Recall) are products of the
     pipeline, not transcripts; rglob would drag them in.
     """
     return sorted(p for p in root.glob("*.md"))
@@ -178,7 +141,7 @@ def main() -> int:
     mode.add_argument(
         "--preview",
         action="store_true",
-        help="generate and write to .malinche/resummarize-preview/ (vault untouched)",
+        help="generate and write to .timshel/resummarize-preview/ (vault untouched)",
     )
     mode.add_argument(
         "--apply",
@@ -248,8 +211,9 @@ def main() -> int:
         APIBillingError,
         ClaudeSummarizer,
         OpenAISummarizer,
+        is_fallback_summary,
     )
-    from src.vocabulary import VocabularyIndex  # noqa: E402
+    from src.vocabulary import VocabularyIndex, find_alias_misses  # noqa: E402
 
     load_env_file()  # OPENAI_API_KEY / ANTHROPIC_API_KEY from .env
     if args.provider == "openai":
@@ -278,8 +242,8 @@ def main() -> int:
             return 0
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    preview_dir = vault / ".malinche" / "resummarize-preview"
-    backup_dir = vault / ".malinche" / "resummarize-backup" / stamp
+    preview_dir = vault / config.SIDECAR_DIR_NAME / "resummarize-preview"
+    backup_dir = vault / config.SIDECAR_DIR_NAME / "resummarize-backup" / stamp
 
     done = failed = 0
     stances_notes = 0

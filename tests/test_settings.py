@@ -61,7 +61,7 @@ class TestUserSettings:
         """Test that save creates parent directory if needed."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         
-        config_dir = tmp_path / "Library" / "Application Support" / "Malinche"
+        config_dir = tmp_path / "Library" / "Application Support" / "Timshel"
         config_file = config_dir / "config.json"
         
         settings = UserSettings()
@@ -74,7 +74,7 @@ class TestUserSettings:
         """Test loading handles corrupted JSON gracefully."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         
-        config_dir = tmp_path / "Library" / "Application Support" / "Malinche"
+        config_dir = tmp_path / "Library" / "Application Support" / "Timshel"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.json"
         config_file.write_text("invalid json {")
@@ -136,7 +136,7 @@ class TestUserSettings:
         
         assert "Library" in str(config_path)
         assert "Application Support" in str(config_path)
-        assert "Malinche" in str(config_path)
+        assert "Timshel" in str(config_path)
         assert config_path.name == "config.json"
 
 

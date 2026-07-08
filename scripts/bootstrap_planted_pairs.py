@@ -14,7 +14,7 @@ assembly can reach them. This tool builds that set with minimal human time:
             toward what the pipeline can already see);
   stats     counts by source/type/confirmed.
 
-The fixture lives at ``{vault}/.malinche/planted_pairs.json`` — NEXT TO the
+The fixture lives at ``{vault}/.timshel/planted_pairs.json`` — NEXT TO the
 vault, never in the repo: it contains private note basenames and verbatim
 quotes. The dismissed-connections list is deduped POST-HOC and never shown to
 the propose prompt (telling the miner what was dismissed would steer it and
@@ -77,7 +77,7 @@ class PlantedPairList(BaseModel):
 # Fixture I/O
 # --------------------------------------------------------------------------- #
 def pairs_path() -> Path:
-    return Path(config.TRANSCRIBE_DIR) / ".malinche" / "planted_pairs.json"
+    return Path(config.TRANSCRIBE_DIR) / config.SIDECAR_DIR_NAME / "planted_pairs.json"
 
 
 def load_pairs(path: Path) -> Dict[str, Any]:

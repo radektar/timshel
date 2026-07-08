@@ -3,7 +3,7 @@
 
 Force-runs the REAL digest pipeline on the vault with the prototype knobs on:
 Opus 4.8 synthesis + verdict verification + per-run metrics. This is NOT a
-preview: it writes a real digest into ``Malinche Digests/``, records dismissal
+preview: it writes a real digest into ``Timshel Digests/``, records dismissal
 metadata, and ADVANCES the digest clock (the next scheduled digest windows
 from now). That is the point — the H1 measurement runs on real digests rated
 through the Insights window. The side-effect-free comparison tool remains
@@ -32,7 +32,7 @@ DEFAULT_MODEL = "claude-opus-4-8"
 
 
 def _print_last_metrics(vault: Path) -> None:
-    metrics_file = vault / ".malinche" / "metrics.jsonl"
+    metrics_file = vault / config.SIDECAR_DIR_NAME / "metrics.jsonl"
     try:
         last = metrics_file.read_text(encoding="utf-8").splitlines()[-1]
         rec = json.loads(last)
@@ -67,9 +67,9 @@ def main() -> int:
 
     print("=" * 62)
     print("MAGIC-INSIGHTS TESTER DIGEST — real run, real side effects:")
-    print("  * writes a digest into 'Malinche Digests/'")
+    print("  * writes a digest into 'Timshel Digests/'")
     print("  * advances the weekly digest clock (mark_ran)")
-    print("  * appends a cost record to .malinche/metrics.jsonl")
+    print("  * appends a cost record to .timshel/metrics.jsonl")
     print(f"  model: {args.model}  verdict: {'OFF' if args.no_verdict else 'ON'}")
     print("=" * 62)
 

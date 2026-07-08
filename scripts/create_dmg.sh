@@ -1,10 +1,10 @@
 #!/bin/bash
 # scripts/create_dmg.sh
-# Creates a professional DMG for Malinche
+# Creates a professional DMG for Timshel
 
 set -e
 
-APP_NAME="Malinche"
+APP_NAME="Timshel"
 # Read version directly from source to avoid importing setup_app.py
 # (import may fail on system python without setuptools/py2app).
 VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' setup_app.py | head -n 1)

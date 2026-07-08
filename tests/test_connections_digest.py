@@ -20,7 +20,7 @@ def _conn(conn_type="shared-thread", notes=("a", "b"), evidence=None):
 
 def test_render_has_frontmatter_links_and_dismiss_tokens():
     body = render_digest([_conn()], 5)
-    assert "type: malinche-digest" in body
+    assert "type: timshel-digest" in body
     assert "dismissed: []" in body
     assert "[[a]]" in body and "[[b]]" in body
     assert "`dismiss: 1`" in body
@@ -59,7 +59,7 @@ def test_sidecar_carries_evidence_and_canonical_sig(tmp_path, monkeypatch):
     )
     write_digest_note([conn], 5)
     sidecar = json.loads(
-        (tmp_path / ".malinche" / "insights-latest.json").read_text(encoding="utf-8")
+        (tmp_path / ".timshel" / "insights-latest.json").read_text(encoding="utf-8")
     )
     c0 = sidecar["connections"][0]
     assert c0["sig"] == connection_signature(["Note A", "Note B"], "contradiction-over-time")

@@ -2,7 +2,7 @@
 
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -77,7 +77,7 @@ class UserSettings:
 
     # How clicking a note/transcript opens it: "obsidian" (deep link, default),
     # "finder" (reveal in Finder), "default" (system .md handler), or
-    # "app:<Name>" (e.g. "app:Pile"). Decouples Malinche from assuming Obsidian.
+    # "app:<Name>" (e.g. "app:Pile"). Decouples Timshel from assuming Obsidian.
     note_opener: str = "obsidian"
 
     # Local recall engine — embeddings for "ask your corpus". Local, no API key;
@@ -98,6 +98,14 @@ class UserSettings:
     setup_stage: str = "welcome"
     index_migrated: bool = False
     legacy_migrated: bool = defaults.DEFAULT_LEGACY_MIGRATED
+
+    # Tester build: turns on the H1 instrumentation (verdict pass, metrics log,
+    # entity/dense/graph/stance synthesis channels, Opus synthesis+verdict) for
+    # BOTH the scheduled daemon digest and the "Generate digest now" menu action.
+    # Baked into a tester DMG (see setup_app.py TESTER_BUILD + bootstrap
+    # adoption). Persisted so it survives reload_config(); Config.__post_init__
+    # maps it to the runtime knobs.
+    tester_mode: bool = False
 
     def __post_init__(self) -> None:
         """Normalize types after init (e.g., JSON-loaded values)."""
@@ -131,6 +139,12 @@ class UserSettings:
                     data["legacy_migrated"] = data.pop("transrec_migrated")
                 else:
                     data.pop("transrec_migrated", None)
+                # Tolerate unknown keys: a config written by a NEWER build (an
+                # added field) must not blow up cls(**data) on a downgrade and
+                # silently reset every setting (API key, trusted volumes, paths)
+                # to defaults. Drop keys this version doesn't know.
+                known = {f.name for f in fields(cls)}
+                data = {k: v for k, v in data.items() if k in known}
                 return cls(**data)
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -183,6 +197,7 @@ class UserSettings:
             "setup_stage": self.setup_stage,
             "index_migrated": self.index_migrated,
             "legacy_migrated": self.legacy_migrated,
+            "tester_mode": self.tester_mode,
         }
 
     def find_trusted_volume(self, uuid: str) -> Optional[TrustedVolume]:
@@ -216,7 +231,7 @@ class UserSettings:
             Path.home()
             / "Library"
             / "Application Support"
-            / "Malinche"
+            / defaults.APP_SUPPORT_DIR_NAME
             / "config.json"
         )
 

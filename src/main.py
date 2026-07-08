@@ -1,4 +1,4 @@
-"""Main entry point for Malinche daemon."""
+"""Main entry point for Timshel daemon."""
 
 import sys
 
@@ -14,13 +14,13 @@ from src.config.config import get_config
 get_config()
 
 from src.logger import logger
-from src.app_core import MalincheTranscriber
+from src.app_core import TimshelTranscriber
 
 
 def main():
     """Main entry point."""
     try:
-        app = MalincheTranscriber()
+        app = TimshelTranscriber()
         app.start()
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)

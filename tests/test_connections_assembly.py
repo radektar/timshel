@@ -82,11 +82,11 @@ def test_digest_folder_and_type_excluded(vault):
     digest_dir = vault / config.DIGEST_DIR_NAME
     digest_dir.mkdir()
     (digest_dir / "2026-06-20 Synthesis.md").write_text(
-        "---\ntype: malinche-digest\n---\n\nbody", encoding="utf-8"
+        "---\ntype: timshel-digest\n---\n\nbody", encoding="utf-8"
     )
     # A stray digest-typed note at top level must also be skipped.
     (vault / "stray.md").write_text(
-        "---\ntype: malinche-digest\n---\n\nbody", encoding="utf-8"
+        "---\ntype: timshel-digest\n---\n\nbody", encoding="utf-8"
     )
     corpus = load_corpus(vault)
     names = {n.basename for n in corpus}

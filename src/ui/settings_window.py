@@ -2,7 +2,7 @@
 
 External API kept stable: ``show_settings_window(callbacks=None) -> bool``.
 The optional ``callbacks`` dict allows the Disks and Maintenance tabs to
-trigger actions that live on ``MalincheMenuApp`` (reset memory, repair
+trigger actions that live on ``TimshelMenuApp`` (reset memory, repair
 whisper-cli, open log viewer, review mounted volumes, etc.). When called
 without callbacks, those buttons are disabled.
 """
@@ -153,7 +153,7 @@ try:
     class _SettingsWindow(NSWindow):
         """NSWindow that routes ⌘X/⌘C/⌘V/⌘A to the first responder.
 
-        Malinche runs as a menu-bar (LSUIElement) app with no application Edit
+        Timshel runs as a menu-bar (LSUIElement) app with no application Edit
         menu, so the standard editing key-equivalents are never translated into
         ``cut:``/``copy:``/``paste:``/``selectAll:`` — pressing ⌘V in the API-key
         field did nothing. Forwarding them down the responder chain here (where
@@ -233,7 +233,7 @@ try:
                 ),
                 is_icloud_check=lambda p: is_icloud_synced(Path(p)),
                 title="Choose output folder",
-                message="Pick a folder where Malinche should save transcripts.",
+                message="Pick a folder where Timshel should save transcripts.",
             )
             if picked:
                 self.state["selected_folder"] = picked
@@ -467,7 +467,7 @@ def _build_transcription_section(state):
     )
     note = _note(
         "Get a key at console.anthropic.com → Settings → API keys. Without a "
-        "key, Malinche uses filename-based titles and skips AI summaries.",
+        "key, Timshel uses filename-based titles and skips AI summaries.",
         height=44,
     )
     return _section([(card, ch), note])
@@ -530,7 +530,7 @@ def _build_maintenance_section(state, callbacks, delegate):
         ),
         ("Open logs", "open_logs", "openLogsClicked:", "Open the in-app log viewer."),
         (
-            "About Malinche",
+            "About Timshel",
             "show_about",
             "showAboutClicked:",
             "Version, credits, links.",
@@ -613,7 +613,7 @@ def _show_native_settings_window(
         NSBackingStoreBuffered,
         False,
     )
-    window.setTitle_("Malinche Settings")
+    window.setTitle_("Timshel Settings")
     window.center()
     # Python owns the window's lifetime; without this AppKit also releases it on
     # close, and the double-release segfaults in the autorelease-pool drain
@@ -750,8 +750,8 @@ def _show_native_settings_window(
                 rumps.alert(
                     title="Launch at login unavailable",
                     message=(
-                        "Autostart requires Malinche to be installed as an "
-                        "app bundle (drag Malinche.app to /Applications)."
+                        "Autostart requires Timshel to be installed as an "
+                        "app bundle (drag Timshel.app to /Applications)."
                     ),
                     ok="OK",
                 )

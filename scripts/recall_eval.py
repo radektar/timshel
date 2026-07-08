@@ -379,7 +379,7 @@ def main() -> int:
     args = ap.parse_args()
 
     vault = Path(config.TRANSCRIBE_DIR)
-    pairs_file = args.pairs or (vault / ".malinche" / "planted_pairs.json")
+    pairs_file = args.pairs or (vault / config.SIDECAR_DIR_NAME / "planted_pairs.json")
     try:
         data = json.loads(pairs_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

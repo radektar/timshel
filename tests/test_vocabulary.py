@@ -50,7 +50,7 @@ class TestHarvest:
         assert "strategia tektutoreski wielka" not in VocabularyIndex(vault).build()
 
     def test_alias_file_merges_and_wins(self, vault):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text(
             json.dumps(
@@ -71,7 +71,7 @@ class TestHarvest:
         assert term.aliases == ["TTTR", "TekTutoreski"]
 
     def test_corrupt_alias_file_is_skipped_not_fatal(self, vault):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text("{nope", encoding="utf-8")
         _note(vault, "a.md", "Notatka o [[Haetta]] i planach.")
@@ -85,7 +85,7 @@ class TestHarvest:
 
 class TestViews:
     def test_curated_ranks_before_wikilinked_before_runs(self, vault):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text(
             json.dumps({"terms": [{"canonical": "Zeta Project", "aliases": []}]}),
@@ -97,7 +97,7 @@ class TestViews:
         assert ranked == ["Zeta Project", "Alfa Team", "Beta Runda"]
 
     def test_known_terms_block_lists_aliases(self, vault):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text(
             json.dumps(
@@ -111,7 +111,7 @@ class TestViews:
     def test_whisper_prompt_includes_acronym_alias_and_respects_cap(
         self, vault, monkeypatch
     ):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text(
             json.dumps(
@@ -159,7 +159,7 @@ class TestFindAliasHits:
 
     @pytest.fixture
     def idx(self, vault):
-        malinche = vault / ".malinche"
+        malinche = vault / ".timshel"
         malinche.mkdir()
         (malinche / "vocabulary.json").write_text(
             json.dumps(

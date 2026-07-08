@@ -1,10 +1,16 @@
-"""Setup configuration for py2app to build Malinche.app bundle."""
+"""Setup configuration for py2app to build Timshel.app bundle."""
 
+import os
 from setuptools import setup
 import py2app
 from pathlib import Path
 
 APP_VERSION = "2.0.0-beta.17"
+
+# Tester build: `make build-app-tester` / `release-tester` export TESTER_BUILD=1,
+# which stamps an Info.plist marker the app reads on first launch to turn on H1
+# instrumentation (src/bootstrap.py adoption -> UserSettings.tester_mode).
+TESTER_BUILD = os.environ.get("TESTER_BUILD") == "1"
 
 # Entry point - menu bar application
 APP = ['src/menu_app.py']
@@ -31,9 +37,9 @@ OPTIONS = {
     'argv_emulation': False,  # Menu bar app doesn't need command line args
     'iconfile': 'assets/icon.icns' if icon_path.exists() else None,
     'plist': {
-        'CFBundleName': 'Malinche',
-        'CFBundleDisplayName': 'Malinche',
-        'CFBundleIdentifier': 'com.malinche.app',
+        'CFBundleName': 'Timshel',
+        'CFBundleDisplayName': 'Timshel',
+        'CFBundleIdentifier': 'com.timshel.app',
         'CFBundleVersion': APP_VERSION,
         'CFBundleShortVersionString': APP_VERSION,
         'LSUIElement': True,  # Menu bar only, no dock icon
@@ -41,12 +47,13 @@ OPTIONS = {
         'NSRequiresAquaSystemAppearance': False,  # Dark mode support
         'NSHighResolutionCapable': True,
         'NSAppleEventsUsageDescription': (
-            'Malinche needs to control system events for file monitoring.'
+            'Timshel needs to control system events for file monitoring.'
         ),
         'NSFullDiskAccessUsageDescription': (
-            'Malinche needs Full Disk Access to automatically detect '
+            'Timshel needs Full Disk Access to automatically detect '
             'external recorders and SD cards for transcription.'
         ),
+        'TimshelTesterBuild': TESTER_BUILD,
     },
     'packages': [
         'rumps',
@@ -105,7 +112,7 @@ OPTIONS = {
 }
 
 setup(
-    name='Malinche',
+    name='Timshel',
     app=APP,
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},

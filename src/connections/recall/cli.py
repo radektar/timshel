@@ -21,7 +21,7 @@ def _clip(text: str, n: int = 200) -> str:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="malinche-recall", description="Local recall over your notes.")
+    parser = argparse.ArgumentParser(prog="timshel-recall", description="Local recall over your notes.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     ask = sub.add_parser("ask", help="Search your corpus (local, no LLM).")
     ask.add_argument("query")

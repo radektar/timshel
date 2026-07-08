@@ -35,11 +35,13 @@ class TestUserSettings:
             UserSettings, "config_path", staticmethod(lambda: config_file)
         )
 
+        explicit_vault = tmp_path / "MyObsidianVault"
         settings = UserSettings(
             watch_mode="specific",
             language="en",
             watched_volumes=["LS-P1", "ZOOM-H6"],
             setup_completed=True,
+            output_dir=explicit_vault,
         )
         settings.save()
 
@@ -48,6 +50,9 @@ class TestUserSettings:
         assert loaded.language == "en"
         assert loaded.watched_volumes == ["LS-P1", "ZOOM-H6"]
         assert loaded.setup_completed is True
+        # An explicitly-stored output_dir must survive — changing the default
+        # is a no-op for a user who already picked a folder in the wizard.
+        assert loaded.output_dir == explicit_vault
 
     def test_load_nonexistent_file(self, tmp_path, monkeypatch):
         """Brak pliku zwraca domyślne ustawienia."""
@@ -78,7 +83,7 @@ class TestUserSettings:
         """Ścieżka wskazuje na właściwą lokalizację."""
         path = UserSettings.config_path()
         assert "Application Support" in str(path)
-        assert "Malinche" in str(path)
+        assert "Timshel" in str(path)
         assert path.name == "config.json"
 
     def test_load_invalid_json(self, tmp_path, monkeypatch):

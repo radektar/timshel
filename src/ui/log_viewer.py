@@ -20,7 +20,7 @@ from src.logger import logger
 
 
 # Matches the format produced by `src/logger.py`:
-#   2026-05-05 08:29:12 - malinche - INFO - message
+#   2026-05-05 08:29:12 - timshel - INFO - message
 # Multi-line tracebacks: subsequent lines do NOT match and are appended to the
 # previous entry's message (handled by parse_lines).
 LOG_LINE_RE = re.compile(
@@ -216,7 +216,7 @@ class LogViewerWindow:
             NSBackingStoreBuffered,
             False,
         )
-        self._window.setTitle_("Malinche logs")
+        self._window.setTitle_("Timshel logs")
         self._window.center()
 
         content = self._window.contentView()

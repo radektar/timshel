@@ -112,10 +112,10 @@ class LicenseManager:
         license_file.write_text(json.dumps({"key": self._license_key}), encoding="utf-8")
 
     def _license_path(self) -> Path:
-        return Path.home() / "Library" / "Application Support" / "Malinche" / "license.json"
+        return Path.home() / "Library" / "Application Support" / "Timshel" / "license.json"
 
     def _cache_path(self) -> Path:
-        return Path.home() / "Library" / "Application Support" / "Malinche" / "license_cache.json"
+        return Path.home() / "Library" / "Application Support" / "Timshel" / "license_cache.json"
 
     def _load_cache(self) -> Optional[dict]:
         cache_file = self._cache_path()

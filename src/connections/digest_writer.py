@@ -1,7 +1,7 @@
 """Render synthesized connections as a calm digest note in the vault.
 
 The digest is a first-class Obsidian note (so ``[[wikilinks]]`` resolve), written
-to a dedicated ``Malinche Digests/`` subfolder that candidate assembly excludes —
+to a dedicated ``Timshel Digests/`` subfolder that candidate assembly excludes —
 so a digest never feeds itself. We build the markdown with plain string joins
 (no ``str.format``), so literal braces in model text need no escaping.
 """
@@ -45,18 +45,18 @@ def render_digest(connections: List[Connection], notes_considered: int) -> str:
         "---",
         f'title: "Synthesis digest — {date}"',
         f"date: {date}",
-        "type: malinche-digest",
-        "generated_by: malinche",
+        "type: timshel-digest",
+        "generated_by: timshel",
         f"notes_considered: {notes_considered}",
         "dismissed: []",
-        "tags: [malinche-digest]",
+        "tags: [timshel-digest]",
         "---",
         "",
-        f"> Malinche read {notes_considered} notes and noticed a few things that "
+        f"> Timshel read {notes_considered} notes and noticed a few things that "
         "may connect.",
         "> These are prompts, not tasks. To dismiss one, add its number to the "
         "`dismissed:` list in this note's frontmatter (e.g. `dismissed: [1, 3]`) "
-        "— Malinche won't resurface it.",
+        "— Timshel won't resurface it.",
         "",
     ]
     for idx, conn in enumerate(connections, start=1):
@@ -81,13 +81,13 @@ def _write_insights_sidecar(connections: List[Connection], digest_path: Path) ->
 
     The digest ``.md`` is lossy for the UI (the window needs the structured
     type / notes / rationale / directions). This drops a single
-    ``{vault}/.malinche/insights-latest.json`` the dashboard reads. Best-effort:
+    ``{vault}/.timshel/insights-latest.json`` the dashboard reads. Best-effort:
     a failure here must never disturb the digest write itself.
     """
     import json
 
     try:
-        out_dir = Path(config.TRANSCRIBE_DIR) / ".malinche"
+        out_dir = Path(config.TRANSCRIBE_DIR) / config.SIDECAR_DIR_NAME
         out_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "digest": digest_path.name,

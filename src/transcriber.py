@@ -1,4 +1,4 @@
-"""Transcription engine for Malinche."""
+"""Transcription engine for Timshel."""
 
 import fcntl
 import json
@@ -22,13 +22,14 @@ from src.summarizer import (
     BaseSummarizer,
     _is_permanent_api_error,
     get_summarizer,
+    is_fallback_summary,
 )
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
 from src.state_manager import get_last_sync_time, save_sync_time
 from src.tag_index import TagIndex
 from src.tagger import BaseTagger, get_tagger
-from src.vocabulary import VocabularyIndex
+from src.vocabulary import VocabularyIndex, find_alias_misses
 from src.fingerprint import compute_fingerprint
 from src.hostinfo import get_hostname
 from src.vault_index import IndexEntry, VaultIndex
@@ -1127,6 +1128,48 @@ class Transcriber:
 
         return any(marker in stderr for marker in self._COREML_FAIL_MARKERS)
 
+    def _canonicalize_aliases(
+        self, summary: dict, transcript_text: str, known_terms: str
+    ) -> dict:
+        """Judge the summary for un-canonicalised aliases; ONE corrective retry.
+
+        The model owns canonicalisation (a code substitution would stop the
+        vocabulary learning new variants — see ``VocabularyIndex.find_alias_hits``).
+        This detects confirmed aliases the model left outside the Quotes section
+        and, if any, re-prompts it ONCE naming the specific misses. The retry is
+        accepted only when it is non-empty and not itself a fallback. A miss that
+        survives the retry is logged as a model-quality signal, never patched.
+        The extra Haiku call happens only on a miss, so a clean summary is free.
+        """
+        if not summary:
+            return summary
+        misses = find_alias_misses(summary.get("summary", ""), self.vocabulary)
+        if not misses:
+            return summary
+
+        correction = "\n".join(f"- '{a}' → '{c}'" for a, c in misses)
+        try:
+            retry = self.summarizer.generate(
+                transcript_text,
+                known_terms_block=known_terms,
+                correction=correction,
+            )
+        except APIBillingError as exc:
+            # Keep the first (good) summary; disable AI for subsequent notes.
+            self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+            logger.warning("alias-judge retry hit billing error — keeping first summary")
+            return summary
+
+        retry_summary = retry.get("summary", "") if retry else ""
+        if retry_summary and not is_fallback_summary(retry_summary):
+            summary = retry
+            misses = find_alias_misses(retry_summary, self.vocabulary)
+
+        if misses:
+            survivors = ", ".join(sorted({a for a, _ in misses}))
+            logger.warning("alias-miss survived retry: %s", survivors)
+        return summary
+
     @staticmethod
     def _extract_fallback_title(transcript: str, max_chars: int = 60) -> str:
         """Wyciągnij sensowny tytuł fallback z pierwszych słów transkryptu.
@@ -1494,9 +1537,13 @@ class Transcriber:
         elif self.summarizer and self._ai_disabled_reason is None:
             try:
                 logger.info("📝 Generating summary...")
+                known_terms = self.vocabulary.known_terms_block()
                 summary = self.summarizer.generate(
                     transcript_text,
-                    known_terms_block=self.vocabulary.known_terms_block(),
+                    known_terms_block=known_terms,
+                )
+                summary = self._canonicalize_aliases(
+                    summary, transcript_text, known_terms
                 )
                 logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
             except APIBillingError as exc:
@@ -2180,7 +2227,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         """Copy a manually chosen audio file into the local staging area.
 
         Fallback path for when automatic recorder/SD detection misses a file:
-        the user points Malinche at an audio file anywhere on disk. The
+        the user points Timshel at an audio file anywhere on disk. The
         original is never touched — a copy is placed in
         ``LOCAL_RECORDINGS_DIR`` (collision-safe) and returned for transcription.
 

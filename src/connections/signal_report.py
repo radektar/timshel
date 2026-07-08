@@ -156,7 +156,7 @@ def render(summary: Summary) -> str:
     """A scannable, terminal-friendly readout of the summary."""
     s = summary
     lines: List[str] = []
-    lines.append("Malinche — action-rate readout (ADR-004)")
+    lines.append("Timshel — action-rate readout (ADR-004)")
     lines.append("=" * 44)
 
     if s.events == 0:
@@ -228,7 +228,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "path",
         nargs="?",
-        help="path to signal.jsonl (default: the vault's .malinche/signal.jsonl)",
+        help="path to signal.jsonl (default: the vault's .timshel/signal.jsonl)",
     )
     parser.add_argument(
         "--json", action="store_true", help="emit the raw summary as JSON"

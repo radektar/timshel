@@ -21,7 +21,7 @@ def _answer(answered=True):
 
 def test_render_has_frontmatter_thesis_evidence_directions():
     md = aw.render_answer_md("co z oknami", _answer(), date_str="26-07-01")
-    assert "type: malinche-recall-answer" in md
+    assert "type: timshel-recall-answer" in md
     assert 'question: "co z oknami"' in md
     assert "Dostawa okien jest opozniona" in md
     assert "[[okna]]" in md and "> dostawa niepewna" in md
@@ -42,7 +42,7 @@ def test_save_answer_writes_under_recall_subdir(tmp_path):
     assert path.name.startswith("26-07-01 Recall - ")
     assert path.suffix == ".md"
     body = path.read_text(encoding="utf-8")
-    assert "type: malinche-recall-answer" in body and "[[okna]]" in body
+    assert "type: timshel-recall-answer" in body and "[[okna]]" in body
 
 
 def test_save_answer_slug_strips_punctuation(tmp_path):
@@ -56,7 +56,7 @@ def test_frontmatter_survives_quotes_and_newlines():
     md = aw.render_answer_md('czy on powiedzial "nie"? \\ i nowa\nlinia', _answer(), date_str="26-07-01")
     fm = md.split("---")[1]
     parsed = yaml.safe_load(fm)  # must not raise on quote/backslash/newline in the query
-    assert parsed["type"] == "malinche-recall-answer"
+    assert parsed["type"] == "timshel-recall-answer"
     assert "nie" in parsed["question"]
 
 

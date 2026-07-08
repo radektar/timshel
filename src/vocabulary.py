@@ -18,7 +18,7 @@ and feeds it back into the pipeline at two levels:
 
 Sources, in order of trust:
 
-1. ``{TRANSCRIBE_DIR}/.malinche/vocabulary.json`` — user-curated canonical
+1. ``{TRANSCRIBE_DIR}/.timshel/vocabulary.json`` — user-curated canonical
    terms with optional aliases. Highest trust, always included first.
 2. Wikilink targets ``[[...]]`` in vault notes — explicit references,
    confirmed by use (the summary's "Stances" section keeps adding these).
@@ -68,7 +68,7 @@ class Term:
 
 
 def _alias_file_path() -> Path:
-    return Path(config.TRANSCRIBE_DIR) / ".malinche" / "vocabulary.json"
+    return Path(config.TRANSCRIBE_DIR) / config.SIDECAR_DIR_NAME / "vocabulary.json"
 
 
 @dataclass
@@ -268,6 +268,40 @@ class VocabularyIndex:
                 if match:
                     hits.append((match.group(0), term.canonical))
         return hits
+
+
+_QUOTE_HEADING_RE = re.compile(r"^##\s+(Cytaty|Quotes)\s*$", re.MULTILINE)
+
+
+def strip_quotes_section(summary_md: str) -> str:
+    """Return the summary with the ``## Cytaty`` / ``## Quotes`` block removed.
+
+    Quotes keep aliases verbatim as evidence, so they are excluded before the
+    judge looks for un-canonicalised aliases (an alias inside a quote is
+    correct, not a miss).
+    """
+    match = _QUOTE_HEADING_RE.search(summary_md)
+    if match is None:
+        return summary_md
+    head = summary_md[: match.start()]
+    rest = summary_md[match.start():]
+    next_section = re.search(r"\n##\s+(?!#)", rest[3:])
+    tail = rest[3 + next_section.start():] if next_section else ""
+    return head + tail
+
+
+def find_alias_misses(
+    summary_md: str, vocab: "VocabularyIndex"
+) -> List[Tuple[str, str]]:
+    """Judge (never rewrite): confirmed aliases the model left un-canonicalised
+    outside the Quotes section, as ``(alias_as_found, canonical)`` pairs.
+
+    The model does the canonicalisation; this only detects misses so the caller
+    can re-prompt it — keeping the vocabulary a learning system, not a static
+    find-and-replace. Shared by the production summary path (transcriber) and
+    the v2 migration tool (scripts/resummarize_vault.py) so they stay in parity.
+    """
+    return vocab.find_alias_hits(strip_quotes_section(summary_md))
 
 
 def get_vocabulary_index() -> VocabularyIndex:

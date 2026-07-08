@@ -1,4 +1,4 @@
-"""Configuration module for Malinche (backward compatible wrapper)."""
+"""Configuration module for Timshel (backward compatible wrapper)."""
 
 import os
 import shutil
@@ -15,7 +15,7 @@ from src.config.defaults import defaults
 
 @dataclass
 class Config:
-    """Backward-compatible configuration wrapper for Malinche.
+    """Backward-compatible configuration wrapper for Timshel.
 
     This class maintains the old Config interface while using UserSettings
     internally. This allows existing code to continue working while we
@@ -168,9 +168,11 @@ class Config:
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6
     CONNECTIONS_MIN_GAP_DAYS: int = 2
     # Sub-folder (inside TRANSCRIBE_DIR) where digest notes are written.
-    DIGEST_DIR_NAME: str = "Malinche Digests"
+    DIGEST_DIR_NAME: str = "Timshel Digests"
+    # Hidden per-vault sidecar dir name (metrics/signal/vocabulary/dismissals).
+    SIDECAR_DIR_NAME: str = ".timshel"
     # Magic-insights prototype instrumentation. Each digest appends a cost +
-    # coverage record to {vault}/.malinche/metrics.jsonl (H1/H4 evidence base).
+    # coverage record to {vault}/.timshel/metrics.jsonl (H1/H4 evidence base).
     # OFF by default: a normal user's daemon should not write a telemetry file
     # (with private note basenames) into their vault. The prototype dogfood
     # (magic_digest.py) turns it on for the measured runs.
@@ -250,7 +252,12 @@ tags: [{tags}]
             else:
                 self.TRANSCRIBE_DIR = Path(str(out_dir)).expanduser()
 
-        support_dir = Path.home() / "Library" / "Application Support" / "Malinche"
+        support_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / defaults.APP_SUPPORT_DIR_NAME
+        )
 
         if self.LOG_DIR is None:
             self.LOG_DIR = support_dir / "logs"
@@ -259,7 +266,7 @@ tags: [{tags}]
             self.STATE_FILE = support_dir / "state.json"
 
         if self.LOG_FILE is None:
-            self.LOG_FILE = self.LOG_DIR / "malinche.log"
+            self.LOG_FILE = self.LOG_DIR / "timshel.log"
 
         if self.LOCAL_RECORDINGS_DIR is None:
             self.LOCAL_RECORDINGS_DIR = support_dir / "recordings"
@@ -282,8 +289,13 @@ tags: [{tags}]
         self.WHISPER_LANGUAGE = self._user_settings.language or "pl"
 
         if self.WHISPER_CPP_PATH is None:
-            # Nowa lokalizacja: ~/Library/Application Support/Malinche/bin/
-            support_dir = Path.home() / "Library" / "Application Support" / "Malinche"
+            # Nowa lokalizacja: ~/Library/Application Support/Timshel/bin/
+            support_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / defaults.APP_SUPPORT_DIR_NAME
+        )
             new_whisper_path = support_dir / "bin" / "whisper-cli"
 
             # Sprawdź nową lokalizację (Faza 2)
@@ -308,14 +320,14 @@ tags: [{tags}]
             self.WHISPER_CPP_MODELS_DIR = support_dir / "models"
 
         if self.FFMPEG_PATH is None:
-            malinche_ffmpeg_path = support_dir / "bin" / "ffmpeg"
+            timshel_ffmpeg_path = support_dir / "bin" / "ffmpeg"
             # Fallback do systemowego ffmpeg (dev environment).
             system_ffmpeg = shutil.which("ffmpeg")
             if system_ffmpeg:
                 self.FFMPEG_PATH = Path(system_ffmpeg)
             else:
                 # Default - new location (downloaded by DependencyDownloader)
-                self.FFMPEG_PATH = malinche_ffmpeg_path
+                self.FFMPEG_PATH = timshel_ffmpeg_path
 
         # Load LLM API key from UserSettings only
         # Environment variables should be migrated to UserSettings via perform_migration_if_needed()
@@ -334,7 +346,7 @@ tags: [{tags}]
         )
 
         # How note/transcript clicks open files: Obsidian deep link by default,
-        # but configurable so Malinche doesn't assume Obsidian (see
+        # but configurable so Timshel doesn't assume Obsidian (see
         # ui/obsidian_link.file_open_argv). "obsidian" | "finder" | "default" |
         # "app:<Name>".
         self.NOTE_OPENER = (
@@ -390,6 +402,25 @@ tags: [{tags}]
         # Tagging requires summarization to be enabled (shared LLM availability).
         if self.ENABLE_LLM_TAGGING and not self.ENABLE_SUMMARIZATION:
             self.ENABLE_LLM_TAGGING = False
+
+        # Tester build: map the persisted tester_mode flag to the H1
+        # instrumentation knobs. Doing it HERE (not via an in-process proxy
+        # assignment like magic_digest.py) means the knobs survive
+        # reload_config() — which reconstructs Config() and re-runs this — so a
+        # settings save from the UI can't silently turn instrumentation back
+        # off. Covers both the scheduled daemon digest and the menu action,
+        # which both read config at call time. Same knob set as
+        # scripts/magic_digest.py.
+        if getattr(self._user_settings, "tester_mode", False):
+            self.PROTOTYPE_TESTER_MODE = True
+            self.INSIGHT_METRICS_ENABLED = True
+            self.VERDICT_ENABLED = True
+            self.SYNTHESIS_ENTITY_COUNT = 4
+            self.SYNTHESIS_DENSE_COUNT = 6
+            self.SYNTHESIS_GRAPH_COUNT = 6
+            self.SYNTHESIS_STANCE_COUNT = 4
+            self.LLM_MODEL_SYNTHESIS = "claude-opus-4-8"
+            self.LLM_MODEL_VERDICT = "claude-opus-4-8"
 
     def ensure_directories(self) -> None:
         """Create necessary directories if they don't exist."""

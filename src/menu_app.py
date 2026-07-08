@@ -1,4 +1,4 @@
-"""macOS menu bar application for Malinche."""
+"""macOS menu bar application for Timshel."""
 
 import sys
 import threading
@@ -84,7 +84,7 @@ from src.file_monitor import (
 )
 from src import volume_session
 from src.logger import logger
-from src.app_core import MalincheTranscriber
+from src.app_core import TimshelTranscriber
 from src.app_status import AppStatus
 from src.state_manager import reset_state
 from src.transcriber import RetranscribeLockBusyError, send_notification
@@ -98,8 +98,8 @@ from src.ui.pro_activation import show_pro_status
 from src.ui.download_window import DownloadWindow
 
 
-class MalincheMenuApp(rumps.App):
-    """macOS menu bar application wrapper for Malinche."""
+class TimshelMenuApp(rumps.App):
+    """macOS menu bar application wrapper for Timshel."""
 
     def __init__(self):
         """Initialize menu bar application."""
@@ -108,8 +108,8 @@ class MalincheMenuApp(rumps.App):
                 "rumps not available. Install with: pip install rumps"
             )
 
-        super(MalincheMenuApp, self).__init__(
-            "Malinche",
+        super(TimshelMenuApp, self).__init__(
+            "Timshel",
             title=None,
             icon=None,
             template=True,
@@ -118,7 +118,7 @@ class MalincheMenuApp(rumps.App):
         self._icon_paths = self._resolve_icon_paths()
         self._update_icon(AppStatus.IDLE)
 
-        self.transcriber: Optional[MalincheTranscriber] = None
+        self.transcriber: Optional[TimshelTranscriber] = None
         self.daemon_thread: Optional[threading.Thread] = None
         self._running = False
         self._retranscription_in_progress = False
@@ -133,7 +133,7 @@ class MalincheMenuApp(rumps.App):
         self.menu.add(rumps.separator)
 
         # Insights — open the "Konstelacja" window (the designed home where the
-        # connections Malinche found are read). Entered from here, not by
+        # connections Timshel found are read). Entered from here, not by
         # hijacking the menu-bar click (that opens this native menu, Docker-style).
         # Trailing "…" per macOS HIG = the command needs more input in a
         # dialog/picker before it completes. So only "Import audio…" (file
@@ -158,6 +158,13 @@ class MalincheMenuApp(rumps.App):
             callback=self._import_audio_clicked,
         )
         self.menu.add(self.import_item)
+        # Seed the vault from already-transcribed text (txt/md/vtt) — the
+        # cold-start fix for a new tester's empty vault.
+        self.import_text_item = rumps.MenuItem(
+            "Import transcripts…",
+            callback=self._import_transcripts_clicked,
+        )
+        self.menu.add(self.import_text_item)
 
         # Synthesis — open the latest connection digest note in the vault.
         self.digest_item = rumps.MenuItem(
@@ -170,6 +177,13 @@ class MalincheMenuApp(rumps.App):
             callback=self._generate_digest_now,
         )
         self.menu.add(self.gen_digest_item)
+        # Package the H1 feedback (signal/metrics + digests) into a zip on the
+        # Desktop for the tester to email back.
+        self.export_feedback_item = rumps.MenuItem(
+            "Export feedback",
+            callback=self._export_feedback_clicked,
+        )
+        self.menu.add(self.export_feedback_item)
 
         # Retranscribe submenu (lazy populated by refresh timer)
         self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
@@ -186,7 +200,7 @@ class MalincheMenuApp(rumps.App):
         self.menu.add(rumps.separator)
 
         self.quit_item = rumps.MenuItem(
-            "Quit Malinche",
+            "Quit Timshel",
             callback=self._quit_app,
         )
         self.menu.add(self.quit_item)
@@ -261,7 +275,7 @@ class MalincheMenuApp(rumps.App):
             status: None for status in AppStatus
         }
 
-        icon_dir = Path(tempfile.mkdtemp(prefix="malinche-menubar-icons-"))
+        icon_dir = Path(tempfile.mkdtemp(prefix="timshel-menubar-icons-"))
         for status in AppStatus:
             try:
                 name = style.symbol_name_for_status(status)
@@ -359,7 +373,7 @@ class MalincheMenuApp(rumps.App):
             rumps.alert(
                 title="Configuration incomplete",
                 message=(
-                    "Malinche requires configuration to operate.\n\n"
+                    "Timshel requires configuration to operate.\n\n"
                     "Restart the app to finish configuring it."
                 ),
                 ok="OK",
@@ -396,7 +410,7 @@ class MalincheMenuApp(rumps.App):
             title="🛡 Security mode updated",
             message=(
                 "Every new disk connected to the computer must now be approved "
-                "before Malinche transcribes from it. This prevents accidental "
+                "before Timshel transcribes from it. This prevents accidental "
                 "scanning of disks like external music drives.\n\n"
                 "Would you like to review the disks currently mounted and "
                 "decide which ones are recorders?"
@@ -423,7 +437,7 @@ class MalincheMenuApp(rumps.App):
         if self.transcriber is None:
             rumps.alert(
                 title="Not ready",
-                message="Malinche is still starting up. Try again in a moment.",
+                message="Timshel is still starting up. Try again in a moment.",
                 ok="OK",
             )
             return
@@ -477,7 +491,7 @@ class MalincheMenuApp(rumps.App):
         """Stage + transcribe a manually imported file (background thread)."""
         name = audio_path.name
         try:
-            send_notification("Malinche", "Importing", f"Transcribing {name}…")
+            send_notification("Timshel", "Importing", f"Transcribing {name}…")
         except Exception:  # noqa: BLE001
             pass
 
@@ -524,7 +538,7 @@ class MalincheMenuApp(rumps.App):
         if ok:
             logger.info("✓ Manual import complete: %s", name)
             try:
-                send_notification("Malinche", "Done", f"Transcribed {name}")
+                send_notification("Timshel", "Done", f"Transcribed {name}")
             except Exception:  # noqa: BLE001
                 pass
         else:
@@ -536,6 +550,152 @@ class MalincheMenuApp(rumps.App):
                 )
 
             _run_on_main_thread(_on_main)
+
+    def _import_transcripts_clicked(self, _) -> None:
+        """Menu: pick already-transcribed text files (txt/md/vtt) to seed the
+        vault. Multi-select — the whole value is bulk-seeding a cold vault.
+
+        Picker runs on the main thread; the batch import runs in the background
+        so the menu stays responsive over many files.
+        """
+        if self.transcriber is None:
+            rumps.alert(
+                title="Not ready",
+                message="Timshel is still starting up. Try again in a moment.",
+                ok="OK",
+            )
+            return
+
+        paths = self._choose_transcript_files()
+        if not paths:
+            return
+
+        threading.Thread(
+            target=self._run_text_import,
+            args=([Path(p) for p in paths],),
+            daemon=True,
+            name="ManualTextImport",
+        ).start()
+
+    def _choose_transcript_files(self) -> List[str]:
+        """NSOpenPanel filtered to txt/md/vtt, multi-select. [] if cancelled."""
+        try:
+            from AppKit import NSOpenPanel
+        except ImportError:
+            rumps.alert(
+                title="Unavailable",
+                message="The file picker is not available in this environment.",
+                ok="OK",
+            )
+            return []
+
+        result: dict = {"paths": []}
+
+        def _panel() -> None:
+            panel = NSOpenPanel.openPanel()
+            panel.setCanChooseFiles_(True)
+            panel.setCanChooseDirectories_(False)
+            panel.setAllowsMultipleSelection_(True)
+            panel.setMessage_("Choose transcript files to import (txt, md, vtt)")
+            panel.setAllowedFileTypes_(["txt", "md", "vtt"])
+            if panel.runModal() == 1:  # NSModalResponseOK
+                result["paths"] = [str(u.path()) for u in (panel.URLs() or [])]
+
+        _run_on_main_thread(_panel)
+        return result["paths"]
+
+    def _run_text_import(self, paths: List[Path]) -> None:
+        """Import a batch of transcript files (background thread).
+
+        Per-file failures never abort the batch; a busy lock stops the whole
+        run (a transcription is in progress). Reports ok/duplicate/failed.
+        """
+        total = len(paths)
+        try:
+            send_notification("Timshel", "Importing", f"Importing {total} file(s)…")
+        except Exception:  # noqa: BLE001
+            pass
+
+        imported = 0
+        failed = 0
+        for path in paths:
+            try:
+                # import_text_file returns True on success OR an already-imported
+                # duplicate; either way the file is accounted for.
+                if self.transcriber.import_text_file(path):
+                    imported += 1
+                else:
+                    failed += 1
+            except RetranscribeLockBusyError:
+                logger.info("Text import busy — transcription in progress")
+
+                done_so_far = imported
+
+                def _on_main() -> None:
+                    rumps.alert(
+                        title="⏳ Transcription in progress",
+                        message=(
+                            f"Imported {done_so_far} of {total} before another "
+                            "transcription started. Re-run to import the rest "
+                            "(duplicates are skipped)."
+                        ),
+                        ok="OK",
+                    )
+
+                _run_on_main_thread(_on_main)
+                return
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning("Text import rejected %s: %s", path, exc)
+                failed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Text import failed for %s: %s", path, exc, exc_info=True)
+                failed += 1
+
+        logger.info("✓ Text import complete: %d ok, %d failed of %d", imported, failed, total)
+        summary = f"Imported {imported} of {total}"
+        if failed:
+            summary += f" — {failed} skipped"
+        try:
+            send_notification("Timshel", "Import done", summary)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _export_feedback_clicked(self, _) -> None:
+        """Menu: zip the H1 feedback (signal/metrics + digests) onto the Desktop
+        and reveal it in Finder for the tester to email back.
+        """
+        import subprocess
+
+        from src.feedback_export import NothingToExportError, build_feedback_zip
+
+        vault = Path(config.TRANSCRIBE_DIR)
+        desktop = Path.home() / "Desktop"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        try:
+            zip_path = build_feedback_zip(vault, desktop, timestamp=timestamp)
+        except NothingToExportError:
+            rumps.alert(
+                title="Nothing to export yet",
+                message="Generate a digest and rate a few connections first.",
+                ok="OK",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Feedback export failed: %s", exc, exc_info=True)
+            rumps.alert(title="Export failed", message=str(exc), ok="OK")
+            return
+
+        logger.info("✓ Feedback exported: %s", zip_path)
+        try:
+            subprocess.Popen(["open", "-R", str(zip_path)])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            send_notification(
+                "Timshel", "Feedback exported", f"Saved {zip_path.name} to Desktop"
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _manage_volumes_clicked(self, _) -> None:
         """Menu item: manage trusted/blocked disk list."""
@@ -741,7 +901,7 @@ class MalincheMenuApp(rumps.App):
                 logger.info("✓ All dependencies downloaded")
                 rumps.alert(
                     title="✅ Ready",
-                    message="All dependencies were downloaded.\n\nMalinche is ready to use.",
+                    message="All dependencies were downloaded.\n\nTimshel is ready to use.",
                     ok="OK",
                 )
                 self.status_item.title = "Status: Ready"
@@ -759,7 +919,7 @@ class MalincheMenuApp(rumps.App):
                         title="⚠️ No internet connection",
                         message=(
                             "No internet connection.\n\n"
-                            "Malinche needs a one-time download of the transcription engine (~500 MB).\n"
+                            "Timshel needs a one-time download of the transcription engine (~500 MB).\n"
                             "Connect to the internet and try again."
                         ),
                         ok="OK",
@@ -1090,7 +1250,7 @@ class MalincheMenuApp(rumps.App):
                 self._refresh_insights_badge()
             else:
                 logger.warning("Insights window unavailable (AppKit missing)")
-                rumps.alert("Malinche", "Insights view needs macOS AppKit.", ok="OK")
+                rumps.alert("Timshel", "Insights view needs macOS AppKit.", ok="OK")
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Could not open Insights window: %s", exc)
 
@@ -1276,7 +1436,9 @@ class MalincheMenuApp(rumps.App):
             hits = []
             for p in root.rglob("*.md"):
                 rp = p.resolve()
-                if ".malinche" in rp.parts:
+                # Exclude both the current sidecar dir and the pre-rename one
+                # (a vault migrated from Timshel may still carry a stray copy).
+                if config.SIDECAR_DIR_NAME in rp.parts or ".malinche" in rp.parts:
                     continue
                 if rp == digest_dir or digest_dir in rp.parents:
                     continue
@@ -1322,9 +1484,9 @@ class MalincheMenuApp(rumps.App):
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("could not load insights for notification: %s", exc)
         if top is not None:
-            send_notification("Malinche", top.resolved_label(), top.rationale)
+            send_notification("Timshel", top.resolved_label(), top.rationale)
         else:
-            send_notification("Malinche", "New synthesis digest ready", digest_name)
+            send_notification("Timshel", "New synthesis digest ready", digest_name)
 
     def _refresh_insights_badge(self) -> None:
         """Show the count of connections in the latest digest on the menu item."""
@@ -1447,7 +1609,7 @@ class MalincheMenuApp(rumps.App):
             digests = sorted(folder.glob("*.md")) if folder.exists() else []
             path = digests[-1] if digests else None
         if path is None or not path.exists():
-            rumps.alert("Malinche", "No synthesis digest yet.", ok="OK")
+            rumps.alert("Timshel", "No synthesis digest yet.", ok="OK")
             return
         try:
             subprocess.Popen(["open", str(path)])
@@ -1469,17 +1631,17 @@ class MalincheMenuApp(rumps.App):
                 path = run_digest_if_due(self.transcriber, force=True)
                 if path is None:
                     send_notification(
-                        "Malinche",
+                        "Timshel",
                         "No new connections",
                         "Nothing connected this time (or AI key not set).",
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Manual digest failed: %s", exc)
-                send_notification("Malinche", "Digest failed", str(exc))
+                send_notification("Timshel", "Digest failed", str(exc))
 
         threading.Thread(target=_run, name="ManualDigest", daemon=True).start()
         send_notification(
-            "Malinche", "Generating synthesis digest…", "Reading your notes…"
+            "Timshel", "Generating synthesis digest…", "Reading your notes…"
         )
 
     def _reset_memory(self, _):
@@ -1496,7 +1658,7 @@ class MalincheMenuApp(rumps.App):
         if success:
             logger.info(f"Memory reset successful, sending notification for date: {target_date.strftime('%Y-%m-%d')}")
             send_notification(
-                title="Malinche",
+                title="Timshel",
                 message=f"From: {target_date.strftime('%Y-%m-%d')}",
                 subtitle=TEXTS["reset_memory_success"],
             )
@@ -1692,7 +1854,7 @@ class MalincheMenuApp(rumps.App):
         
         # Send start notification
         send_notification(
-            title="Malinche",
+            title="Timshel",
             subtitle="Retranscription started",
             message=f"File: {audio_path.name}",
         )
@@ -1705,13 +1867,13 @@ class MalincheMenuApp(rumps.App):
 
                     if success:
                         send_notification(
-                            title="Malinche",
+                            title="Timshel",
                             subtitle="Retranscription complete",
                             message=f"File: {audio_path.name}",
                         )
                     else:
                         send_notification(
-                            title="Malinche",
+                            title="Timshel",
                             subtitle="Retranscription failed",
                             message=f"Check logs: {audio_path.name}",
                         )
@@ -1724,7 +1886,7 @@ class MalincheMenuApp(rumps.App):
                     rumps.alert(
                         title="⏳ Automatic transcription in progress",
                         message=(
-                            "Malinche is currently processing another file from the recorder.\n\n"
+                            "Timshel is currently processing another file from the recorder.\n\n"
                             "Try again in a few minutes, after the automatic "
                             "transcription has finished."
                         ),
@@ -1734,7 +1896,7 @@ class MalincheMenuApp(rumps.App):
             except Exception as e:
                 logger.error(f"Retranscribe error: {e}", exc_info=True)
                 send_notification(
-                    title="Malinche",
+                    title="Timshel",
                     subtitle="Error",
                     message=str(e)[:50],
                 )
@@ -1749,7 +1911,7 @@ class MalincheMenuApp(rumps.App):
     def _quit_app(self, _):
         """Quit application gracefully."""
         response = rumps.alert(
-            "Quit Malinche",
+            "Quit Timshel",
             "Are you sure you want to quit?",
             ok="Quit",
             cancel="Cancel",
@@ -1788,7 +1950,7 @@ class MalincheMenuApp(rumps.App):
             message = (
                 "Your Anthropic (BYOK) account has run out of credits.\n\n"
                 "Top up at: https://console.anthropic.com/account/billing\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
         elif "not_found" in exc_str or "model" in exc_str:
@@ -1797,14 +1959,14 @@ class MalincheMenuApp(rumps.App):
                 "The Claude model configured in settings does not exist "
                 "or has been retired.\n\n"
                 "Change the model under Settings → Transcription.\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
         else:
             title = "⚠️ Claude API: permanent error"
             message = (
                 f"Claude API returned a permanent error:\n{exc}\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
 
@@ -1821,14 +1983,14 @@ class MalincheMenuApp(rumps.App):
         try:
             logger.info("Starting transcriber daemon from menu app...")
             # Don't setup signal handlers in background thread
-            self.transcriber = MalincheTranscriber(setup_signals=False)
+            self.transcriber = TimshelTranscriber(setup_signals=False)
             self.transcriber.set_ai_billing_callback(self._notify_billing_error)
             self.transcriber.set_unknown_volume_callback(self._prompt_unknown_volume)
             self.transcriber.start()
         except Exception as e:
             logger.error(f"Error in daemon thread: {e}", exc_info=True)
             rumps.notification(
-                title="Malinche",
+                title="Timshel",
                 subtitle="Error",
                 message=f"Startup error: {e}",
             )
@@ -1850,7 +2012,7 @@ class MalincheMenuApp(rumps.App):
     def run(self):
         """Start the menu bar application."""
         logger.info("=" * 60)
-        logger.info("🚀 Malinche Menu App starting...")
+        logger.info("🚀 Timshel Menu App starting...")
         logger.info("=" * 60)
 
         # If wizard is not needed, start daemon immediately
@@ -1858,7 +2020,7 @@ class MalincheMenuApp(rumps.App):
             self._start_daemon()
 
         # Run menu app (blocks until quit)
-        super(MalincheMenuApp, self).run()
+        super(TimshelMenuApp, self).run()
 
 
 def main():
@@ -1893,7 +2055,7 @@ def main():
         except Exception as policy_err:  # noqa: BLE001
             logger.debug("Could not set accessory activation policy: %s", policy_err)
 
-        app = MalincheMenuApp()
+        app = TimshelMenuApp()
         app.run()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

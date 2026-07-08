@@ -7,11 +7,11 @@ guards skip that work when nothing changed.
 
 from pathlib import Path
 
-from src.menu_app import MalincheMenuApp
+from src.menu_app import TimshelMenuApp
 
 
 def _bare():
-    return MalincheMenuApp.__new__(MalincheMenuApp)
+    return TimshelMenuApp.__new__(TimshelMenuApp)
 
 
 class _FakeSubmenu:

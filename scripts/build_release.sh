@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/build_release.sh
-# Orchestrates the full build and release pipeline for Malinche
+# Orchestrates the full build and release pipeline for Timshel
 
 set -e
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-APP_NAME="Malinche"
+APP_NAME="Timshel"
 PLATFORM="$(uname -s)"
 
 echo "🚀 Starting release build for ${APP_NAME}..."

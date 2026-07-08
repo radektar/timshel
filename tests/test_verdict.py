@@ -207,13 +207,13 @@ def test_verdict_drops_connection_from_digest_and_sidecar(digest_env, monkeypatc
     body = path.read_text(encoding="utf-8")
     assert "emergent-idea" in body or "Emergent" in body or "nowy" in body.lower()
     sidecar = json.loads(
-        (digest_env / ".malinche" / "insights-latest.json").read_text(encoding="utf-8")
+        (digest_env / ".timshel" / "insights-latest.json").read_text(encoding="utf-8")
     )
     assert len(sidecar["connections"]) == 1
     assert sidecar["connections"][0]["type"] == "emergent-idea"
     metrics = [
         json.loads(ln)
-        for ln in (digest_env / ".malinche" / "metrics.jsonl")
+        for ln in (digest_env / ".timshel" / "metrics.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -233,7 +233,7 @@ def test_all_dropped_no_digest_but_metrics_written(digest_env, monkeypatch):
     assert not digests_dir.exists() or not list(digests_dir.glob("*.md"))
     metrics = [
         json.loads(ln)
-        for ln in (digest_env / ".malinche" / "metrics.jsonl")
+        for ln in (digest_env / ".timshel" / "metrics.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -250,7 +250,7 @@ def test_synthesis_empty_still_records_metrics(digest_env, monkeypatch):
     assert path is None
     metrics = [
         json.loads(ln)
-        for ln in (digest_env / ".malinche" / "metrics.jsonl")
+        for ln in (digest_env / ".timshel" / "metrics.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     ]

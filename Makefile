@@ -1,9 +1,9 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release eval-synthesis signal-report magic-digest recall-eval
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester eval-synthesis signal-report magic-digest recall-eval
 
 help:
-	@echo "Malinche - Development Commands"
+	@echo "Timshel - Development Commands"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install        - Install dependencies"
@@ -98,7 +98,7 @@ format:
 	@echo "Code formatted!"
 
 run:
-	@echo "Starting Olympus Transcriber..."
+	@echo "Starting Timshel..."
 	python src/main.py
 
 setup-daemon:
@@ -117,7 +117,7 @@ reload-daemon:
 
 logs:
 	@echo "Watching logs (Ctrl+C to stop)..."
-	tail -f ~/Library/Logs/olympus_transcriber.log
+	tail -f ~/Library/Application\ Support/Timshel/logs/timshel.log
 
 daemon-logs:
 	@echo "Watching LaunchAgent logs (Ctrl+C to stop)..."
@@ -153,6 +153,10 @@ build-app:
 	@echo "Building macOS application bundle..."
 	bash scripts/build_app.sh
 
+build-app-tester:
+	@echo "Building TESTER macOS application bundle (H1 instrumentation on)..."
+	TESTER_BUILD=1 bash scripts/build_app.sh
+
 build-dmg:
 	@echo "Creating DMG installer..."
 	bash scripts/create_dmg.sh
@@ -160,6 +164,10 @@ build-dmg:
 release:
 	@echo "Running full release pipeline..."
 	bash scripts/build_release.sh
+
+release-tester:
+	@echo "Running TESTER release pipeline (H1 instrumentation on)..."
+	TESTER_BUILD=1 bash scripts/build_release.sh
 
 
 

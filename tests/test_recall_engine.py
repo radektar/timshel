@@ -45,9 +45,9 @@ def vault(tmp_path):
     _note(tmp_path, "skala", "Skalowanie", "01.06",
           "Automatyzacja daje zasieg ale gubi reczna robote.")
     # a digest note in the subfolder must be ignored by backfill
-    d = tmp_path / "Malinche Digests"
+    d = tmp_path / "Timshel Digests"
     d.mkdir()
-    (d / "digest.md").write_text("---\ntype: malinche-digest\n---\n\nignore me okien", encoding="utf-8")
+    (d / "digest.md").write_text("---\ntype: timshel-digest\n---\n\nignore me okien", encoding="utf-8")
     return tmp_path
 
 

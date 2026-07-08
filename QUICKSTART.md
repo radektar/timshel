@@ -1,6 +1,6 @@
-# Malinche — Quick Start
+# Timshel — Quick Start
 
-Get Malinche running locally in about 5 minutes.
+Get Timshel running locally in about 5 minutes.
 
 ## Requirements
 
@@ -46,7 +46,8 @@ python -m src.menu_app
 
 On first launch the wizard will:
 1. Ask which recorder you use (Olympus LS-P1, generic SD card, etc.)
-2. Download whisper-cli, ffmpeg, and the chosen Whisper model (~500 MB for `small`)
+2. Download whisper-cli, ffmpeg, the chosen Whisper model **and its Core ML
+   encoder** (~700 MB total for `small` — the encoder is a separate download)
 3. Prompt for Full Disk Access if needed (see [Docs/FULL_DISK_ACCESS_SETUP.md](Docs/FULL_DISK_ACCESS_SETUP.md))
 
 Once setup completes, the app appears in the macOS menu bar. Click the icon for status, settings, logs, and PRO activation.
@@ -93,9 +94,21 @@ ruff check src/
 # Build a DMG (unsigned, for development)
 make release
 
+# Build a TESTER DMG (H1 instrumentation baked on)
+make release-tester
+
+# Seed a vault from already-transcribed text (txt/md/vtt)
+make import-text SRC=<path>
+
+# Read the H1 action-rate signal from a tester's export
+./venv312/bin/python -m src.connections.signal_report --json <path>/signal.jsonl
+
 # Open the user data directory
-open ~/Library/Application\ Support/Malinche/
+open ~/Library/Application\ Support/Timshel/
 ```
+
+See `Docs/TESTER-ONBOARDING.md`, `Docs/H1-TEST-PROTOCOL.md`, and
+`Docs/TESTER-BUILD-VERIFY.md` for the tester program.
 
 ## Troubleshooting
 
@@ -122,25 +135,25 @@ python -m src.menu_app
 If logs say `Skipping process_recorder because another instance holds lock`:
 
 ```bash
-ls ~/Library/Application\ Support/Malinche/runtime/transcriber.lock
-rm ~/Library/Application\ Support/Malinche/runtime/transcriber.lock   # only if you're sure no instance is running
+ls ~/Library/Application\ Support/Timshel/runtime/transcriber.lock
+rm ~/Library/Application\ Support/Timshel/runtime/transcriber.lock   # only if you're sure no instance is running
 ```
 
 ## Key locations
 
 | What | Where |
 |---|---|
-| App config | `~/Library/Application Support/Malinche/config.json` |
-| App logs | `~/Library/Application Support/Malinche/logs/malinche.log` |
-| State file | `~/Library/Application Support/Malinche/state.json` |
-| Whisper binaries | `~/Library/Application Support/Malinche/bin/` |
-| Whisper models | `~/Library/Application Support/Malinche/models/` |
+| App config | `~/Library/Application Support/Timshel/config.json` |
+| App logs | `~/Library/Application Support/Timshel/logs/timshel.log` |
+| State file | `~/Library/Application Support/Timshel/state.json` |
+| Whisper binaries | `~/Library/Application Support/Timshel/bin/` |
+| Whisper models | `~/Library/Application Support/Timshel/models/` |
 | Output directory | configurable, default `~/Documents/Transcriptions/` |
 
 ## Multi-Mac (iCloud vault)
 
 - Set `MALINCHE_TRANSCRIBE_DIR` to a folder inside your iCloud Drive (`~/Library/Mobile Documents/…`).
-- Malinche writes a deduplication index to `.malinche/index.json` inside the vault.
+- Timshel writes a deduplication index to `.malinche/index.json` inside the vault.
 - A second Mac sees the same audio file's fingerprint and skips it.
 - FREE: dedup/skip. PRO: versioned retranscription (`.v2.md`, `.v3.md`).
 

@@ -1,9 +1,9 @@
 """Launch-at-login management via LaunchAgent plist.
 
 macOS 12+ compatible (no SMAppService dependency). Generates a user
-LaunchAgent plist in ``~/Library/LaunchAgents/com.malinche.app.plist``
+LaunchAgent plist in ``~/Library/LaunchAgents/com.timshel.app.plist``
 and loads/unloads it via ``launchctl``. Detects whether the running
-process is an installed ``Malinche.app`` bundle — autostart only makes
+process is an installed ``Timshel.app`` bundle — autostart only makes
 sense for installed bundles, not for ``python -m src.menu_app`` dev
 runs (where there is no stable executable to point at).
 """
@@ -19,27 +19,27 @@ from typing import Optional
 
 from src.logger import logger
 
-BUNDLE_IDENTIFIER = "com.malinche.app"
+BUNDLE_IDENTIFIER = "com.timshel.app"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 PLIST_PATH = LAUNCH_AGENTS_DIR / f"{BUNDLE_IDENTIFIER}.plist"
 
 
 def is_app_bundle() -> bool:
-    """True if running from an installed Malinche.app bundle."""
+    """True if running from an installed Timshel.app bundle."""
     return get_executable_path() is not None
 
 
 def get_executable_path() -> Optional[Path]:
-    """Return the absolute path to the Malinche bundle's MacOS binary.
+    """Return the absolute path to the Timshel bundle's MacOS binary.
 
     Walks up from ``sys.executable`` looking for the canonical
-    ``.app/Contents/MacOS/Malinche`` layout. Returns None when running
+    ``.app/Contents/MacOS/Timshel`` layout. Returns None when running
     in dev mode (``python -m src.menu_app``).
     """
     exe = Path(sys.executable).resolve()
     for parent in (exe, *exe.parents):
-        if parent.suffix == ".app" and parent.name == "Malinche.app":
-            candidate = parent / "Contents" / "MacOS" / "Malinche"
+        if parent.suffix == ".app" and parent.name == "Timshel.app":
+            candidate = parent / "Contents" / "MacOS" / "Timshel"
             if candidate.exists():
                 return candidate
             return None
@@ -84,7 +84,7 @@ def enable_launch_at_login() -> bool:
     if executable is None:
         logger.warning(
             "Cannot enable launch at login: not running from an installed "
-            "Malinche.app bundle (sys.executable=%s)",
+            "Timshel.app bundle (sys.executable=%s)",
             sys.executable,
         )
         return False
@@ -158,7 +158,7 @@ def sync_with_settings(settings) -> None:
 
     Called once at app start. Idempotent: noop when the on-disk state
     already matches the user's preference. Also rewrites a stale plist
-    if the bundle was moved (e.g. user dragged Malinche.app to a
+    if the bundle was moved (e.g. user dragged Timshel.app to a
     different folder).
     """
     enabled_on_disk = is_launch_at_login_enabled()

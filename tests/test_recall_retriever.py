@@ -49,7 +49,7 @@ def _note(root, name, title, date, body):
 
 @pytest.fixture()
 def engine(tmp_path):
-    store = VaultVectorStore(tmp_path / ".malinche" / "v.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "v.db", dim=FakeEmbedder.dim)
     emb = FakeEmbedder()
     _note(tmp_path, "okna", "Okna i fundamenty", "14.06",
           "Dostepnosc okien przed sierpniem niepewna, producenci okien nie odpowiadaja, dach stoi w miejscu.")
@@ -85,7 +85,7 @@ def test_empty_query_returns_nothing(engine):
 
 
 def test_empty_store_returns_nothing(tmp_path):
-    store = VaultVectorStore(tmp_path / ".malinche" / "e.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "e.db", dim=FakeEmbedder.dim)
     try:
         assert HybridRetriever(store, FakeEmbedder()).search("cokolwiek") == []
     finally:
@@ -112,7 +112,7 @@ def test_title_proper_noun_retrieves_even_when_absent_from_body(tmp_path):
     the transcript, so only the note_id/title carries it. The lexical channel folds the
     note_id in, so BM25 can match it.
     """
-    store = VaultVectorStore(tmp_path / ".malinche" / "t.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "t.db", dim=FakeEmbedder.dim)
     emb = FakeEmbedder()
     _note(tmp_path, "Haetta - rozmowa z konstruktorem", "Haetta - rozmowa z konstruktorem", "17.06",
           "Ustalenia dotyczace nosnosci belek i harmonogramu prac na dachu.")

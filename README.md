@@ -1,4 +1,4 @@
-# Malinche
+# Timshel
 
 > **Version:** v2.0.0-beta.8 (development) → v2.0.0 (in preparation)
 
@@ -8,7 +8,7 @@ Local-first audio transcription for macOS — coming v2.1.0 with MCP integration
 
 ## Features
 
-Malinche has three usage levels. The application code is fully open source (MIT). Adding your own Anthropic key unlocks AI features locally; a future PRO subscription adds the hosted transcript database and MCP integration.
+Timshel has three usage levels. The application code is fully open source (MIT). Adding your own Anthropic key unlocks AI features locally; a future PRO subscription adds the hosted transcript database and MCP integration.
 
 | Feature | FREE | + BYOK (`ANTHROPIC_API_KEY`) | + PRO subscription (v2.1.0) |
 |---|:---:|:---:|:---:|
@@ -68,7 +68,7 @@ Docs/                   architecture, beta plans, public distribution plan
 Docs/testing-archive/   historical manual test checklists (alpha → milestones)
 Docs/test-reports/      milestone test reports (M1, M2, M5)
 Docs/archive/           legacy notes (Obsidian setup, migration summary)
-setup_app.py            py2app entry — produces Malinche.app + DMG
+setup_app.py            py2app entry — produces Timshel.app + DMG
 Makefile                `make release` orchestrates build_release.sh
 ```
 
@@ -104,7 +104,7 @@ Configuration lives in the user settings file (managed via the Settings window) 
 | `WHISPER_MODEL` | Whisper model | `small` |
 | `WHISPER_LANGUAGE` | Transcription language | `pl` |
 
-User data lives at `~/Library/Application Support/Malinche/` (config, logs, models, runtime).
+User data lives at `~/Library/Application Support/Timshel/` (config, logs, models, runtime).
 
 For details see **[Docs/API.md](Docs/API.md)**.
 
@@ -163,7 +163,7 @@ For details see **[Docs/PUBLIC-DISTRIBUTION-PLAN.md](Docs/PUBLIC-DISTRIBUTION-PL
 ### App does not detect the volume
 
 1. Check that the volume is mounted: `ls /Volumes/`
-2. Check the log: `tail -f ~/Library/Application\ Support/Malinche/logs/malinche.log`
+2. Check the log: `tail -f ~/Library/Application\ Support/Timshel/logs/malinche.log`
 3. Confirm the app has **Full Disk Access**: see **[Docs/FULL_DISK_ACCESS_SETUP.md](Docs/FULL_DISK_ACCESS_SETUP.md)**
 
 ### whisper.cpp not found

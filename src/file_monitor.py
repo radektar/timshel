@@ -1,4 +1,4 @@
-"""File system monitoring for Malinche using FSEvents."""
+"""File system monitoring for Timshel using FSEvents."""
 
 import threading
 import time
@@ -189,7 +189,7 @@ class FileMonitor:
         FSEvents fires only on mount/change events — bez tego skanu dyktafon
         podłączony przed startem nie byłby wykryty aż do unmount/remount.
         Skan respektuje istniejącą whitelist UUID. Decyzje o nieznanych dyskach
-        leżą po stronie ``MalincheMenuApp._maybe_run_volume_onboarding`` (po
+        leżą po stronie ``TimshelMenuApp._maybe_run_volume_onboarding`` (po
         starcie pokazuje banner) oraz ``on_change`` (przy późniejszym mount).
 
         Callback wywoływany jest co najwyżej raz, bo ``Transcriber.process_recorder``

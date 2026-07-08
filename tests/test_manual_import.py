@@ -1,7 +1,7 @@
 """Tests for the manual audio-import fallback.
 
 Covers ``Transcriber.stage_audio_file`` / ``import_audio_file`` and the
-``MalincheTranscriber`` (app_core) delegation — the path a user takes when
+``TimshelTranscriber`` (app_core) delegation — the path a user takes when
 automatic recorder/SD detection misses a file and they import it by hand.
 
 Staging is exercised with real generated audio (mp3/flac/wav) when the
@@ -279,10 +279,10 @@ def test_import_releases_locks_after_success_and_failure(transcriber, tmp_path):
 
 
 def test_app_core_import_forwards_to_transcriber():
-    """MalincheTranscriber.import_audio_file delegates to the inner Transcriber."""
-    from src.app_core import MalincheTranscriber
+    """TimshelTranscriber.import_audio_file delegates to the inner Transcriber."""
+    from src.app_core import TimshelTranscriber
 
-    app = MalincheTranscriber(setup_signals=False)
+    app = TimshelTranscriber(setup_signals=False)
     app.transcriber = MagicMock()
     app.transcriber.import_audio_file.return_value = True
 
@@ -292,9 +292,9 @@ def test_app_core_import_forwards_to_transcriber():
 
 def test_app_core_import_raises_when_not_started():
     """Importing before the daemon started raises a clear error."""
-    from src.app_core import MalincheTranscriber
+    from src.app_core import TimshelTranscriber
 
-    app = MalincheTranscriber(setup_signals=False)
+    app = TimshelTranscriber(setup_signals=False)
     app.transcriber = None
 
     with pytest.raises(RuntimeError):
@@ -302,16 +302,16 @@ def test_app_core_import_raises_when_not_started():
 
 
 def test_app_core_reload_ai_config_forwards_to_transcriber():
-    """MalincheTranscriber.reload_ai_config delegates to the inner Transcriber.
+    """TimshelTranscriber.reload_ai_config delegates to the inner Transcriber.
 
     Regression: the menu app calls ``reload_ai_config`` on the orchestrator
     after a Settings save; the method lives on the inner Transcriber, so the
     orchestrator must forward it or hot-reload of a fixed API key silently dies
     with an AttributeError.
     """
-    from src.app_core import MalincheTranscriber
+    from src.app_core import TimshelTranscriber
 
-    app = MalincheTranscriber(setup_signals=False)
+    app = TimshelTranscriber(setup_signals=False)
     app.transcriber = MagicMock()
 
     app.reload_ai_config()
@@ -324,9 +324,9 @@ def test_app_core_reload_ai_config_noop_when_not_started():
     A key saved that early is picked up by the start-time client build, so this
     must not raise into the settings handler.
     """
-    from src.app_core import MalincheTranscriber
+    from src.app_core import TimshelTranscriber
 
-    app = MalincheTranscriber(setup_signals=False)
+    app = TimshelTranscriber(setup_signals=False)
     app.transcriber = None
 
     app.reload_ai_config()  # must not raise

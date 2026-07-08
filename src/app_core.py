@@ -1,4 +1,4 @@
-"""Core application orchestrator for Malinche."""
+"""Core application orchestrator for Timshel."""
 
 import time
 import signal
@@ -12,7 +12,7 @@ from src.file_monitor import FileMonitor
 from src.app_status import AppStatus, AppState
 
 
-class MalincheTranscriber:
+class TimshelTranscriber:
     """Main application orchestrator.
 
     Manages the lifecycle of the transcriber daemon, coordinating
@@ -174,7 +174,7 @@ class MalincheTranscriber:
     def start(self):
         """Start the transcriber daemon."""
         logger.info("=" * 60)
-        logger.info("🚀 Malinche starting...")
+        logger.info("🚀 Timshel starting...")
         logger.info("=" * 60)
 
         # Log configuration
@@ -185,7 +185,7 @@ class MalincheTranscriber:
         # Log TRANSCRIBE_DIR source (from config, which was migrated from ENV if needed)
         logger.info(
             f"ℹ️  TRANSCRIBE_DIR: {config.TRANSCRIBE_DIR} "
-            f"(set MALINCHE_TRANSCRIBE_DIR env var and restart to change)"
+            f"(set TIMSHEL_TRANSCRIBE_DIR env var and restart to change)"
         )
         
         # Ensure transcription directory exists
@@ -204,7 +204,7 @@ class MalincheTranscriber:
                 exc_info=True
             )
             logger.error(
-                "Please ensure MALINCHE_TRANSCRIBE_DIR points to a valid, "
+                "Please ensure TIMSHEL_TRANSCRIBE_DIR points to a valid, "
                 "accessible directory (same vault path on all computers to avoid duplicates)"
             )
             raise

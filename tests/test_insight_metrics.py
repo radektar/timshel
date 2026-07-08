@@ -141,7 +141,7 @@ def test_scheduler_helper_writes_metrics(tmp_path, monkeypatch):
         synth, _Candidates(20), conns, Path("2026-07-05 Synthesis.md")
     )
 
-    out = tmp_path / ".malinche" / "metrics.jsonl"
+    out = tmp_path / ".timshel" / "metrics.jsonl"
     rows = _lines(out)
     assert len(rows) == 1
     assert rows[0]["model"] == "claude-opus-4-8"

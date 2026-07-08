@@ -1,4 +1,4 @@
-"""Setup utilities for Malinche."""
+"""Setup utilities for Timshel."""
 
 from src.setup.downloader import DependencyDownloader
 from src.setup.dependency_manager import DependencyManager, DependencyStatus

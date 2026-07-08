@@ -29,7 +29,7 @@ REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 #: Candidate install roots, most-specific first. The first that holds both a
 #: ``bin/whisper-cli`` and at least one ``models/ggml-*.bin`` wins.
-_INSTALL_ROOTS = (REAL_HOME / "Library" / "Application Support" / "Malinche",)
+_INSTALL_ROOTS = (REAL_HOME / "Library" / "Application Support" / "Timshel",)
 
 #: Model preference order when several are installed: fast-and-good first.
 _MODEL_PREFERENCE = ("small", "base", "medium", "tiny", "large")
