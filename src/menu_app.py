@@ -304,6 +304,16 @@ class MalincheMenuApp(rumps.App):
             except Exception:  # pragma: no cover - cosmetic, never fatal
                 pass
 
+        # The menu-bar icon setter re-reads the PNG from disk and allocates a
+        # fresh NSImage every call. _update_status fires every 2 s, so guard on
+        # the only inputs that change the icon — status + whether a badge is
+        # due — and skip the assignment when nothing changed (~43k needless
+        # disk reads/day otherwise).
+        icon_key = (status, getattr(self, "_unseen_insights", 0) > 0)
+        if icon_key == getattr(self, "_last_icon_key", None):
+            return
+        self._last_icon_key = icon_key
+
         # When an unseen insight is waiting, show the badged (gold-dot) icon —
         # a non-template image, so the gold survives macOS's menu-bar tinting.
         if getattr(self, "_unseen_insights", 0) > 0:
@@ -1237,13 +1247,28 @@ class MalincheMenuApp(rumps.App):
         # there rather than showing "—".
         return self._recent_transcripts_from_disk()
 
+    # A whole-vault rglob is expensive on a large iCloud-synced vault; this
+    # fallback fires on every rail rebuild when the index is empty (fresh
+    # install / older build). The recent list need not be real-time, so serve
+    # a short-TTL cache to bound the scan to ~once per window regardless of how
+    # many UI interactions happen.
+    _RECENT_DISK_TTL_S = 30.0
+
     def _recent_transcripts_from_disk(self, limit: int = 5):
         """Most-recent ``*.md`` transcripts straight from the vault on disk.
 
         Excludes the digest sub-folder and the ``.malinche`` sidecar dir so the
-        rail only lists actual transcripts, newest first by mtime.
+        rail only lists actual transcripts, newest first by mtime. Result is
+        cached for ``_RECENT_DISK_TTL_S`` seconds.
         """
+        import time as _time
         from pathlib import Path
+
+        cached = getattr(self, "_recent_disk_cache", None)
+        if cached is not None:
+            ts, limit_c, result = cached
+            if limit_c == limit and (_time.monotonic() - ts) < self._RECENT_DISK_TTL_S:
+                return result
 
         try:
             root = Path(config.TRANSCRIBE_DIR)
@@ -1260,7 +1285,9 @@ class MalincheMenuApp(rumps.App):
         except OSError as exc:  # pragma: no cover - defensive
             logger.debug("disk scan for recent transcripts failed: %s", exc)
             return []
-        return [{"label": p.stem, "path": p} for _, p in hits[:limit]]
+        result = [{"label": p.stem, "path": p} for _, p in hits[:limit]]
+        self._recent_disk_cache = (_time.monotonic(), limit, result)
+        return result
 
     def _open_note_in_obsidian(self, basename):
         """Resolve a source-note basename in the vault and open it in the
@@ -1551,6 +1578,26 @@ class MalincheMenuApp(rumps.App):
 
     def _refresh_retranscribe_menu(self, _):
         """Refresh the retranscribe submenu with current staged files."""
+        # This fires every 10 s and tears down + rebuilds the whole submenu
+        # (fresh NSMenuItem allocation/teardown through the ObjC bridge each
+        # time). The staging dir changes only when a recorder is plugged in,
+        # so skip the rebuild when the inputs are byte-for-byte identical.
+        staged_files = [] if self._retranscription_in_progress else self._get_staged_files()
+        try:
+            staged_sig = tuple(
+                (f.name, f.stat().st_mtime) for f in staged_files
+            )
+        except OSError:
+            staged_sig = None  # stat raced; force a rebuild
+        snapshot = (
+            self._retranscription_in_progress,
+            self._retranscription_file,
+            staged_sig,
+        )
+        if snapshot == getattr(self, "_retranscribe_menu_snapshot", None):
+            return
+        self._retranscribe_menu_snapshot = snapshot
+
         self.retranscribe_menu.title = "Retranscribe file…"
         # Clear existing submenu items (handle case when _menu is not yet initialized)
         try:
@@ -1567,9 +1614,8 @@ class MalincheMenuApp(rumps.App):
             busy_item.set_callback(None)
             self.retranscribe_menu.add(busy_item)
             return
-        
-        staged_files = self._get_staged_files()
-        
+
+        # staged_files already computed above for the snapshot.
         if not staged_files:
             empty_item = rumps.MenuItem("(no staged files)")
             empty_item.set_callback(None)

@@ -72,17 +72,37 @@ def parse_lines(lines: Iterable[str]) -> List[LogEntry]:
     return entries
 
 
+# Bytes read from the tail of the log per refresh. The viewer's 1 s timer
+# re-reads whenever the file grew (whisper -pp heartbeats touch it every few
+# seconds during a long transcription), so an unbounded readlines() re-read the
+# whole file — up to the 5 MB rotation cap — every second. A fixed tail window
+# bounds each read regardless of file size and still holds far more than the
+# ~5000 displayed entries.
+_TAIL_BYTES = 1_048_576  # 1 MiB
+
+
 def read_recent(path: Path, max_entries: int = 5000) -> List[LogEntry]:
-    """Read up to ``max_entries`` newest entries from the log file."""
+    """Read up to ``max_entries`` newest entries from the log file's tail."""
     if not path.exists():
         return []
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()
+        size = path.stat().st_size
+        with path.open("rb") as fb:
+            if size > _TAIL_BYTES:
+                fb.seek(size - _TAIL_BYTES)
+                raw = fb.read()
+                # Drop the first (probably partial) line after the seek.
+                nl = raw.find(b"\n")
+                if nl != -1:
+                    raw = raw[nl + 1:]
+            else:
+                raw = fb.read()
+        text = raw.decode("utf-8", errors="replace")
     except OSError as exc:
         logger.warning("log_viewer: cannot read %s: %s", path, exc)
         return []
 
+    lines = text.splitlines(keepends=True)
     # Tail: keep last ~max_entries*2 raw lines (multi-line entries collapse).
     tail_lines = lines[-(max_entries * 2):] if len(lines) > max_entries * 2 else lines
     entries = parse_lines(tail_lines)

@@ -144,7 +144,7 @@ class UserSettings:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
     @classmethod
-    def mutate(cls, fn: Callable[["UserSettings"], None]) -> "UserSettings":
+    def mutate(cls, fn: Callable[["UserSettings"], object]) -> "UserSettings":
         """Atomic load → ``fn(settings)`` → save under the write lock.
 
         The safe way to persist a change from any thread: a bare

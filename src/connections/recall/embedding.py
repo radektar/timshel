@@ -94,6 +94,11 @@ def resolve_embedder(
             provider = provider or DEFAULT_EMBED_PROVIDER
             model = model or DEFAULT_EMBED_MODEL
 
+    # Fall back to defaults if config lookup left anything unset (keeps the
+    # types concrete for the cache key + provider construction below).
+    provider = provider or DEFAULT_EMBED_PROVIDER
+    model = model or DEFAULT_EMBED_MODEL
+
     # threads is part of the key: a settings change must not silently return
     # an engine still running on the old thread cap.
     key = (provider, model, threads)

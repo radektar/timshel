@@ -19,11 +19,10 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.config import config
 from src.llm.model_router import resolve_model
+from src.llm.client import build_anthropic_client
 from src.logger import logger
 from src.summarizer import APIBillingError, _is_permanent_api_error
 from src.ui.recall_presenter import split_stem
-
-Anthropic: Any = None
 
 _TOOL_NAME = "emit_answer"
 
@@ -115,16 +114,7 @@ class RecallSynthesizer:
     """Runs one grounded answer-synthesis pass over a query + retrieved passages."""
 
     def __init__(self, api_key: str, model: str) -> None:
-        global Anthropic
-        try:
-            from anthropic import Anthropic as AnthropicClient
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "anthropic package not installed. Install via `pip install anthropic`."
-            ) from exc
-        if Anthropic is None:
-            Anthropic = AnthropicClient
-        self.client = Anthropic(api_key=api_key)
+        self.client = build_anthropic_client(api_key)
         self.model = model
         self.last_usage: Any = None
 

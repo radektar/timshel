@@ -82,6 +82,13 @@ def signal_log_path() -> Optional[Path]:
         return None
 
 
+# Cache keyed on (path, mtime, size): the signal log is append-only, so an
+# unchanged (mtime, size) means an unchanged parse. Without this the ENTIRE
+# log was re-read and JSON-parsed on every Insights open / badge refresh /
+# digest notification — cost grew unbounded with lifetime interaction history.
+_TRIAGE_CACHE: dict = {}  # str(path) -> (mtime, size, result)
+
+
 def triage_state_by_sig(path: Optional[Path] = None) -> "dict":
     """Reconstruct each connection's last triage from the signal log.
 
@@ -91,12 +98,20 @@ def triage_state_by_sig(path: Optional[Path] = None) -> "dict":
     Odrzuć across sessions without a separate store (Odrzuć stays a signal, not a
     suppressor). The string values mirror ``insight_model.KEPT / DISMISSED``;
     kept inline to keep this module AppKit-free and import-cycle-free. Empty or
-    missing log → ``{}``; never raises.
+    missing log → ``{}``; never raises. Result is cached by file (mtime, size).
     """
     try:
         out = Path(path) if path is not None else signal_log_path()
         if out is None or not out.exists():
             return {}
+        try:
+            st = out.stat()
+            cache_key = str(out)
+            cached = _TRIAGE_CACHE.get(cache_key)
+            if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+                return dict(cached[2])  # copy: callers may mutate their view
+        except OSError:
+            st = None
         latest: dict = {}  # sig -> (ts, state)
         for line in out.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -123,7 +138,10 @@ def triage_state_by_sig(path: Optional[Path] = None) -> "dict":
             prev = latest.get(sig)
             if prev is None or ts >= prev[0]:
                 latest[sig] = (ts, state)
-        return {sig: st for sig, (ts, st) in latest.items()}
+        result = {sig: state for sig, (ts, state) in latest.items()}
+        if st is not None:
+            _TRIAGE_CACHE[cache_key] = (st.st_mtime, st.st_size, dict(result))
+        return result
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("could not read triage state: %s", exc)
         return {}

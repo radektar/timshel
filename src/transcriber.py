@@ -847,6 +847,7 @@ class Transcriber:
         started = time.time()
         coreml_failed = False
 
+        assert proc.stderr is not None  # stderr=PIPE above guarantees it
         stderr_fd = proc.stderr.fileno()
         os.set_blocking(stderr_fd, False)
         decoder = codecs.getincrementaldecoder("utf-8")("replace")

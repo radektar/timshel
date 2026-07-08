@@ -32,11 +32,10 @@ from src.connections.candidate_assembly import (
     _excerpt,
 )
 from src.connections.synthesis import Connection
+from src.llm.client import build_anthropic_client
 from src.llm.model_router import resolve_model
 from src.logger import logger
 from src.summarizer import APIBillingError, _is_permanent_api_error
-
-Anthropic: Any = None
 
 _TOOL_NAME = "emit_verdicts"
 
@@ -165,16 +164,7 @@ class ConnectionVerifier:
     """Runs one verification pass over proposed connections."""
 
     def __init__(self, api_key: str, model: str) -> None:
-        global Anthropic
-        try:
-            from anthropic import Anthropic as AnthropicClient
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "anthropic package not installed. Install via `pip install anthropic`."
-            ) from exc
-        if Anthropic is None:
-            Anthropic = AnthropicClient
-        self.client = Anthropic(api_key=api_key)
+        self.client = build_anthropic_client(api_key)
         self.model = model
         self.last_usage: Any = None
 
