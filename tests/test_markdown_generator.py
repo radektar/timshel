@@ -195,6 +195,97 @@ class TestCreateMarkdownDocument:
         assert "## Transkrypcja" in content
         assert sample_transcript in content
     
+    def test_create_document_collision_appends_numbered_suffix(
+        self, generator, sample_transcript, sample_summary,
+        sample_metadata, tmp_path
+    ):
+        """Two same-day recordings with colliding titles must NOT overwrite:
+        the second gets a ' (2)' suffix and both contents survive."""
+        output_dir = tmp_path / "output"
+
+        first = generator.create_markdown_document(
+            transcript="pierwsze nagranie",
+            summary=sample_summary,
+            metadata=sample_metadata,
+            output_dir=output_dir,
+        )
+        second = generator.create_markdown_document(
+            transcript="drugie nagranie",
+            summary=sample_summary,
+            metadata=sample_metadata,
+            output_dir=output_dir,
+        )
+
+        assert first != second
+        assert second.stem.endswith(" (2)")
+        assert "pierwsze nagranie" in first.read_text(encoding="utf-8")
+        assert "drugie nagranie" in second.read_text(encoding="utf-8")
+
+    def test_create_document_collision_third_copy(
+        self, generator, sample_transcript, sample_summary,
+        sample_metadata, tmp_path
+    ):
+        """A third collision gets ' (3)'."""
+        output_dir = tmp_path / "output"
+        paths = [
+            generator.create_markdown_document(
+                transcript=f"nagranie {i}",
+                summary=sample_summary,
+                metadata=sample_metadata,
+                output_dir=output_dir,
+            )
+            for i in range(3)
+        ]
+        assert paths[2].stem.endswith(" (3)")
+        assert len({p.name for p in paths}) == 3
+
+    def test_create_document_explicit_filename_deduped(
+        self, generator, sample_transcript, sample_summary,
+        sample_metadata, tmp_path
+    ):
+        """An explicit output_filename (.vN path) colliding with an existing
+        file is suffixed too; the original is untouched."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        existing = output_dir / "rec.v2.md"
+        existing.write_text("oryginał", encoding="utf-8")
+
+        md_path = generator.create_markdown_document(
+            transcript=sample_transcript,
+            summary=sample_summary,
+            metadata=sample_metadata,
+            output_dir=output_dir,
+            output_filename="rec.v2.md",
+        )
+
+        assert md_path.name == "rec.v2 (2).md"
+        assert existing.read_text(encoding="utf-8") == "oryginał"
+
+    def test_create_document_preserves_braces_in_content(
+        self, generator, sample_summary, sample_metadata, tmp_path
+    ):
+        """Literal braces in transcript/summary/title must round-trip
+        unchanged — the old escaping doubled them in the written note."""
+        output_dir = tmp_path / "output"
+        transcript = 'kod: {"a": 1} i {nawiasy} w tekście'
+        summary = {
+            "title": "Tytuł {z klamrą}",
+            "summary": 'ustaw {"mode": 1}',
+        }
+
+        md_path = generator.create_markdown_document(
+            transcript=transcript,
+            summary=summary,
+            metadata=sample_metadata,
+            output_dir=output_dir,
+        )
+
+        content = md_path.read_text(encoding="utf-8")
+        assert 'kod: {"a": 1} i {nawiasy} w tekście' in content
+        assert 'ustaw {"mode": 1}' in content
+        assert "Tytuł {z klamrą}" in content
+        assert "{{" not in content and "}}" not in content
+
     def test_create_document_missing_summary(
         self, generator, sample_transcript, sample_metadata, tmp_path
     ):
