@@ -82,6 +82,28 @@ def test_read_recent_caps_to_max_entries(tmp_path):
     assert "line 199" in entries[-1].message
 
 
+def test_read_recent_tail_bounds_bytes_read(tmp_path, monkeypatch):
+    """On a file larger than the tail window, only the tail is read — and the
+    newest entries still survive (a partial leading line is dropped cleanly)."""
+    from src.ui import log_viewer
+
+    monkeypatch.setattr(log_viewer, "_TAIL_BYTES", 2048)
+    log_file = tmp_path / "big.log"
+    body = "\n".join(
+        f"2026-05-05 08:29:{i % 60:02d} - malinche - INFO - line {i}"
+        for i in range(2000)
+    )
+    log_file.write_text(body, encoding="utf-8")
+    assert log_file.stat().st_size > 2048  # exceeds the tail window
+
+    entries = read_recent(log_file, max_entries=5000)
+    # Newest entry present; oldest (byte-truncated) gone.
+    assert "line 1999" in entries[-1].message
+    assert not any("line 0 " in e.message or e.message == "line 0" for e in entries)
+    # Every returned entry parsed cleanly (no partial-line garbage).
+    assert all(e.timestamp for e in entries)
+
+
 def test_parser_drops_lines_before_first_timestamp():
     junk = ["random pre-amble line", "2026-05-05 08:29:12 - malinche - INFO - first"]
     entries = parse_lines(junk)
