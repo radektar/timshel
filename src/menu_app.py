@@ -158,6 +158,13 @@ class TimshelMenuApp(rumps.App):
             callback=self._import_audio_clicked,
         )
         self.menu.add(self.import_item)
+        # Seed the vault from already-transcribed text (txt/md/vtt) — the
+        # cold-start fix for a new tester's empty vault.
+        self.import_text_item = rumps.MenuItem(
+            "Import transcripts…",
+            callback=self._import_transcripts_clicked,
+        )
+        self.menu.add(self.import_text_item)
 
         # Synthesis — open the latest connection digest note in the vault.
         self.digest_item = rumps.MenuItem(
@@ -536,6 +543,112 @@ class TimshelMenuApp(rumps.App):
                 )
 
             _run_on_main_thread(_on_main)
+
+    def _import_transcripts_clicked(self, _) -> None:
+        """Menu: pick already-transcribed text files (txt/md/vtt) to seed the
+        vault. Multi-select — the whole value is bulk-seeding a cold vault.
+
+        Picker runs on the main thread; the batch import runs in the background
+        so the menu stays responsive over many files.
+        """
+        if self.transcriber is None:
+            rumps.alert(
+                title="Not ready",
+                message="Timshel is still starting up. Try again in a moment.",
+                ok="OK",
+            )
+            return
+
+        paths = self._choose_transcript_files()
+        if not paths:
+            return
+
+        threading.Thread(
+            target=self._run_text_import,
+            args=([Path(p) for p in paths],),
+            daemon=True,
+            name="ManualTextImport",
+        ).start()
+
+    def _choose_transcript_files(self) -> List[str]:
+        """NSOpenPanel filtered to txt/md/vtt, multi-select. [] if cancelled."""
+        try:
+            from AppKit import NSOpenPanel
+        except ImportError:
+            rumps.alert(
+                title="Unavailable",
+                message="The file picker is not available in this environment.",
+                ok="OK",
+            )
+            return []
+
+        result: dict = {"paths": []}
+
+        def _panel() -> None:
+            panel = NSOpenPanel.openPanel()
+            panel.setCanChooseFiles_(True)
+            panel.setCanChooseDirectories_(False)
+            panel.setAllowsMultipleSelection_(True)
+            panel.setMessage_("Choose transcript files to import (txt, md, vtt)")
+            panel.setAllowedFileTypes_(["txt", "md", "vtt"])
+            if panel.runModal() == 1:  # NSModalResponseOK
+                result["paths"] = [str(u.path()) for u in (panel.URLs() or [])]
+
+        _run_on_main_thread(_panel)
+        return result["paths"]
+
+    def _run_text_import(self, paths: List[Path]) -> None:
+        """Import a batch of transcript files (background thread).
+
+        Per-file failures never abort the batch; a busy lock stops the whole
+        run (a transcription is in progress). Reports ok/duplicate/failed.
+        """
+        total = len(paths)
+        try:
+            send_notification("Timshel", "Importing", f"Importing {total} file(s)…")
+        except Exception:  # noqa: BLE001
+            pass
+
+        imported = 0
+        failed = 0
+        for path in paths:
+            try:
+                # import_text_file returns True on success OR an already-imported
+                # duplicate; either way the file is accounted for.
+                if self.transcriber.import_text_file(path):
+                    imported += 1
+                else:
+                    failed += 1
+            except RetranscribeLockBusyError:
+                logger.info("Text import busy — transcription in progress")
+
+                def _on_main() -> None:
+                    rumps.alert(
+                        title="⏳ Transcription in progress",
+                        message=(
+                            "Another transcription is running. "
+                            "Try importing again in a moment."
+                        ),
+                        ok="OK",
+                    )
+
+                _run_on_main_thread(_on_main)
+                return
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning("Text import rejected %s: %s", path, exc)
+                failed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Text import failed for %s: %s", path, exc, exc_info=True)
+                failed += 1
+
+        logger.info("✓ Text import complete: %d ok, %d failed of %d", imported, failed, total)
+        summary = f"Imported {imported} of {total}"
+        if failed:
+            summary += f" — {failed} skipped"
+        try:
+            send_notification("Timshel", "Import done", summary)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _manage_volumes_clicked(self, _) -> None:
         """Menu item: manage trusted/blocked disk list."""
