@@ -20,6 +20,11 @@ rsv = importlib.util.module_from_spec(_SPEC)
 sys.modules["resummarize_vault"] = rsv
 _SPEC.loader.exec_module(rsv)
 
+# The alias judge + fallback detector moved to their canonical homes and are
+# now shared with the production summary path; test them there.
+from src.summarizer import is_fallback_summary  # noqa: E402
+from src.vocabulary import find_alias_misses  # noqa: E402
+
 
 _NOTE = (
     '---\ntitle: "Strategia TekTutoreski"\ndate: 2026-06-01\n'
@@ -106,7 +111,7 @@ class TestFindAliasMisses:
 
     def test_miss_outside_quotes_is_reported(self):
         summary = "## Podsumowanie\n\nStrategia TekTutoreski rośnie.\n"
-        assert rsv.find_alias_misses(summary, _FakeVocab()) == [
+        assert find_alias_misses(summary, _FakeVocab()) == [
             ("TekTutoreski", "Tech to the Rescue")
         ]
 
@@ -116,7 +121,7 @@ class TestFindAliasMisses:
             '## Cytaty\n\n> "TekTutoreski. Po rozmowie..."\n\n'
             "## Wątki otwarte\n\n- Czy skaluje?\n"
         )
-        assert rsv.find_alias_misses(summary, _FakeVocab()) == []
+        assert find_alias_misses(summary, _FakeVocab()) == []
 
     def test_miss_after_quotes_section_still_caught(self):
         summary = (
@@ -124,20 +129,20 @@ class TestFindAliasMisses:
             '## Cytaty\n\n> "cytat"\n\n'
             "## Wątki otwarte\n\n- Czy TekTutoreski skaluje?\n"
         )
-        assert rsv.find_alias_misses(summary, _FakeVocab()) == [
+        assert find_alias_misses(summary, _FakeVocab()) == [
             ("TekTutoreski", "Tech to the Rescue")
         ]
 
     def test_clean_summary_has_no_misses(self):
         summary = "## Podsumowanie\n\nStrategia Tech to the Rescue rośnie.\n"
-        assert rsv.find_alias_misses(summary, _FakeVocab()) == []
+        assert find_alias_misses(summary, _FakeVocab()) == []
 
 
 class TestGuards:
     def test_fallback_summaries_detected(self):
-        assert rsv.is_fallback_summary("## Podsumowanie\n\nBrak podsumowania AI. ...")
-        assert rsv.is_fallback_summary("...\n- Przejrzeć transkrypcję ręcznie")
-        assert not rsv.is_fallback_summary("## Podsumowanie\n\nPrawdziwa treść.")
+        assert is_fallback_summary("## Podsumowanie\n\nBrak podsumowania AI. ...")
+        assert is_fallback_summary("...\n- Przejrzeć transkrypcję ręcznie")
+        assert not is_fallback_summary("## Podsumowanie\n\nPrawdziwa treść.")
 
     def test_discovery_ignores_subfolders(self, tmp_path):
         (tmp_path / "a.md").write_text("x", encoding="utf-8")
