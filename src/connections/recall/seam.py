@@ -8,12 +8,19 @@ path here swallows its own errors.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from src.connections.recall.indexing import IndexingState, run_backfill
 from src.logger import logger
 
 _ENGINE = None
+# Guards lazy init/reset: three threads reach _engine() (RecallBackfill,
+# the transcription thread via index_transcript_safe, UI search). Engine
+# construction is SLOW (may download the model), so an unlocked check-then-set
+# raced into two engines: two embedding models resident and two writers on the
+# same on-disk index.
+_ENGINE_LOCK = threading.Lock()
 # Shared, process-wide index status: the background backfill writes it, the menu chip
 # and the window's partial banner read it (via index_state()).
 _STATE = IndexingState()
@@ -21,12 +28,15 @@ _STATE = IndexingState()
 
 def _engine():
     global _ENGINE
-    if _ENGINE is None:
-        from src.config.config import get_config
-        from src.connections.recall.engine import RecallEngine
+    if _ENGINE is not None:  # unlocked fast path — plain reference read
+        return _ENGINE
+    with _ENGINE_LOCK:
+        if _ENGINE is None:
+            from src.config.config import get_config
+            from src.connections.recall.engine import RecallEngine
 
-        _ENGINE = RecallEngine(get_config().TRANSCRIBE_DIR)
-    return _ENGINE
+            _ENGINE = RecallEngine(get_config().TRANSCRIBE_DIR)
+        return _ENGINE
 
 
 def index_state() -> IndexingState:
@@ -101,9 +111,10 @@ def search_safe(query: str, k: int = 8):
 def reset_engine() -> None:
     """Drop the cached engine (e.g. after a settings change)."""
     global _ENGINE
-    if _ENGINE is not None:
-        try:
-            _ENGINE.close()
-        except Exception:  # noqa: BLE001
-            pass
-    _ENGINE = None
+    with _ENGINE_LOCK:
+        if _ENGINE is not None:
+            try:
+                _ENGINE.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _ENGINE = None

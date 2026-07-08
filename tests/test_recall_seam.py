@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.connections.recall import seam
 
 
@@ -50,3 +52,71 @@ def test_search_safe_is_the_two_tuple_wrapper(monkeypatch):
     assert seam.search_safe("q") == (["h"], 0.7)
     monkeypatch.setattr(seam, "_engine", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert seam.search_safe("q") == ([], 0.0)
+
+
+# --------------------------------------------------------------------------- #
+# Singleton init/reset thread-safety.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _reset_seam_engine():
+    """Isolate the module-global engine between tests."""
+    seam._ENGINE = None
+    yield
+    seam._ENGINE = None
+
+
+def test_engine_singleton_concurrent_init(monkeypatch):
+    """8 threads racing into a SLOW engine construction must build exactly one
+    engine — the pre-lock code built one per racing thread (two embedding
+    models in RAM, two writers on the same index)."""
+    import threading
+    import time
+
+    built = {"count": 0}
+
+    class _SlowEngine:
+        def __init__(self, _root):
+            time.sleep(0.05)  # model load / download window
+            built["count"] += 1
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "src.connections.recall.engine.RecallEngine", _SlowEngine
+    )
+    # get_config() stays real — the fake engine ignores the root path.
+
+    results = []
+    barrier = threading.Barrier(8)
+
+    def hit():
+        barrier.wait(timeout=5)
+        results.append(seam._engine())
+
+    threads = [threading.Thread(target=hit) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert built["count"] == 1
+    assert len(set(map(id, results))) == 1  # everyone got the same object
+
+
+def test_reset_engine_closes_once():
+    """reset_engine closes the cached engine exactly once and clears it."""
+    closes = {"count": 0}
+
+    class _Eng:
+        def close(self):
+            closes["count"] += 1
+
+    seam._ENGINE = _Eng()
+    seam.reset_engine()
+    seam.reset_engine()  # second call: nothing cached, no double close
+
+    assert closes["count"] == 1
+    assert seam._ENGINE is None
