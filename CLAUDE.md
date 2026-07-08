@@ -44,7 +44,7 @@ Lint config: black line-length 88, isort black profile, mypy with `ignore_missin
 
 - Python 3.12+ required at runtime; mypy is configured against 3.8 baseline so avoid 3.9+-only typing syntax in code that needs to pass type checks.
 - Tests use pytest markers `slow` and `integration` — skip with `-m "not slow"`.
-- Single-package flat layout under `src/` — imports are `from <module> import ...`, no `src.` prefix.
+- Single-package layout under `src/`, imported as the `src` package — every module uses the `src.` prefix (`from src.config import config`, `from src.transcriber import ...`). All 59 modules follow this; match it. (Tests run from the repo root, where `src` is importable.)
 - Versioned releases: bump in `CHANGELOG.md` + git tag; `v2.0.0-beta.N` is the active series.
 
 ## Things to know before editing
