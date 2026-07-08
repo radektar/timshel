@@ -5,9 +5,11 @@ Re-entry (wypełnia Radek przy powrocie): ___ min
 
 ## Ostatnia decyzja + dlaczego
 
-**Tester Build dowieziony (PR #66, gałąź `feat/tester-build` → baza
-`feat/magic-insights-prototype`).** 7 faz, każda osobny zielony commit; 1028
-testów + mypy zielone. Czeka na review/merge Radka (bramka: praca generatywna).
+**Tester Build ZMERGOWANY (PR #66 → `feat/magic-insights-prototype`, merge
+`4beac40`).** 7 faz + 2 tury multi-agent code review (7 realnych bugów
+znalezionych i naprawionych, w tym KRYTYCZNY: `tester_mode` nigdy się nie
+włączał) + szerokie testy ładujące realne pliki (txt/md/vtt E2E + matryca audio
+z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 - **Rename Malinche→Timshel** pełny (bundle `com.timshel.app`, UI, klasy,
   `~/Library/Application Support/Timshel`, sidecar `.timshel`, `Timshel Digests`,
   log, logger, env, build/DMG). Migracja przy 1. starcie (`bootstrap.py`, krok 0):
@@ -28,8 +30,8 @@ testów + mypy zielone. Czeka na review/merge Radka (bramka: praca generatywna).
 
 ## Następny krok
 
-1. **Radek: review + merge PR #66** (praca generatywna — czeka na bramce).
-2. Po mergu: **weryfikacja buildu na czystym środowisku** wg
+1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
+2. **Weryfikacja buildu na czystym środowisku** wg
    `Docs/TESTER-BUILD-VERIFY.md` (Gatekeeper right-click→Open, wizard, FDA+restart,
    700 MB download, import, digest, export) — to jedyne kroki niemożliwe do
    zautomatyzowania tu.
