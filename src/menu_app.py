@@ -177,6 +177,13 @@ class TimshelMenuApp(rumps.App):
             callback=self._generate_digest_now,
         )
         self.menu.add(self.gen_digest_item)
+        # Package the H1 feedback (signal/metrics + digests) into a zip on the
+        # Desktop for the tester to email back.
+        self.export_feedback_item = rumps.MenuItem(
+            "Export feedback",
+            callback=self._export_feedback_clicked,
+        )
+        self.menu.add(self.export_feedback_item)
 
         # Retranscribe submenu (lazy populated by refresh timer)
         self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
@@ -647,6 +654,43 @@ class TimshelMenuApp(rumps.App):
             summary += f" — {failed} skipped"
         try:
             send_notification("Timshel", "Import done", summary)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _export_feedback_clicked(self, _) -> None:
+        """Menu: zip the H1 feedback (signal/metrics + digests) onto the Desktop
+        and reveal it in Finder for the tester to email back.
+        """
+        import subprocess
+
+        from src.feedback_export import NothingToExportError, build_feedback_zip
+
+        vault = Path(config.TRANSCRIBE_DIR)
+        desktop = Path.home() / "Desktop"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        try:
+            zip_path = build_feedback_zip(vault, desktop, timestamp=timestamp)
+        except NothingToExportError:
+            rumps.alert(
+                title="Nothing to export yet",
+                message="Generate a digest and rate a few connections first.",
+                ok="OK",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Feedback export failed: %s", exc, exc_info=True)
+            rumps.alert(title="Export failed", message=str(exc), ok="OK")
+            return
+
+        logger.info("✓ Feedback exported: %s", zip_path)
+        try:
+            subprocess.Popen(["open", "-R", str(zip_path)])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            send_notification(
+                "Timshel", "Feedback exported", f"Saved {zip_path.name} to Desktop"
+            )
         except Exception:  # noqa: BLE001
             pass
 
