@@ -21,12 +21,19 @@ odłożonym B1. → post-H1, w jednym pakiecie z B1/B2.
 
 ## Następny krok
 
-1. Radek: smoke manualny (import podczas auto-transkrypcji → alert busy;
-   quit w trakcie → `pgrep -f whisper-cli` pusty).
-2. Radek: ocena digestu `2026-07-07 Synthesis.md` w oknie Insights →
-   `make magic-digest` co tydzień ×3 → `make signal-report`.
-GO: ≥3 insighty warte akcji/tydz., w tym ≥1 nieoczywista kontradykcja.
-Kill: kontradykcje puste mimo parsera Stanowisk → stance-signal = ślepa uliczka.
+Przygotowanie małej grupy H1 (GTM krok 1, „3–5 testerów P1"):
+1. **Wpiąć sędziego aliasów do produkcji** (decyzja podjęta) — parytet prod =
+   migracja PRZED buildem testera. To sędzia (find_alias_hits → correction →
+   retry), NIE deterministyczna podmiana; koszt = 2. wywołanie Haiku tylko na
+   missie, na kluczu usera. Uwaga GTM: dla zimnych testerów z pustym słownikiem
+   odpala rzadko — realny lewar to dobór testerów z gęstym vaultem, nie sędzia.
+2. **Import transkryptów** — DOWIEZIONY (PR #65): `make import-text SRC=<path>`;
+   gasi cold-start (seed vaulta) + bypass Meet/Zoom przez .vtt. Użyj do
+   zaseedowania testerów z materiałem pierwszoosobowym.
+3. Radek: ocena digestu `2026-07-07` → `make magic-digest` ×3 tyg → `make signal-report`.
+GO: ≥3 warte akcji **połączenia dowolnego typu**/tydz. (skorygowane: nie tylko
+kontradykcje — cross-source linki też liczą), w tym ≥1 nieoczywiste.
+Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding FREE, nie feeder PRO.
 
 ## Otwarte ryzyka
 
@@ -57,11 +64,14 @@ Kill: kontradykcje puste mimo parsera Stanowisk → stance-signal = ślepa ulicz
 
 ## Kontekst dla nowej sesji
 
-Branch: `feat/magic-insights-prototype` · testy: 986 pass
+Branch: `feat/magic-insights-prototype` · testy: 1002 pass
 (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
-mypy zielony (`./venv312/bin/python -m mypy src/`, 89 plików).
-Pakiety naprawcze: PR #62 (P1+P2, `0ee2dce…801741b`) + PR #64 (P3,
-`f424cf7…ad67908`), sesja "[Timshel - APP]" 2026-07-08.
+mypy zielony (`./venv312/bin/python -m mypy src/`, 92 pliki).
+Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest txt/md/vtt),
+sesja "[Timshel - APP]" 2026-07-08.
+Ingest: `src/ingest/` (parsing) + `Transcriber.import_text_file` + `_finalize_note`
+(wspólny tail audio/import) + `make import-text SRC=<path>`. Plan:
+`Docs/future/ingest-plan.md`. Fast-follow: PDF, JSON platform, diaryzacja mówców.
 Stan szczegółowy: Obsidian → [[Timshel — Project State (2026-07-07) — korpus v3, słownik, start H1]].
 Vault-touching komendy (recall-eval, magic-digest, resummarize) wymagają
 Full Disk Access; ta sesja Claude miała dostęp przez działający terminal Radka.
