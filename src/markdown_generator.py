@@ -157,12 +157,13 @@ class MarkdownGenerator:
         Raises:
             IOError: If file cannot be written
         """
-        # Generate safe filename
+        # Generate safe filename; never overwrite an existing note — two
+        # same-day recordings can sanitize to the same title.
         filename = output_filename or self._generate_filename(
             summary.get("title", "Nagranie"),
             metadata["recording_datetime"],
         )
-        output_path = output_dir / filename
+        output_path = self._dedupe_output_path(output_dir, filename)
         
         # Format date strings
         date_str = metadata["recording_datetime"].strftime("%Y-%m-%d")
@@ -179,13 +180,12 @@ class MarkdownGenerator:
                 f"\nprevious_version: {extra_frontmatter['previous_version']}"
             )
 
-        # Fill template — escape braces in AI-generated / user content to prevent
-        # KeyError/ValueError when the content itself contains literal { or }.
-        def _esc(v: str) -> str:
-            return str(v).replace("{", "{{").replace("}", "}}")
-
+        # Fill template. Values are substituted VERBATIM — str.format() never
+        # re-parses substituted values, only the (code-owned) template — so no
+        # escaping is needed. The old brace-doubling "escape" here actively
+        # corrupted every note whose content contained literal { or }.
         content = self.template.format(
-            title=_esc(summary.get("title", "Nagranie")),
+            title=summary.get("title", "Nagranie"),
             date=date_str,
             recording_date=recording_date_str,
             source_file=metadata["source_file"],
@@ -198,8 +198,8 @@ class MarkdownGenerator:
             previous_version_line=previous_version_line,
             duration=metadata["duration_formatted"],
             tags=tags_str,
-            summary=_esc(summary.get("summary", "Brak podsumowania.")),
-            transcript=_esc(transcript),
+            summary=summary.get("summary", "Brak podsumowania."),
+            transcript=transcript,
         )
         
         # Write file
@@ -215,6 +215,26 @@ class MarkdownGenerator:
             logger.error(f"Failed to write markdown file: {e}")
             raise
     
+    @staticmethod
+    def _dedupe_output_path(output_dir: Path, filename: str) -> Path:
+        """First non-existing path for *filename*: append " (2)", " (3)"…
+
+        Applies to explicit (``.vN``) filenames too — every caller consumes
+        the returned path, so a suffixed name can never desynchronize the
+        index, and it only fires on a genuine would-be overwrite.
+        """
+        candidate = output_dir / filename
+        if not candidate.exists():
+            return candidate
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        counter = 2
+        while True:
+            candidate = output_dir / f"{stem} ({counter}){suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
     def _generate_filename(self, title: str, recording_date: datetime) -> str:
         """Generate safe filename from title and date.
         

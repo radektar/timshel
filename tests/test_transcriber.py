@@ -409,9 +409,14 @@ def test_transcribe_file_no_whisper(transcriber, tmp_path):
 
 
 def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypatch):
-    """Test transcribe_file when TXT output already exists."""
+    """Test transcribe_file when an OWNED TXT output already exists.
+
+    Adoption of a leftover TXT requires the ownership sidecar to match this
+    audio's fingerprint (crash-recovery path); stem-only adoption is gone.
+    """
     # Patch global config for state_manager functions
     from src import config as config_module
+    from src.fingerprint import compute_fingerprint
 
     transcriber.whisper_available = True
     # Avoid calling real whisper.cpp if logic regresses
@@ -430,9 +435,106 @@ def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypa
     # Also patch global for state_manager functions
     monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
 
+    # Claim the TXT for this audio — the crash-recovery contract.
+    transcriber._write_transcript_owner(
+        output_file, audio_file, compute_fingerprint(audio_file)
+    )
+
     result = transcriber.transcribe_file(audio_file)
 
     assert result is True  # Already exists counts as success (via post-process)
+    transcriber._run_macwhisper.assert_not_called()
+
+
+def test_txt_adoption_rejected_without_ownership(transcriber, tmp_path, monkeypatch):
+    """A leftover TXT without a sidecar must NOT be adopted: it is moved aside
+    and the audio transcribed fresh (recorders reset numbering — a stem match
+    can be a different recording)."""
+    from src import config as config_module
+
+    transcriber.whisper_available = True
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    stale = output_dir / "REC001.txt"
+    stale.write_text("someone else's transcript")
+
+    audio_file = tmp_path / "REC001.mp3"
+    audio_file.write_bytes(b"card-B-audio")
+
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+
+    fresh_txt = output_dir / "REC001.txt"
+
+    def fake_whisper(af):
+        fresh_txt.write_text("fresh transcript for card B")
+        return fresh_txt
+
+    transcriber._run_macwhisper = MagicMock(side_effect=fake_whisper)
+    transcriber._postprocess_transcript = MagicMock(
+        return_value=output_dir / "note.md"
+    )
+    transcriber._index_completed_transcription = MagicMock()
+
+    result = transcriber.transcribe_file(audio_file)
+
+    assert result is True
+    transcriber._run_macwhisper.assert_called_once()  # fresh run, no adoption
+    stale_files = list(output_dir.glob("REC001.stale-*.txt"))
+    assert len(stale_files) == 1  # moved aside, never deleted
+    assert stale_files[0].read_text() == "someone else's transcript"
+
+
+def test_txt_adoption_rejected_on_fingerprint_mismatch(
+    transcriber, tmp_path, monkeypatch
+):
+    """A sidecar naming a DIFFERENT fingerprint must also block adoption."""
+    from src import config as config_module
+
+    transcriber.whisper_available = True
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    stale = output_dir / "REC001.txt"
+    stale.write_text("transcript of card A")
+
+    other_audio = tmp_path / "other.mp3"
+    other_audio.write_bytes(b"card-A-audio")
+    transcriber._write_transcript_owner(stale, other_audio, "fp-of-card-A")
+
+    audio_file = tmp_path / "REC001.mp3"
+    audio_file.write_bytes(b"card-B-audio")
+
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+
+    transcriber._run_macwhisper = MagicMock(return_value=None)
+
+    transcriber.transcribe_file(audio_file)
+
+    transcriber._run_macwhisper.assert_called_once()  # adoption was refused
+    assert list(output_dir.glob("REC001.stale-*.txt"))
+
+
+def test_remove_existing_transcription_cleans_sidecar(transcriber, tmp_path):
+    """Removing a TXT must also remove its ownership sidecar."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+
+    audio_file = tmp_path / "rec.mp3"
+    audio_file.write_bytes(b"audio")
+    txt = output_dir / "rec.txt"
+    txt.write_text("transcript")
+    transcriber._write_transcript_owner(txt, audio_file, "fp-1")
+    sidecar = transcriber._transcript_sidecar_path(txt)
+    assert sidecar.exists()
+
+    transcriber._remove_existing_transcription(audio_file)
+
+    assert not txt.exists()
+    assert not sidecar.exists()
 
 
 def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
@@ -1028,14 +1130,20 @@ class _FakePipeProc:
     so the streaming reader consumes it line-by-line exactly like the real run.
     """
 
-    def __init__(self, payload: str, rc: int = 0):
+    def __init__(self, payload: str, rc: int = 0, hold_open: bool = False):
         import os as _os
 
         r, w = _os.pipe()
         self.stderr = _os.fdopen(r, "r", encoding="utf-8", errors="replace")
         wf = _os.fdopen(w, "w", encoding="utf-8")
         wf.write(payload)
-        wf.close()
+        if hold_open:
+            # Keep the write end open: no EOF — simulates a stalled whisper
+            # that wrote a partial line and went silent.
+            wf.flush()
+            self._wf = wf
+        else:
+            wf.close()
         self._rc = rc
         self.returncode = None  # None == "running" (poll())
 
@@ -1094,6 +1202,132 @@ def test_streaming_logs_progress_heartbeat(transcriber, tmp_path, monkeypatch):
         if call.args and "Transkrypcja" in str(call.args[0])
     ]
     assert progress_logs, "expected at least one progress heartbeat in the log"
+
+
+def test_streaming_timeout_fires_on_partial_line_without_newline(
+    transcriber, tmp_path, monkeypatch
+):
+    """A stalled whisper that wrote a partial line (no newline) must still hit
+    TRANSCRIPTION_TIMEOUT — the old buffered readline() blocked forever here,
+    wedging the thread that holds _workflow_lock + the process flock."""
+    import time
+
+    proc = _FakePipeProc("whisper_init: load", hold_open=True)  # no \n, no EOF
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(
+        transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.5, raising=False
+    )
+
+    started = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+        )
+    assert time.time() - started < 5.0  # bounded, not wedged
+    assert proc.returncode == -9  # proc.kill() was invoked
+
+
+def test_streaming_flushes_final_partial_line(transcriber, tmp_path, monkeypatch):
+    """Output ending without a trailing newline must still reach stderr."""
+    proc = _FakePipeProc("line one\npartial tail", rc=0)  # EOF after partial
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert "partial tail" in result.stderr
+
+
+def test_streaming_detects_marker_in_partial_line_at_eof(
+    transcriber, tmp_path, monkeypatch
+):
+    """A Metal marker as the final, newline-less line still aborts the GPU run."""
+    payload = "whisper_init: loading model\nggml_metal_device_init: tensor API disabled"
+    proc = _FakePipeProc(payload, rc=0)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.returncode != 0  # caller falls back to CPU
+    assert "tensor API disabled" in result.stderr
+
+
+def test_streaming_sets_and_clears_active_proc(transcriber, tmp_path, monkeypatch):
+    """The live proc must be tracked (for stop()) and cleared after the run,
+    and Popen must put whisper in its own process group."""
+    proc = _FakePipeProc("all done\n", rc=0)
+    captured_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return proc
+
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", fake_popen)
+
+    seen_during_run = {}
+    original_read = _FakePipeProc.poll
+
+    def spy_poll(self):
+        seen_during_run["proc"] = transcriber._active_whisper_proc
+        return original_read(self)
+
+    monkeypatch.setattr(_FakePipeProc, "poll", spy_poll)
+
+    transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert captured_kwargs.get("start_new_session") is True
+    assert seen_during_run["proc"] is proc  # tracked while running
+    assert transcriber._active_whisper_proc is None  # cleared afterwards
+
+
+def test_stop_kills_active_process_group(transcriber, monkeypatch):
+    """stop() must SIGTERM the whisper process group, then SIGKILL on timeout."""
+
+    class _FakeProc:
+        pid = 4242
+        returncode = None
+
+        def __init__(self):
+            self.wait_calls = 0
+
+        def poll(self):
+            return None  # still running
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            raise subprocess.TimeoutExpired(["whisper"], timeout)
+
+    proc = _FakeProc()
+    transcriber._active_whisper_proc = proc
+
+    kills = []
+    monkeypatch.setattr("src.transcriber.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        "src.transcriber.os.killpg", lambda pgid, sig: kills.append((pgid, sig))
+    )
+
+    transcriber.stop()
+
+    import signal as _signal
+
+    assert kills == [(4242, _signal.SIGTERM), (4242, _signal.SIGKILL)]
+
+
+def test_stop_noop_without_active_proc(transcriber, monkeypatch):
+    """stop() with no live whisper must do nothing and not raise."""
+    killed = []
+    monkeypatch.setattr(
+        "src.transcriber.os.killpg", lambda pgid, sig: killed.append(pgid)
+    )
+
+    transcriber.stop()  # _active_whisper_proc is None
+
+    assert killed == []
 
 
 def test_whisper_thread_count_leaves_headroom(monkeypatch):
@@ -1705,11 +1939,25 @@ def test_run_whisper_transcription_uses_utf8_encoding(
     captured = {}
 
     class _FakeStderr:
+        def __init__(self):
+            import os as _os
+
+            self._r, w = _os.pipe()
+            _os.close(w)  # immediate EOF — the reader needs a real fd
+
+        def fileno(self):
+            return self._r
+
         def read(self):
             return ""
 
         def close(self):
-            pass
+            import os as _os
+
+            try:
+                _os.close(self._r)
+            except OSError:
+                pass
 
     class _FakeProc:
         returncode = 0

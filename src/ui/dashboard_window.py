@@ -2182,6 +2182,13 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _do_handoff(self, target):
+            """Gather view state on the main thread, dispatch OFF it.
+
+            ho.dispatch runs subprocess (osascript/open/pbcopy); osascript can
+            block on the TCC consent prompt or a Reminders cold launch — on
+            the main thread that froze the whole app ('Not Responding').
+            Mirrors the _recall_worker_/applyRecall_ pattern.
+            """
             conn = self._deck.active()
             if conn is None or not self._selected:
                 return
@@ -2189,23 +2196,62 @@ if _APPKIT_AVAILABLE:
             dirs = [conn.directions[i] for i in idxs]
             tool = getattr(config, "LLM_HANDOFF_TOOL", "claude")
             evidence = [(e.date, e.note, e.quote) for e in conn.evidence]
+            payload = {
+                "target": target,
+                "label": conn.resolved_label(),
+                "rationale": conn.rationale,
+                "evidence": evidence,
+                "directions": dirs,
+                "direction_idxs": idxs,
+                "tool": tool,
+                "sig": conn.sig or "",
+                "conn_type": conn.synthesis_type,  # raw type only — never the display constant (keeps the canonical sig joinable)
+                "notes": conn.notes,
+            }
+            import threading
+
+            # Kept on self so tests (and a curious debugger) can join it.
+            self._handoff_thread = threading.Thread(
+                target=self._handoff_worker_, args=(payload,),
+                name="HandoffDispatch", daemon=True,
+            )
+            self._handoff_thread.start()
+
+        @objc.python_method
+        def _handoff_worker_(self, payload):
+            """Daemon thread: subprocess dispatch + signal append, then toast
+            back on the main thread. A late toast is harmless — no epoch."""
+            target = payload["target"]
             res = ho.dispatch(
                 target,
-                label=conn.resolved_label(),
-                rationale=conn.rationale,
-                evidence=evidence,
-                directions=dirs,
-                tool=tool,
+                label=payload["label"],
+                rationale=payload["rationale"],
+                evidence=payload["evidence"],
+                directions=payload["directions"],
+                tool=payload["tool"],
             )
-            vsig.record_action(
-                target,
-                sig=conn.sig or "",
-                conn_type=conn.synthesis_type,  # raw type only — never the display constant (keeps the canonical sig joinable)
-                notes=conn.notes,
-                directions=idxs,
-                tool=(tool if target == ho.LLM else ""),
+            try:
+                vsig.record_action(
+                    target,
+                    sig=payload["sig"],
+                    conn_type=payload["conn_type"],
+                    notes=payload["notes"],
+                    directions=payload["direction_idxs"],
+                    tool=(payload["tool"] if target == ho.LLM else ""),
+                )
+            except Exception as exc:  # pragma: no cover - signal is best-effort
+                logger.debug("record_action failed: %s", exc)
+            self._pending_handoff = {"toast": res.toast}
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyHandoff:", None, False
             )
-            self._show_toast(res.toast)
+
+        def applyHandoff_(self, _ignored):
+            payload = getattr(self, "_pending_handoff", None)
+            if not payload:
+                return
+            self._pending_handoff = None
+            self._show_toast(payload["toast"])
 
         @objc.python_method
         def _reset_card_state(self):

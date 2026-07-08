@@ -123,3 +123,25 @@ def test_dispatch_reports_failure(monkeypatch):
     monkeypatch.setattr(ho, "_open_url", lambda u: False)
     r = ho.dispatch(ho.LLM, rationale="r", directions=DIRS, tool="claude")
     assert r.ok is False
+
+
+def test_run_passes_timeout(monkeypatch):
+    """subprocess.run must be bounded — osascript blocks indefinitely on the
+    TCC consent prompt / a Reminders cold launch without a timeout."""
+    import subprocess as sp
+
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(ho.subprocess, "run", fake_run)
+    assert ho._run(["true"]) is True
+    assert captured.get("timeout") == 15
+
+    def hang(args, **kwargs):
+        raise sp.TimeoutExpired(args, kwargs.get("timeout"))
+
+    monkeypatch.setattr(ho.subprocess, "run", hang)
+    assert ho._run(["osascript", "-e", "x"]) is False  # timeout → failure, no raise

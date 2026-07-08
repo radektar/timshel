@@ -1,5 +1,6 @@
 """Configuration module for Malinche (backward compatible wrapper)."""
 
+import os
 import shutil
 from pathlib import Path
 from dataclasses import dataclass
@@ -355,6 +356,21 @@ tags: [{tags}]
         # setting keeps their choice; only an absent setting falls back to enabled.
         self.ENABLE_RECALL_INDEX = bool(
             getattr(self._user_settings, "enable_recall_index", True)
+        )
+        # ONNX thread cap for embeddings. Without it onnxruntime takes ALL
+        # cores and oversubscribes against whisper-cli (cores-2): a launch-time
+        # backfill coinciding with a recorder batch pegged ~2× the CPU. 0/absent
+        # = auto: half the cores, floor 1.
+        try:
+            raw_embed_threads = int(
+                getattr(self._user_settings, "embed_threads", 0) or 0
+            )
+        except (TypeError, ValueError):
+            raw_embed_threads = 0
+        self.EMBED_THREADS = (
+            raw_embed_threads
+            if raw_embed_threads > 0
+            else max(1, (os.cpu_count() or 4) // 2)
         )
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama

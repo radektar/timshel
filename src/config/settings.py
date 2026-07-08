@@ -1,12 +1,18 @@
 """User settings management."""
 
 import json
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from src.config.defaults import defaults
+
+# Serializes load→modify→save cycles across threads (FSEvents monitor,
+# periodic checker, UI) — without it two concurrent writers are
+# last-save-wins and silently clobber each other's changes.
+_SETTINGS_WRITE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -79,6 +85,8 @@ class UserSettings:
     embed_provider: str = "fastembed"
     embed_model: str = ""  # empty -> Config default
     enable_recall_index: bool = True
+    # ONNX thread cap for embeddings; 0 = auto (half the cores, floor 1).
+    embed_threads: int = 0
 
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
@@ -135,6 +143,21 @@ class UserSettings:
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
+    @classmethod
+    def mutate(cls, fn: Callable[["UserSettings"], None]) -> "UserSettings":
+        """Atomic load → ``fn(settings)`` → save under the write lock.
+
+        The safe way to persist a change from any thread: a bare
+        load-modify-save loses concurrent writes (last save wins). Existing
+        load/modify/save call sites elsewhere should migrate to this as they
+        are touched. Returns the saved instance.
+        """
+        with _SETTINGS_WRITE_LOCK:
+            settings = cls.load()
+            fn(settings)
+            settings.save()
+            return settings
+
     def to_dict(self) -> dict:
         """Serialize settings to JSON-friendly dict."""
         return {
@@ -152,6 +175,7 @@ class UserSettings:
             "embed_provider": self.embed_provider,
             "embed_model": self.embed_model,
             "enable_recall_index": self.enable_recall_index,
+            "embed_threads": self.embed_threads,
             "show_notifications": self.show_notifications,
             "start_at_login": self.start_at_login,
             "setup_completed": self.setup_completed,

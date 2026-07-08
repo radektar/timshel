@@ -194,6 +194,86 @@ def test_import_rejects_invalid_without_transcribing(transcriber, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Locking: manual import must not run concurrently with the automatic
+# workflow — two whisper-cli processes would peg every core (each takes
+# cores-2 threads) and race on vault_index.
+# --------------------------------------------------------------------------- #
+
+
+def test_import_busy_when_workflow_lock_held(transcriber, tmp_path):
+    """A held workflow lock (automatic run in progress) rejects the import
+    BEFORE staging — zero side effects."""
+    from src.transcriber import RetranscribeLockBusyError
+
+    source = tmp_path / "voice.mp3"
+    source.write_bytes(b"\x00" * 32)
+
+    assert transcriber._workflow_lock.acquire(blocking=False)
+    try:
+        with pytest.raises(RetranscribeLockBusyError):
+            transcriber.import_audio_file(source)
+    finally:
+        transcriber._workflow_lock.release()
+
+    staging = transcriber.config.LOCAL_RECORDINGS_DIR
+    assert not staging.exists() or not list(staging.iterdir())  # nothing staged
+
+
+def test_import_busy_when_process_lock_held(transcriber, tmp_path, monkeypatch):
+    """A held cross-process flock also rejects; the workflow lock is released
+    so a later attempt can proceed."""
+    from src import transcriber as transcriber_module
+    from src.transcriber import RetranscribeLockBusyError
+
+    class DummyLock:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def acquire(self) -> bool:
+            return False
+
+        def release(self) -> None:
+            pass
+
+    monkeypatch.setattr(transcriber_module, "ProcessLock", DummyLock)
+
+    source = tmp_path / "voice.mp3"
+    source.write_bytes(b"\x00" * 32)
+
+    with pytest.raises(RetranscribeLockBusyError):
+        transcriber.import_audio_file(source)
+
+    # Workflow lock must be free again after the rejection.
+    assert transcriber._workflow_lock.acquire(blocking=False)
+    transcriber._workflow_lock.release()
+
+
+def test_import_releases_locks_after_success_and_failure(transcriber, tmp_path):
+    """Both locks are released after success, failure, and staging errors."""
+    source = tmp_path / "voice.mp3"
+    source.write_bytes(b"\x00" * 32)
+
+    with patch.object(transcriber, "transcribe_file", return_value=True):
+        assert transcriber.import_audio_file(source) is True
+    assert transcriber._workflow_lock.acquire(blocking=False)
+    transcriber._workflow_lock.release()
+
+    source2 = tmp_path / "voice2.mp3"
+    source2.write_bytes(b"\x00" * 32)
+    with patch.object(transcriber, "transcribe_file", return_value=False):
+        assert transcriber.import_audio_file(source2) is False
+    assert transcriber._workflow_lock.acquire(blocking=False)
+    transcriber._workflow_lock.release()
+
+    bad = tmp_path / "image.png"
+    bad.write_bytes(b"\x89PNG")
+    with pytest.raises(ValueError):
+        transcriber.import_audio_file(bad)
+    assert transcriber._workflow_lock.acquire(blocking=False)
+    transcriber._workflow_lock.release()
+
+
+# --------------------------------------------------------------------------- #
 # app_core delegation.
 # --------------------------------------------------------------------------- #
 

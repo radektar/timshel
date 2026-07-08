@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch, MagicMock
 from src.file_monitor import (
     FileMonitor,
     DECISION_BLOCKED,
+    DECISION_NONE,
     DECISION_ONCE,
     DECISION_TRUSTED,
 )
@@ -605,6 +606,61 @@ class TestScanUnknownVolumes:
         handler.assert_called_once()
         mock_persist.assert_not_called()  # 'Once' is never persisted
         assert volume_session.is_approved_once("UUID-SD") is True
+
+    def test_none_decision_persists_nothing(self, volumes_root, manual_settings):
+        """DECISION_NONE (prompt timeout / UI error) must persist NOTHING —
+        the periodic scan re-asks later. Only a real click may write."""
+        from src import volume_session
+
+        handler = Mock(return_value=DECISION_NONE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        with patch.object(FileMonitor, "_persist_decision") as mock_persist:
+            self._run(monitor, volumes_root, manual_settings)
+
+        handler.assert_called_once()
+        mock_persist.assert_not_called()
+        assert volume_session.is_approved_once("UUID-SD") is False
+
+    def test_authorize_volume_single_prompt_for_concurrent_calls(
+        self, volumes_root, manual_settings
+    ):
+        """FSEvents and the periodic checker racing on the same unknown UUID
+        must produce exactly ONE dialog (per-UUID in-flight guard)."""
+        import threading
+
+        release = threading.Event()
+        calls = []
+
+        def blocking_handler(volume_path, uuid):
+            calls.append(uuid)
+            release.wait(timeout=5)
+            return DECISION_ONCE
+
+        monitor = FileMonitor(Mock(), on_unknown_volume=blocking_handler)
+        sd_card = volumes_root / "SD_CARD"
+        results = {}
+
+        def call_authorize(key):
+            with patch(
+                "src.file_monitor.get_volume_uuid", return_value="UUID-SD"
+            ), patch("src.file_monitor.should_process_volume", return_value=False):
+                results[key] = monitor._authorize_volume(sd_card, manual_settings)
+
+        t1 = threading.Thread(target=call_authorize, args=("a",))
+        t2 = threading.Thread(target=call_authorize, args=("b",))
+        t1.start()
+        t2.start()
+        # Let the second thread hit the in-flight guard, then release the dialog.
+        import time
+
+        time.sleep(0.2)
+        release.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert len(calls) == 1  # exactly one dialog
+        assert sorted(results.values()) == [False, True]  # loser skipped
 
     def test_ejected_once_disk_is_forgotten(self, tmp_path, manual_settings):
         """A 'Once' disk that is no longer mounted is forgotten (re-ask later)."""

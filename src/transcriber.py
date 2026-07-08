@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -181,6 +182,11 @@ class Transcriber:
         # menu action run on separate threads). Cross-process exclusion — and
         # crash-safe auto-release — is handled by ProcessLock (fcntl.flock).
         self._workflow_lock = threading.Lock()
+        # Live whisper-cli subprocess, tracked so stop() can kill its process
+        # group on app quit — otherwise an orphaned whisper (cores-2 threads)
+        # keeps burning CPU with its timeout enforcement dead.
+        self._active_whisper_proc: Optional[subprocess.Popen] = None
+        self._active_proc_lock = threading.Lock()
         self.state_updater: Optional[
             Callable[
                 [
@@ -810,7 +816,15 @@ class Transcriber:
 
         encoding/errors are critical under py2app (ASCII locale) — whisper prints
         UTF-8 paths / Polish chars to stderr.
+
+        All reads happen on the RAW non-blocking fd (``os.read``), never on the
+        buffered ``proc.stderr`` wrapper: a buffered ``readline()`` blocks
+        forever on a partial line without a newline (a stalled whisper mid-write
+        used to wedge this thread — and with it ``_workflow_lock`` + the process
+        flock — past the deadline). With ``os.read`` a partial line just sits in
+        our own buffer and the deadline check always fires.
         """
+        import codecs
         import select
 
         proc = subprocess.Popen(
@@ -821,7 +835,10 @@ class Transcriber:
             encoding="utf-8",
             errors="replace",
             env=env,
+            start_new_session=True,  # own process group → stop() can killpg
         )
+        with self._active_proc_lock:
+            self._active_whisper_proc = proc
 
         stderr_chunks: List[str] = []
         deadline = time.time() + max(self.config.TRANSCRIPTION_TIMEOUT, 0.0)
@@ -830,14 +847,76 @@ class Transcriber:
         started = time.time()
         coreml_failed = False
 
+        stderr_fd = proc.stderr.fileno()
+        os.set_blocking(stderr_fd, False)
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""  # text accumulated until a newline arrives
+
+        def handle_line(line: str) -> bool:
+            """Marker + progress logic for one stderr line. True = stop."""
+            nonlocal coreml_failed, last_logged_pct, last_heartbeat
+            if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
+                coreml_failed = True
+                logger.warning(
+                    "⚡ Core ML/Metal error detected after %.0fs — "
+                    "aborting GPU attempt, will retry on CPU",
+                    time.time() - started,
+                )
+                proc.kill()
+                return True
+            match = _PROGRESS_RE.search(line)
+            if match:
+                pct = int(match.group(1))
+                now = time.time()
+                if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
+                    logger.info(
+                        "⏳ Transkrypcja %d%% — %s",
+                        pct,
+                        audio_file.name,
+                    )
+                    last_logged_pct = pct
+                    last_heartbeat = now
+            return False
+
+        def read_chunk() -> Optional[str]:
+            """One non-blocking read. Text (possibly ''), or None on EOF."""
+            try:
+                chunk = os.read(stderr_fd, 65536)
+            except BlockingIOError:
+                return ""
+            except OSError:  # pragma: no cover - defensive (closed fd)
+                return None
+            if not chunk:
+                return None
+            return decoder.decode(chunk)
+
+        def process_remaining() -> None:
+            """Flush the decoder and run marker/progress logic on every
+            not-yet-processed line, including a final newline-less one (a Metal
+            error can be the last thing whisper prints before stalling)."""
+            nonlocal pending
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                stderr_chunks.append(tail)
+                pending += tail
+            for line in pending.split("\n"):
+                if line and handle_line(line):
+                    break
+            pending = ""
+
         try:
-            while True:
+            stop = False
+            while not stop:
                 # Check exit before blocking on select so a finished (or fast)
                 # run drains cleanly without needing a selectable fd.
                 if proc.poll() is not None:
-                    rest = proc.stderr.read()
-                    if rest:
-                        stderr_chunks.append(rest)
+                    while True:
+                        text = read_chunk()
+                        if not text:
+                            break
+                        stderr_chunks.append(text)
+                        pending += text
+                    process_remaining()
                     break
 
                 remaining = deadline - time.time()
@@ -847,37 +926,25 @@ class Transcriber:
                         cmd, self.config.TRANSCRIPTION_TIMEOUT
                     )
 
-                ready, _, _ = select.select([proc.stderr], [], [], min(1.0, remaining))
+                ready, _, _ = select.select([stderr_fd], [], [], min(1.0, remaining))
                 if not ready:
                     continue
-                line = proc.stderr.readline()
-                if not line:
-                    break  # EOF
 
-                stderr_chunks.append(line)
-
-                if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
-                    coreml_failed = True
-                    logger.warning(
-                        "⚡ Core ML/Metal error detected after %.0fs — "
-                        "aborting GPU attempt, will retry on CPU",
-                        time.time() - started,
-                    )
-                    proc.kill()
+                text = read_chunk()
+                if text is None:
+                    # EOF: the write end closed — flush any final partial line.
+                    process_remaining()
                     break
+                if not text:
+                    continue
 
-                match = _PROGRESS_RE.search(line)
-                if match:
-                    pct = int(match.group(1))
-                    now = time.time()
-                    if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
-                        logger.info(
-                            "⏳ Transkrypcja %d%% — %s",
-                            pct,
-                            audio_file.name,
-                        )
-                        last_logged_pct = pct
-                        last_heartbeat = now
+                stderr_chunks.append(text)
+                pending += text
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    if handle_line(line):
+                        stop = True
+                        break
         finally:
             try:
                 if proc.stderr is not None:
@@ -892,6 +959,8 @@ class Transcriber:
                     proc.wait()
             else:
                 proc.wait()
+            with self._active_proc_lock:
+                self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
         if coreml_failed and returncode == 0:
@@ -901,6 +970,33 @@ class Transcriber:
         return subprocess.CompletedProcess(
             args=cmd, returncode=returncode, stdout="", stderr="".join(stderr_chunks)
         )
+
+    def stop(self) -> None:
+        """Kill an in-flight whisper-cli on shutdown (SIGTERM → SIGKILL).
+
+        Without this, quitting mid-transcription orphans whisper-cli: its
+        timeout enforcement lives in this process's deadline loop, the kernel
+        releases the flock on exit, and a relaunched app can start a second
+        whisper on the same file alongside the orphan. Targets the process
+        GROUP (Popen uses start_new_session=True). Safe to call anytime.
+        """
+        with self._active_proc_lock:
+            proc = self._active_whisper_proc
+        if proc is None or proc.poll() is not None:
+            return
+        pid = getattr(proc, "pid", None)  # test fakes may lack a pid
+        if pid is None:
+            return
+        try:
+            pgid = os.getpgid(pid)
+            logger.info("⏹  Stopping in-flight whisper (pgid=%s)...", pgid)
+            os.killpg(pgid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError) as error:
+            logger.debug("stop(): could not kill whisper process: %s", error)
 
     def _coreml_flag_path(self) -> Path:
         """Sidecar file recording that Core ML/Metal failed on this machine."""
@@ -1444,6 +1540,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                     )
                 except OSError as e:
                     logger.warning(f"Could not delete temporary TXT file: {e}")
+                self._cleanup_transcript_sidecar(transcript_path)
 
             return md_path
 
@@ -1587,6 +1684,7 @@ Brak podsumowania AI. Możliwe przyczyny:
             if txt_path.exists():
                 try:
                     txt_path.unlink()
+                    self._cleanup_transcript_sidecar(txt_path)
                     result["txt_cleaned"] += 1
                     logger.debug("Reconciliation: removed leftover %s", txt_path.name)
                 except OSError as error:
@@ -1722,6 +1820,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                 logger.info(f"🗑️  Removed existing TXT: {txt_path.name}")
             except OSError as e:
                 logger.warning(f"Could not remove {txt_path}: {e}")
+        self._cleanup_transcript_sidecar(txt_path)
 
         return removed
 
@@ -1813,6 +1912,81 @@ Brak podsumowania AI. Możliwe przyczyny:
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
 
+    # ------------------------------------------------------------------ #
+    # TXT ownership sidecar
+    #
+    # A leftover ``{stem}.txt`` (crash between whisper and postprocess, or
+    # DELETE_TEMP_TXT=False) used to be adopted as the CURRENT audio's
+    # transcript purely by stem — recorders reset numbering, so REC001.MP3
+    # from another card could permanently receive someone else's transcript.
+    # The sidecar records which fingerprint a TXT belongs to; adoption is
+    # allowed only on a match. A vault-index check cannot replace this: the
+    # index entry is written only AFTER postprocess, i.e. it does not exist
+    # yet in exactly the crash-recovery window adoption must serve.
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _transcript_sidecar_path(transcript_path: Path) -> Path:
+        """Hidden ownership sidecar next to the TXT: ``.{stem}.txt.owner``."""
+        return transcript_path.parent / f".{transcript_path.name}.owner"
+
+    def _write_transcript_owner(
+        self, transcript_path: Path, audio_file: Path, fingerprint: str
+    ) -> None:
+        """Best-effort: record which recording the upcoming TXT belongs to."""
+        try:
+            payload = {
+                "fingerprint": fingerprint,
+                "source": audio_file.name,
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            self._transcript_sidecar_path(transcript_path).write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+        except OSError as error:
+            logger.debug("Could not write transcript sidecar: %s", error)
+
+    def _owns_transcript(self, transcript_path: Path, fingerprint: str) -> bool:
+        """True iff the sidecar exists and names this audio's fingerprint."""
+        sidecar = self._transcript_sidecar_path(transcript_path)
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+        return bool(fingerprint) and data.get("fingerprint") == fingerprint
+
+    def _cleanup_transcript_sidecar(self, transcript_path: Path) -> None:
+        """Remove the sidecar once its TXT is consumed or removed."""
+        try:
+            self._transcript_sidecar_path(transcript_path).unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - defensive
+            pass
+
+    def _quarantine_stale_transcript(self, transcript_path: Path) -> Optional[Path]:
+        """Rename an unowned leftover TXT aside — never delete user data.
+
+        Returns the new path, or ``None`` if the rename failed (in which case
+        the caller proceeds and whisper simply overwrites the file).
+        """
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        candidate = transcript_path.with_name(
+            f"{transcript_path.stem}.stale-{stamp}.txt"
+        )
+        counter = 2
+        while candidate.exists():
+            candidate = transcript_path.with_name(
+                f"{transcript_path.stem}.stale-{stamp}-{counter}.txt"
+            )
+            counter += 1
+        try:
+            transcript_path.rename(candidate)
+        except OSError as error:
+            logger.warning(
+                "Could not move stale TXT %s aside: %s", transcript_path.name, error
+            )
+            return None
+        self._cleanup_transcript_sidecar(transcript_path)
+        return candidate
+
     def transcribe_file(self, audio_file: Path) -> bool:
         """Transcribe a single audio file using whisper.cpp.
 
@@ -1837,11 +2011,39 @@ Brak podsumowania AI. Możliwe przyczyny:
             )
             return True
 
-        # If TXT transcript already exists, skip whisper and only post-process
-        # once to create markdown. This avoids generating multiple notes for
-        # the same recording while still allowing migration from raw TXT.
+        # If TXT transcript already exists AND belongs to this recording
+        # (ownership sidecar), skip whisper and only post-process once to
+        # create markdown — the crash-recovery path. An unowned TXT (legacy
+        # leftover, or a different recording sharing the stem) is moved aside
+        # and the audio transcribed fresh: wrong-transcript adoption is worse
+        # than one redundant whisper run.
         transcript_path = self.config.TRANSCRIBE_DIR / f"{audio_file.stem}.txt"
-        if transcript_path.exists():
+        adopt_existing_txt = transcript_path.exists()
+        if adopt_existing_txt and not self._owns_transcript(
+            transcript_path, fingerprint
+        ):
+            adopt_existing_txt = False
+            quarantined = self._quarantine_stale_transcript(transcript_path)
+            if quarantined is None:
+                # Can't move it aside and must not adopt it: skip this run
+                # (retried next cycle) rather than risk attaching someone
+                # else's transcript via the whisper-side early return.
+                logger.error(
+                    "✗ Stale TXT %s could not be moved aside — skipping %s "
+                    "this cycle",
+                    transcript_path.name,
+                    audio_file.name,
+                )
+                self._last_run_was_transient_failure = True
+                return False
+            logger.warning(
+                "⚠️  Leftover TXT %s did not belong to %s — moved aside as "
+                "%s; transcribing fresh",
+                transcript_path.name,
+                audio_file.name,
+                quarantined.name,
+            )
+        if adopt_existing_txt:
             logger.info(
                 "✓ Transcription TXT already exists, "
                 "creating markdown if needed: %s",
@@ -1870,7 +2072,11 @@ Brak podsumowania AI. Możliwe przyczyny:
                 )
             return success
 
-        # Run whisper transcription
+        # Run whisper transcription. The sidecar written first claims the
+        # upcoming TXT for this fingerprint, so a crash between whisper and
+        # postprocess stays recoverable (adoption above) without stem-only
+        # guessing.
+        self._write_transcript_owner(transcript_path, audio_file, fingerprint)
         transcript_path = self._run_macwhisper(audio_file)
 
         if transcript_path is None:
@@ -2010,15 +2216,47 @@ Brak podsumowania AI. Możliwe przyczyny:
         Convenience wrapper around :meth:`stage_audio_file` +
         :meth:`transcribe_file` for the menu-bar "Import audio…" action.
 
+        Takes the same locks as :meth:`force_retranscribe` — without them a
+        manual import (menu background thread) could run a second whisper-cli
+        concurrently with the automatic recorder workflow: 2×(cores-2)
+        threads pegging every core and unsynchronized vault_index writes.
+        Locks are acquired BEFORE staging so a busy rejection has zero side
+        effects (no orphaned staged copy).
+
         Returns:
             True if transcription succeeded, False otherwise.
 
         Raises:
+            RetranscribeLockBusyError: another transcription is in progress.
             FileNotFoundError / ValueError: propagated from
             :meth:`stage_audio_file` for invalid input.
         """
-        staged = self.stage_audio_file(source)
-        return self.transcribe_file(staged)
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
+        if not lock.acquire():
+            logger.warning(
+                "Cannot acquire process lock - another process is transcribing"
+            )
+            self._workflow_lock.release()
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        try:
+            staged = self.stage_audio_file(source)
+            return self.transcribe_file(staged)
+        finally:
+            lock.release()
+            self._workflow_lock.release()
+            if not self.transcription_in_progress:
+                self._update_state(AppStatus.IDLE)
 
     def _index_completed_transcription(
         self,
