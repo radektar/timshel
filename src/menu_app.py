@@ -473,6 +473,21 @@ class MalincheMenuApp(rumps.App):
 
         try:
             ok = self.transcriber.import_audio_file(audio_path)
+        except RetranscribeLockBusyError:
+            logger.info("Manual import busy for %s — transcription in progress", name)
+
+            def _on_main() -> None:
+                rumps.alert(
+                    title="⏳ Transcription in progress",
+                    message=(
+                        "Another transcription is running. "
+                        "Try importing again in a moment."
+                    ),
+                    ok="OK",
+                )
+
+            _run_on_main_thread(_on_main)
+            return
         except (FileNotFoundError, ValueError) as exc:
             logger.warning("Manual import rejected %s: %s", audio_path, exc)
             # Bind the message now: the ``exc`` name is cleared when the except

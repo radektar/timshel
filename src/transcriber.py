@@ -2216,15 +2216,47 @@ Brak podsumowania AI. Możliwe przyczyny:
         Convenience wrapper around :meth:`stage_audio_file` +
         :meth:`transcribe_file` for the menu-bar "Import audio…" action.
 
+        Takes the same locks as :meth:`force_retranscribe` — without them a
+        manual import (menu background thread) could run a second whisper-cli
+        concurrently with the automatic recorder workflow: 2×(cores-2)
+        threads pegging every core and unsynchronized vault_index writes.
+        Locks are acquired BEFORE staging so a busy rejection has zero side
+        effects (no orphaned staged copy).
+
         Returns:
             True if transcription succeeded, False otherwise.
 
         Raises:
+            RetranscribeLockBusyError: another transcription is in progress.
             FileNotFoundError / ValueError: propagated from
             :meth:`stage_audio_file` for invalid input.
         """
-        staged = self.stage_audio_file(source)
-        return self.transcribe_file(staged)
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
+        if not lock.acquire():
+            logger.warning(
+                "Cannot acquire process lock - another process is transcribing"
+            )
+            self._workflow_lock.release()
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        try:
+            staged = self.stage_audio_file(source)
+            return self.transcribe_file(staged)
+        finally:
+            lock.release()
+            self._workflow_lock.release()
+            if not self.transcription_in_progress:
+                self._update_state(AppStatus.IDLE)
 
     def _index_completed_transcription(
         self,
