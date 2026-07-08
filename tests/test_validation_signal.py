@@ -120,3 +120,42 @@ def test_triage_state_skips_empty_sig_and_missing_file(tmp_path):
     assert vsig.triage_state_by_sig(p) == {}  # missing file
     vsig.record_action(vsig.TARGET_SAVE, sig="", path=p)  # no sig → unjoinable
     assert vsig.triage_state_by_sig(p) == {}
+
+
+def test_triage_state_cached_by_mtime_size(tmp_path, monkeypatch):
+    """An unchanged log must not be re-parsed — the cache serves it; a new
+    append (size change) invalidates and re-reads."""
+    p = tmp_path / "signal.jsonl"
+    vsig._TRIAGE_CACHE.clear()
+    vsig.record_action(vsig.TARGET_SAVE, sig="a", path=p)
+
+    first = vsig.triage_state_by_sig(p)
+    assert first == {"a": "kept"}
+
+    # Second call with an unchanged file must hit the cache (no re-parse).
+    calls = {"n": 0}
+    real_read = type(p).read_text
+
+    def counting_read(self, *a, **k):
+        calls["n"] += 1
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(type(p), "read_text", counting_read)
+    assert vsig.triage_state_by_sig(p) == {"a": "kept"}
+    assert calls["n"] == 0  # served from cache
+
+    # A new append changes the size → cache invalidates → re-read.
+    vsig.record_action(vsig.TARGET_NONE, sig="a", path=p)
+    assert vsig.triage_state_by_sig(p) == {"a": "dismissed"}
+    assert calls["n"] >= 1
+
+
+def test_triage_cache_returns_independent_copy(tmp_path):
+    """A caller mutating the returned dict must not poison the cache."""
+    p = tmp_path / "signal.jsonl"
+    vsig._TRIAGE_CACHE.clear()
+    vsig.record_action(vsig.TARGET_SAVE, sig="a", path=p)
+
+    first = vsig.triage_state_by_sig(p)
+    first["a"] = "TAMPERED"
+    assert vsig.triage_state_by_sig(p) == {"a": "kept"}

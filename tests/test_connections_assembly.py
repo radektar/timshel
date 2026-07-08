@@ -9,7 +9,9 @@ from src.connections.candidate_assembly import (
     NoteRef,
     _bm25_ranked,
     _entity_neighbors,
+    _tokenize,
     assemble_candidates,
+    clear_tokenize_cache,
     load_corpus,
 )
 from src.connections.dismissals import DismissalStore
@@ -385,3 +387,14 @@ def test_char_budget_caps_total(vault, monkeypatch):
     # window note always kept even if it alone exceeds budget; no extras added.
     assert len(cs.window_basenames) == 1
     assert total <= len(cs.notes[0].summary_md) + 500
+
+
+def test_clear_tokenize_cache_releases_retained_texts():
+    """clear_tokenize_cache empties the LRU so the daemon does not pin note
+    texts forever after a digest pass."""
+    _tokenize.cache_clear()
+    _tokenize("some note text about okna i dach")
+    _tokenize("another distinct note about izolacja")
+    assert _tokenize.cache_info().currsize >= 2
+    clear_tokenize_cache()
+    assert _tokenize.cache_info().currsize == 0

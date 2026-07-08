@@ -330,4 +330,12 @@ def run_digest_if_due(
         _set_digest_ready(transcriber, path)
         return path
     finally:
+        # Bound the _tokenize LRU's lifetime to one digest pass — otherwise it
+        # pins up to 8192 note texts in the resident daemon until it cycles.
+        try:
+            from src.connections.candidate_assembly import clear_tokenize_cache
+
+            clear_tokenize_cache()
+        except Exception:  # noqa: BLE001 - best effort, never disturb the tick
+            pass
         _release_digest_lock(lock_fd)

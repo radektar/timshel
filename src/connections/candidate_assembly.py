@@ -156,6 +156,16 @@ def _tokenize(text: str) -> List[str]:
     return tokens
 
 
+def clear_tokenize_cache() -> None:
+    """Drop the _tokenize LRU. The cache keys are whole note texts (up to
+    ~2×max_chars each): great within one recall run's many assembles, but in
+    the long-lived daemon it otherwise pins up to 8192 note texts + token lists
+    forever after a weekly digest. Called at the end of a digest run so the
+    speedup is kept where it matters and the retention is bounded to one pass.
+    """
+    _tokenize.cache_clear()
+
+
 # --------------------------------------------------------------------------- #
 # Corpus loading + ranking
 # --------------------------------------------------------------------------- #
