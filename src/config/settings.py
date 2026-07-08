@@ -85,6 +85,8 @@ class UserSettings:
     embed_provider: str = "fastembed"
     embed_model: str = ""  # empty -> Config default
     enable_recall_index: bool = True
+    # ONNX thread cap for embeddings; 0 = auto (half the cores, floor 1).
+    embed_threads: int = 0
 
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
@@ -173,6 +175,7 @@ class UserSettings:
             "embed_provider": self.embed_provider,
             "embed_model": self.embed_model,
             "enable_recall_index": self.enable_recall_index,
+            "embed_threads": self.embed_threads,
             "show_notifications": self.show_notifications,
             "start_at_login": self.start_at_login,
             "setup_completed": self.setup_completed,

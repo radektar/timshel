@@ -38,15 +38,23 @@ def l2_normalize(vec: Sequence[float]) -> List[float]:
 
 
 class FastembedProvider:
-    """fastembed (ONNX, torch-free). e5-family models get the query:/passage: prefixes."""
+    """fastembed (ONNX, torch-free). e5-family models get the query:/passage: prefixes.
 
-    def __init__(self, model_name: str = DEFAULT_EMBED_MODEL):
+    ``threads`` caps onnxruntime's intra/inter-op pools (fastembed forwards it
+    to SessionOptions). ``None`` = library default = ALL cores, which
+    oversubscribes against a concurrent whisper-cli (cores-2) — pass the
+    Config cap in production.
+    """
+
+    def __init__(
+        self, model_name: str = DEFAULT_EMBED_MODEL, threads: Optional[int] = None
+    ):
         from src.runtime_deps import ensure_importable
 
         ensure_importable("fastembed")
         from fastembed import TextEmbedding  # lazy: keep package import light
 
-        self._model = TextEmbedding(model_name=model_name)
+        self._model = TextEmbedding(model_name=model_name, threads=threads)
         self.model_id = model_name
         self._e5 = "e5" in model_name.lower()
         probe = next(iter(self._model.embed(["dim probe"])))
@@ -67,24 +75,32 @@ class FastembedProvider:
 _CACHE: dict = {}
 
 
-def resolve_embedder(provider: Optional[str] = None, model: Optional[str] = None) -> EmbeddingProvider:
+def resolve_embedder(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    threads: Optional[int] = None,
+) -> EmbeddingProvider:
     """Build (and cache) the configured provider. Reads ``Config`` when args omitted."""
-    if provider is None or model is None:
+    if provider is None or model is None or threads is None:
         try:
             from src.config.config import get_config
 
             cfg = get_config()
             provider = provider or getattr(cfg, "EMBED_PROVIDER", DEFAULT_EMBED_PROVIDER)
             model = model or getattr(cfg, "EMBED_MODEL", DEFAULT_EMBED_MODEL)
+            if threads is None:
+                threads = getattr(cfg, "EMBED_THREADS", None)
         except Exception:  # pragma: no cover - config unavailable in isolated tests
             provider = provider or DEFAULT_EMBED_PROVIDER
             model = model or DEFAULT_EMBED_MODEL
 
-    key = (provider, model)
+    # threads is part of the key: a settings change must not silently return
+    # an engine still running on the old thread cap.
+    key = (provider, model, threads)
     if key in _CACHE:
         return _CACHE[key]
     if provider == "fastembed":
-        emb: EmbeddingProvider = FastembedProvider(model)
+        emb: EmbeddingProvider = FastembedProvider(model, threads=threads)
     else:
         raise ValueError(f"Unknown embedding provider: {provider!r}")
     _CACHE[key] = emb
