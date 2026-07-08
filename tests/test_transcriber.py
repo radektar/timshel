@@ -1153,6 +1153,81 @@ def test_streaming_detects_marker_in_partial_line_at_eof(
     assert "tensor API disabled" in result.stderr
 
 
+def test_streaming_sets_and_clears_active_proc(transcriber, tmp_path, monkeypatch):
+    """The live proc must be tracked (for stop()) and cleared after the run,
+    and Popen must put whisper in its own process group."""
+    proc = _FakePipeProc("all done\n", rc=0)
+    captured_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return proc
+
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", fake_popen)
+
+    seen_during_run = {}
+    original_read = _FakePipeProc.poll
+
+    def spy_poll(self):
+        seen_during_run["proc"] = transcriber._active_whisper_proc
+        return original_read(self)
+
+    monkeypatch.setattr(_FakePipeProc, "poll", spy_poll)
+
+    transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert captured_kwargs.get("start_new_session") is True
+    assert seen_during_run["proc"] is proc  # tracked while running
+    assert transcriber._active_whisper_proc is None  # cleared afterwards
+
+
+def test_stop_kills_active_process_group(transcriber, monkeypatch):
+    """stop() must SIGTERM the whisper process group, then SIGKILL on timeout."""
+
+    class _FakeProc:
+        pid = 4242
+        returncode = None
+
+        def __init__(self):
+            self.wait_calls = 0
+
+        def poll(self):
+            return None  # still running
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            raise subprocess.TimeoutExpired(["whisper"], timeout)
+
+    proc = _FakeProc()
+    transcriber._active_whisper_proc = proc
+
+    kills = []
+    monkeypatch.setattr("src.transcriber.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        "src.transcriber.os.killpg", lambda pgid, sig: kills.append((pgid, sig))
+    )
+
+    transcriber.stop()
+
+    import signal as _signal
+
+    assert kills == [(4242, _signal.SIGTERM), (4242, _signal.SIGKILL)]
+
+
+def test_stop_noop_without_active_proc(transcriber, monkeypatch):
+    """stop() with no live whisper must do nothing and not raise."""
+    killed = []
+    monkeypatch.setattr(
+        "src.transcriber.os.killpg", lambda pgid, sig: killed.append(pgid)
+    )
+
+    transcriber.stop()  # _active_whisper_proc is None
+
+    assert killed == []
+
+
 def test_whisper_thread_count_leaves_headroom(monkeypatch):
     """Thread count must reserve cores so the UI stays responsive."""
     monkeypatch.setattr("src.transcriber.os.cpu_count", lambda: 10)

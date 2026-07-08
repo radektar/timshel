@@ -280,6 +280,15 @@ class MalincheTranscriber:
         self.running = False
         self.state.status = AppStatus.IDLE
 
+        # Kill an in-flight whisper before anything else: its process group
+        # would otherwise outlive us (timeout enforcement dies with this
+        # process, flock is kernel-released on exit → orphan + double run).
+        if self.transcriber:
+            try:
+                self.transcriber.stop()
+            except Exception as e:  # noqa: BLE001 — shutdown must proceed
+                logger.error(f"Error stopping transcriber: {e}")
+
         # Stop file monitor
         if self.monitor:
             try:

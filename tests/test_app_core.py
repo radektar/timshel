@@ -72,6 +72,31 @@ def test_periodic_check_without_monitor_still_processes():
     app.transcriber.process_recorder.assert_called_once()
 
 
+def test_app_core_stop_calls_transcriber_stop():
+    """stop() must kill an in-flight whisper via Transcriber.stop()."""
+    app = MalincheTranscriber(setup_signals=False)
+    app.transcriber = MagicMock()
+    app.monitor = MagicMock()
+    app.running = True
+
+    app.stop()
+
+    app.transcriber.stop.assert_called_once()
+
+
+def test_app_core_stop_survives_transcriber_stop_error():
+    """A failing transcriber.stop() must not abort the rest of shutdown."""
+    app = MalincheTranscriber(setup_signals=False)
+    app.transcriber = MagicMock()
+    app.transcriber.stop.side_effect = OSError("boom")
+    app.monitor = MagicMock()
+    app.running = True
+
+    app.stop()  # no raise
+
+    app.monitor.stop.assert_called_once()
+
+
 def test_vault_index_property_delegates_to_inner_transcriber():
     """menu_app reads ``app.transcriber.vault_index`` — it must forward to the
     inner Transcriber rather than raising (the recent-transcripts rail bug)."""

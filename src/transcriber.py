@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -181,6 +182,11 @@ class Transcriber:
         # menu action run on separate threads). Cross-process exclusion — and
         # crash-safe auto-release — is handled by ProcessLock (fcntl.flock).
         self._workflow_lock = threading.Lock()
+        # Live whisper-cli subprocess, tracked so stop() can kill its process
+        # group on app quit — otherwise an orphaned whisper (cores-2 threads)
+        # keeps burning CPU with its timeout enforcement dead.
+        self._active_whisper_proc: Optional[subprocess.Popen] = None
+        self._active_proc_lock = threading.Lock()
         self.state_updater: Optional[
             Callable[
                 [
@@ -829,7 +835,10 @@ class Transcriber:
             encoding="utf-8",
             errors="replace",
             env=env,
+            start_new_session=True,  # own process group → stop() can killpg
         )
+        with self._active_proc_lock:
+            self._active_whisper_proc = proc
 
         stderr_chunks: List[str] = []
         deadline = time.time() + max(self.config.TRANSCRIPTION_TIMEOUT, 0.0)
@@ -950,6 +959,8 @@ class Transcriber:
                     proc.wait()
             else:
                 proc.wait()
+            with self._active_proc_lock:
+                self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
         if coreml_failed and returncode == 0:
@@ -959,6 +970,33 @@ class Transcriber:
         return subprocess.CompletedProcess(
             args=cmd, returncode=returncode, stdout="", stderr="".join(stderr_chunks)
         )
+
+    def stop(self) -> None:
+        """Kill an in-flight whisper-cli on shutdown (SIGTERM → SIGKILL).
+
+        Without this, quitting mid-transcription orphans whisper-cli: its
+        timeout enforcement lives in this process's deadline loop, the kernel
+        releases the flock on exit, and a relaunched app can start a second
+        whisper on the same file alongside the orphan. Targets the process
+        GROUP (Popen uses start_new_session=True). Safe to call anytime.
+        """
+        with self._active_proc_lock:
+            proc = self._active_whisper_proc
+        if proc is None or proc.poll() is not None:
+            return
+        pid = getattr(proc, "pid", None)  # test fakes may lack a pid
+        if pid is None:
+            return
+        try:
+            pgid = os.getpgid(pid)
+            logger.info("⏹  Stopping in-flight whisper (pgid=%s)...", pgid)
+            os.killpg(pgid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError) as error:
+            logger.debug("stop(): could not kill whisper process: %s", error)
 
     def _coreml_flag_path(self) -> Path:
         """Sidecar file recording that Core ML/Metal failed on this machine."""
