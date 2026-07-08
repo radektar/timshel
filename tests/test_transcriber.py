@@ -409,9 +409,14 @@ def test_transcribe_file_no_whisper(transcriber, tmp_path):
 
 
 def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypatch):
-    """Test transcribe_file when TXT output already exists."""
+    """Test transcribe_file when an OWNED TXT output already exists.
+
+    Adoption of a leftover TXT requires the ownership sidecar to match this
+    audio's fingerprint (crash-recovery path); stem-only adoption is gone.
+    """
     # Patch global config for state_manager functions
     from src import config as config_module
+    from src.fingerprint import compute_fingerprint
 
     transcriber.whisper_available = True
     # Avoid calling real whisper.cpp if logic regresses
@@ -430,9 +435,106 @@ def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypa
     # Also patch global for state_manager functions
     monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
 
+    # Claim the TXT for this audio — the crash-recovery contract.
+    transcriber._write_transcript_owner(
+        output_file, audio_file, compute_fingerprint(audio_file)
+    )
+
     result = transcriber.transcribe_file(audio_file)
 
     assert result is True  # Already exists counts as success (via post-process)
+    transcriber._run_macwhisper.assert_not_called()
+
+
+def test_txt_adoption_rejected_without_ownership(transcriber, tmp_path, monkeypatch):
+    """A leftover TXT without a sidecar must NOT be adopted: it is moved aside
+    and the audio transcribed fresh (recorders reset numbering — a stem match
+    can be a different recording)."""
+    from src import config as config_module
+
+    transcriber.whisper_available = True
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    stale = output_dir / "REC001.txt"
+    stale.write_text("someone else's transcript")
+
+    audio_file = tmp_path / "REC001.mp3"
+    audio_file.write_bytes(b"card-B-audio")
+
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+
+    fresh_txt = output_dir / "REC001.txt"
+
+    def fake_whisper(af):
+        fresh_txt.write_text("fresh transcript for card B")
+        return fresh_txt
+
+    transcriber._run_macwhisper = MagicMock(side_effect=fake_whisper)
+    transcriber._postprocess_transcript = MagicMock(
+        return_value=output_dir / "note.md"
+    )
+    transcriber._index_completed_transcription = MagicMock()
+
+    result = transcriber.transcribe_file(audio_file)
+
+    assert result is True
+    transcriber._run_macwhisper.assert_called_once()  # fresh run, no adoption
+    stale_files = list(output_dir.glob("REC001.stale-*.txt"))
+    assert len(stale_files) == 1  # moved aside, never deleted
+    assert stale_files[0].read_text() == "someone else's transcript"
+
+
+def test_txt_adoption_rejected_on_fingerprint_mismatch(
+    transcriber, tmp_path, monkeypatch
+):
+    """A sidecar naming a DIFFERENT fingerprint must also block adoption."""
+    from src import config as config_module
+
+    transcriber.whisper_available = True
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    stale = output_dir / "REC001.txt"
+    stale.write_text("transcript of card A")
+
+    other_audio = tmp_path / "other.mp3"
+    other_audio.write_bytes(b"card-A-audio")
+    transcriber._write_transcript_owner(stale, other_audio, "fp-of-card-A")
+
+    audio_file = tmp_path / "REC001.mp3"
+    audio_file.write_bytes(b"card-B-audio")
+
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+
+    transcriber._run_macwhisper = MagicMock(return_value=None)
+
+    transcriber.transcribe_file(audio_file)
+
+    transcriber._run_macwhisper.assert_called_once()  # adoption was refused
+    assert list(output_dir.glob("REC001.stale-*.txt"))
+
+
+def test_remove_existing_transcription_cleans_sidecar(transcriber, tmp_path):
+    """Removing a TXT must also remove its ownership sidecar."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+
+    audio_file = tmp_path / "rec.mp3"
+    audio_file.write_bytes(b"audio")
+    txt = output_dir / "rec.txt"
+    txt.write_text("transcript")
+    transcriber._write_transcript_owner(txt, audio_file, "fp-1")
+    sidecar = transcriber._transcript_sidecar_path(txt)
+    assert sidecar.exists()
+
+    transcriber._remove_existing_transcription(audio_file)
+
+    assert not txt.exists()
+    assert not sidecar.exists()
 
 
 def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
