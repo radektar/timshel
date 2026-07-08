@@ -2150,30 +2150,31 @@ Brak podsumowania AI. Możliwe przyczyny:
                 version=version,
             )
 
-            # Connection synthesis is opportunistic and must NEVER disturb
-            # transcription — enqueue (a cheap in-memory counter bump, no API,
-            # no IO) and swallow anything that goes wrong.
-            try:
-                from src.connections import enqueue_connection_analysis
-
-                enqueue_connection_analysis(self)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("connection enqueue skipped: %s", exc)
-
-            # Keep the local recall index fresh at transcription time. Opt-in
-            # (ENABLE_RECALL_INDEX) and fully guarded — must never disturb
-            # transcription.
-            try:
-                from src.config.config import get_config
-
-                if getattr(get_config(), "ENABLE_RECALL_INDEX", False):
-                    from src.connections.recall.seam import index_transcript_safe
-
-                    index_transcript_safe(md_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("recall index skipped: %s", exc)
+            self._post_note_hooks(md_path)
 
         return success
+
+    def _post_note_hooks(self, md_path: Path) -> None:
+        """Fire the two opportunistic post-note hooks: bump the digest new-note
+        counter and refresh the recall index. Both are best-effort and must
+        NEVER disturb the caller. Shared by audio transcription and text import.
+        """
+        try:
+            from src.connections import enqueue_connection_analysis
+
+            enqueue_connection_analysis(self)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("connection enqueue skipped: %s", exc)
+
+        try:
+            from src.config.config import get_config
+
+            if getattr(get_config(), "ENABLE_RECALL_INDEX", False):
+                from src.connections.recall.seam import index_transcript_safe
+
+                index_transcript_safe(md_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("recall index skipped: %s", exc)
 
     def stage_audio_file(self, source: Path) -> Path:
         """Copy a manually chosen audio file into the local staging area.
@@ -2272,6 +2273,84 @@ Brak podsumowania AI. Możliwe przyczyny:
         try:
             staged = self.stage_audio_file(source)
             return self.transcribe_file(staged)
+        finally:
+            lock.release()
+            self._workflow_lock.release()
+            if not self.transcription_in_progress:
+                self._update_state(AppStatus.IDLE)
+
+    def import_text_file(self, source: Path) -> bool:
+        """Import an already-transcribed text file (txt/md/vtt) as a note.
+
+        Skips whisper entirely: parses the source via :mod:`src.ingest`, then
+        runs the SAME summarize→render→index tail as audio (``_finalize_note``),
+        so imported notes get v2 summaries (canonicalisation + Stanowiska), land
+        in the vault index and recall, and feed the next digest. Imported notes
+        carry ``source_type: import`` in frontmatter for provenance.
+
+        Takes the same workflow + process locks as audio import so it can't run
+        concurrently with a transcription (CPU/vault-index safety).
+
+        Returns:
+            True on success (or a duplicate already imported), False on failure.
+
+        Raises:
+            RetranscribeLockBusyError: another transcription is in progress.
+            FileNotFoundError / ValueError: unsupported or empty source.
+        """
+        from src.ingest import parse, text_fingerprint
+
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
+        if not lock.acquire():
+            logger.warning(
+                "Cannot acquire process lock - another process is transcribing"
+            )
+            self._workflow_lock.release()
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        try:
+            doc = parse(Path(source))  # raises ValueError on unsupported/empty
+            fingerprint = text_fingerprint(doc.text, doc.source_name)
+
+            if self.vault_index.lookup(fingerprint):
+                logger.info("✓ Already imported (fingerprint exists): %s", doc.source_name)
+                return True
+
+            metadata = {
+                "source_file": doc.source_name,
+                "recording_datetime": doc.recorded_at,
+                "duration_seconds": None,
+                "duration_formatted": "00:00:00",
+                "extension": Path(source).suffix.lower(),
+            }
+            self._update_state(AppStatus.TRANSCRIBING, doc.source_name)
+            md_path = self._finalize_note(
+                doc.text,
+                metadata,
+                fingerprint,
+                fallback_title=doc.title,
+                extra_frontmatter={"source_type": "import", "origin": doc.origin},
+            )
+            if md_path is None:
+                logger.warning("Import post-processing failed: %s", doc.source_name)
+                return False
+
+            self._index_completed_transcription(
+                Path(source), fingerprint, md_path, existing_entry=None
+            )
+            logger.info("✓ Imported: %s → %s", doc.source_name, md_path.name)
+            self._post_note_hooks(md_path)
+            return True
         finally:
             lock.release()
             self._workflow_lock.release()
