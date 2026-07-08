@@ -187,13 +187,19 @@ class HandoffResult:
 
 
 def _run(args: Sequence[str], *, input_text: Optional[str] = None) -> bool:
-    """Run a local command, returning success. Never raises."""
+    """Run a local command, returning success. Never raises.
+
+    The timeout matters: osascript blocks on the first-run TCC consent prompt
+    or a Reminders/Calendar cold launch — without a bound, that hang would be
+    forever (TimeoutExpired lands in the broad except → False).
+    """
     try:
         subprocess.run(
             list(args),
             input=(input_text.encode("utf-8") if input_text is not None else None),
             check=True,
             capture_output=True,
+            timeout=15,
         )
         return True
     except Exception as exc:  # noqa: BLE001
