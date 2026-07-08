@@ -5,34 +5,39 @@ Re-entry (wypełnia Radek przy powrocie): ___ min
 
 ## Ostatnia decyzja + dlaczego
 
-Głęboki code review (8 kątów + weryfikacja adwersaryjna) → wdrożone i zmergowane:
-- **P1+P2** (PR #62): integralność danych + punktowa współbieżność. Bez
-  przebudowy na executor (odłożona) — nie destabilizować H1.
-- **P3** (PR #64): TYLKO zmiany behawioralnie neutralne — bramka mypy realnie
-  działa (3.12 + baseline 25 modułów), UI-perf (cache triage/tokenize, guard
-  ikony/submenu, tail log viewera), wspólny `build_anthropic_client` (5→1),
-  poprawka reguły import-ów w CLAUDE.md.
-
-**Odłożone świadomie z P3 (wymaga decyzji Radka):** alias-canonicalizacja w
-produkcji. Deterministyczna podmiana cofałaby decyzję „model owns
-canonicalization"; judge/retry w prod dokłada 2. wywołanie Haiku na ścieżce
-FREE. Każda wersja zmienia output podsumowań = instrument H1 i sąsiaduje z
-odłożonym B1. → post-H1, w jednym pakiecie z B1/B2.
+**Tester Build dowieziony (PR #66, gałąź `feat/tester-build` → baza
+`feat/magic-insights-prototype`).** 7 faz, każda osobny zielony commit; 1028
+testów + mypy zielone. Czeka na review/merge Radka (bramka: praca generatywna).
+- **Rename Malinche→Timshel** pełny (bundle `com.timshel.app`, UI, klasy,
+  `~/Library/Application Support/Timshel`, sidecar `.timshel`, `Timshel Digests`,
+  log, logger, env, build/DMG). Migracja przy 1. starcie (`bootstrap.py`, krok 0):
+  app-support całościowo (bez re-downloadu) albo non-destructive merge; sidecary
+  vaulta; usunięcie starego LaunchAgent; idempotentne. **Zweryfikowane na żywych
+  danych Radka** (config+klucz+modele+vault przeniesione nienaruszone). Back-compat
+  za guard testem `tests/test_rename_guard.py`.
+- **tester_mode** trwały (UserSettings→`__post_init__`, przeżywa `reload_config`) →
+  knoby H1 (verdict, metrics, kanały, Opus) dla daemona i menu. Baking:
+  plist `TimshelTesterBuild` + adopcja przy 1. starcie; `make build-app-tester`/
+  `release-tester`. Build zweryfikowany: `dist/Timshel.app`, plist flag=true.
+- **Sędzia aliasów w prod** (transcriber): judge → 1 correction retry; model
+  poprawia, nie podmiana kodu; ocalały miss logowany. Wspólne helpery
+  (vocabulary/summarizer) = parytet z resummarize.
+- **Import transcripts…** (menu, multi-select txt/md/vtt → seed) + **Export
+  feedback** (menu → zip signal/metrics+digesty na Desktop).
+- Docs: `TESTER-ONBOARDING.md`, `H1-TEST-PROTOCOL.md`, `TESTER-BUILD-VERIFY.md`.
 
 ## Następny krok
 
-Przygotowanie małej grupy H1 (GTM krok 1, „3–5 testerów P1"):
-1. **Wpiąć sędziego aliasów do produkcji** (decyzja podjęta) — parytet prod =
-   migracja PRZED buildem testera. To sędzia (find_alias_hits → correction →
-   retry), NIE deterministyczna podmiana; koszt = 2. wywołanie Haiku tylko na
-   missie, na kluczu usera. Uwaga GTM: dla zimnych testerów z pustym słownikiem
-   odpala rzadko — realny lewar to dobór testerów z gęstym vaultem, nie sędzia.
-2. **Import transkryptów** — DOWIEZIONY (PR #65): `make import-text SRC=<path>`;
-   gasi cold-start (seed vaulta) + bypass Meet/Zoom przez .vtt. Użyj do
-   zaseedowania testerów z materiałem pierwszoosobowym.
-3. Radek: ocena digestu `2026-07-07` → `make magic-digest` ×3 tyg → `make signal-report`.
-GO: ≥3 warte akcji **połączenia dowolnego typu**/tydz. (skorygowane: nie tylko
-kontradykcje — cross-source linki też liczą), w tym ≥1 nieoczywiste.
+1. **Radek: review + merge PR #66** (praca generatywna — czeka na bramce).
+2. Po mergu: **weryfikacja buildu na czystym środowisku** wg
+   `Docs/TESTER-BUILD-VERIFY.md` (Gatekeeper right-click→Open, wizard, FDA+restart,
+   700 MB download, import, digest, export) — to jedyne kroki niemożliwe do
+   zautomatyzowania tu.
+3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit; potwierdzić
+   że `checksums.py` release URL-e (`radektar/malinche`) rozwiązują się przez
+   redirect po rename repo; lista 3–5 testerów P1 z gęstym vaultem.
+4. Zebranie sygnału H1 (N=3–5): rytuał tygodniowy rate→export ×3 tyg → `signal-report`.
+GO: ≥3 warte akcji **połączenia dowolnego typu**/tydz., w tym ≥1 nieoczywiste.
 Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding FREE, nie feeder PRO.
 
 ## Otwarte ryzyka
@@ -51,8 +56,6 @@ Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding
 ## Nie ruszać (świadomie odłożone)
 
 - Wspólny executor ciężkiej pracy + budżet wątków — po sygnale z H1.
-- Alias-canonicalizacja w produkcji (deterministyczna LUB judge/retry) — zmienia
-  instrument H1; do pakietu post-H1 z B1/B2.
 - Pełny rebuild okna Insights — po H1 (okno oceny).
 - Ciała forced-tool (synthesis/verdict/recall) → wspólny helper — dług, nie teraz.
 - Strojenie H3 / podnoszenie MAX_SYNTHESIS_NOTES — dopiero z sygnałem z H1.
@@ -60,15 +63,21 @@ Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding
 - B2 structured-output summarizera (forced tool) — jeśli Haiku dryfuje w prod.
 - mDeBERTa/NLI dla kanału sprzeczności.
 - Kanonizacja pola `title:` w frontmatterze starych notatek.
-- Rename-pass Malinche→Timshel w kodzie/UI (osobny pakiet wg strategii v2.0).
+- **Notaryzacja / Developer ID** — tester DMG zostaje ad-hoc (right-click→Open);
+  Developer ID dopiero przed waitlistą, nie przed małą grupą.
+- **DONE (PR #66):** alias-canonicalizacja w prod (judge/retry) · rename Malinche→Timshel.
 
 ## Kontekst dla nowej sesji
 
-Branch: `feat/magic-insights-prototype` · testy: 1002 pass
-(`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
-mypy zielony (`./venv312/bin/python -m mypy src/`, 92 pliki).
-Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest txt/md/vtt),
+Branch: `feat/tester-build` (PR #66, baza `feat/magic-insights-prototype`) ·
+testy: **1028 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
+mypy zielony (`./venv312/bin/python -m mypy src/`, 93 pliki).
+Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest) + **PR #66 (tester build)**,
 sesja "[Timshel - APP]" 2026-07-08.
+UWAGA: nazwy zmienione — app-support `Timshel`, sidecar `.timshel`, log `timshel.log`,
+env `TIMSHEL_TRANSCRIBE_DIR`, klasy `TimshelTranscriber/TimshelMenuApp`.
+Nowe pliki: `src/feedback_export.py`; testy `test_rename_guard`, `test_tester_mode`,
+`test_alias_judge`, `test_import_transcripts_menu`, `test_feedback_export`.
 Ingest: `src/ingest/` (parsing) + `Transcriber.import_text_file` + `_finalize_note`
 (wspólny tail audio/import) + `make import-text SRC=<path>`. Plan:
 `Docs/future/ingest-plan.md`. Fast-follow: PDF, JSON platform, diaryzacja mówców.
