@@ -810,7 +810,15 @@ class Transcriber:
 
         encoding/errors are critical under py2app (ASCII locale) — whisper prints
         UTF-8 paths / Polish chars to stderr.
+
+        All reads happen on the RAW non-blocking fd (``os.read``), never on the
+        buffered ``proc.stderr`` wrapper: a buffered ``readline()`` blocks
+        forever on a partial line without a newline (a stalled whisper mid-write
+        used to wedge this thread — and with it ``_workflow_lock`` + the process
+        flock — past the deadline). With ``os.read`` a partial line just sits in
+        our own buffer and the deadline check always fires.
         """
+        import codecs
         import select
 
         proc = subprocess.Popen(
@@ -830,14 +838,76 @@ class Transcriber:
         started = time.time()
         coreml_failed = False
 
+        stderr_fd = proc.stderr.fileno()
+        os.set_blocking(stderr_fd, False)
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""  # text accumulated until a newline arrives
+
+        def handle_line(line: str) -> bool:
+            """Marker + progress logic for one stderr line. True = stop."""
+            nonlocal coreml_failed, last_logged_pct, last_heartbeat
+            if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
+                coreml_failed = True
+                logger.warning(
+                    "⚡ Core ML/Metal error detected after %.0fs — "
+                    "aborting GPU attempt, will retry on CPU",
+                    time.time() - started,
+                )
+                proc.kill()
+                return True
+            match = _PROGRESS_RE.search(line)
+            if match:
+                pct = int(match.group(1))
+                now = time.time()
+                if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
+                    logger.info(
+                        "⏳ Transkrypcja %d%% — %s",
+                        pct,
+                        audio_file.name,
+                    )
+                    last_logged_pct = pct
+                    last_heartbeat = now
+            return False
+
+        def read_chunk() -> Optional[str]:
+            """One non-blocking read. Text (possibly ''), or None on EOF."""
+            try:
+                chunk = os.read(stderr_fd, 65536)
+            except BlockingIOError:
+                return ""
+            except OSError:  # pragma: no cover - defensive (closed fd)
+                return None
+            if not chunk:
+                return None
+            return decoder.decode(chunk)
+
+        def process_remaining() -> None:
+            """Flush the decoder and run marker/progress logic on every
+            not-yet-processed line, including a final newline-less one (a Metal
+            error can be the last thing whisper prints before stalling)."""
+            nonlocal pending
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                stderr_chunks.append(tail)
+                pending += tail
+            for line in pending.split("\n"):
+                if line and handle_line(line):
+                    break
+            pending = ""
+
         try:
-            while True:
+            stop = False
+            while not stop:
                 # Check exit before blocking on select so a finished (or fast)
                 # run drains cleanly without needing a selectable fd.
                 if proc.poll() is not None:
-                    rest = proc.stderr.read()
-                    if rest:
-                        stderr_chunks.append(rest)
+                    while True:
+                        text = read_chunk()
+                        if not text:
+                            break
+                        stderr_chunks.append(text)
+                        pending += text
+                    process_remaining()
                     break
 
                 remaining = deadline - time.time()
@@ -847,37 +917,25 @@ class Transcriber:
                         cmd, self.config.TRANSCRIPTION_TIMEOUT
                     )
 
-                ready, _, _ = select.select([proc.stderr], [], [], min(1.0, remaining))
+                ready, _, _ = select.select([stderr_fd], [], [], min(1.0, remaining))
                 if not ready:
                     continue
-                line = proc.stderr.readline()
-                if not line:
-                    break  # EOF
 
-                stderr_chunks.append(line)
-
-                if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
-                    coreml_failed = True
-                    logger.warning(
-                        "⚡ Core ML/Metal error detected after %.0fs — "
-                        "aborting GPU attempt, will retry on CPU",
-                        time.time() - started,
-                    )
-                    proc.kill()
+                text = read_chunk()
+                if text is None:
+                    # EOF: the write end closed — flush any final partial line.
+                    process_remaining()
                     break
+                if not text:
+                    continue
 
-                match = _PROGRESS_RE.search(line)
-                if match:
-                    pct = int(match.group(1))
-                    now = time.time()
-                    if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
-                        logger.info(
-                            "⏳ Transkrypcja %d%% — %s",
-                            pct,
-                            audio_file.name,
-                        )
-                        last_logged_pct = pct
-                        last_heartbeat = now
+                stderr_chunks.append(text)
+                pending += text
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    if handle_line(line):
+                        stop = True
+                        break
         finally:
             try:
                 if proc.stderr is not None:

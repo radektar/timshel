@@ -1028,14 +1028,20 @@ class _FakePipeProc:
     so the streaming reader consumes it line-by-line exactly like the real run.
     """
 
-    def __init__(self, payload: str, rc: int = 0):
+    def __init__(self, payload: str, rc: int = 0, hold_open: bool = False):
         import os as _os
 
         r, w = _os.pipe()
         self.stderr = _os.fdopen(r, "r", encoding="utf-8", errors="replace")
         wf = _os.fdopen(w, "w", encoding="utf-8")
         wf.write(payload)
-        wf.close()
+        if hold_open:
+            # Keep the write end open: no EOF — simulates a stalled whisper
+            # that wrote a partial line and went silent.
+            wf.flush()
+            self._wf = wf
+        else:
+            wf.close()
         self._rc = rc
         self.returncode = None  # None == "running" (poll())
 
@@ -1094,6 +1100,57 @@ def test_streaming_logs_progress_heartbeat(transcriber, tmp_path, monkeypatch):
         if call.args and "Transkrypcja" in str(call.args[0])
     ]
     assert progress_logs, "expected at least one progress heartbeat in the log"
+
+
+def test_streaming_timeout_fires_on_partial_line_without_newline(
+    transcriber, tmp_path, monkeypatch
+):
+    """A stalled whisper that wrote a partial line (no newline) must still hit
+    TRANSCRIPTION_TIMEOUT — the old buffered readline() blocked forever here,
+    wedging the thread that holds _workflow_lock + the process flock."""
+    import time
+
+    proc = _FakePipeProc("whisper_init: load", hold_open=True)  # no \n, no EOF
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(
+        transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.5, raising=False
+    )
+
+    started = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+        )
+    assert time.time() - started < 5.0  # bounded, not wedged
+    assert proc.returncode == -9  # proc.kill() was invoked
+
+
+def test_streaming_flushes_final_partial_line(transcriber, tmp_path, monkeypatch):
+    """Output ending without a trailing newline must still reach stderr."""
+    proc = _FakePipeProc("line one\npartial tail", rc=0)  # EOF after partial
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert "partial tail" in result.stderr
+
+
+def test_streaming_detects_marker_in_partial_line_at_eof(
+    transcriber, tmp_path, monkeypatch
+):
+    """A Metal marker as the final, newline-less line still aborts the GPU run."""
+    payload = "whisper_init: loading model\nggml_metal_device_init: tensor API disabled"
+    proc = _FakePipeProc(payload, rc=0)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_coreml=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.returncode != 0  # caller falls back to CPU
+    assert "tensor API disabled" in result.stderr
 
 
 def test_whisper_thread_count_leaves_headroom(monkeypatch):
@@ -1705,11 +1762,25 @@ def test_run_whisper_transcription_uses_utf8_encoding(
     captured = {}
 
     class _FakeStderr:
+        def __init__(self):
+            import os as _os
+
+            self._r, w = _os.pipe()
+            _os.close(w)  # immediate EOF — the reader needs a real fd
+
+        def fileno(self):
+            return self._r
+
         def read(self):
             return ""
 
         def close(self):
-            pass
+            import os as _os
+
+            try:
+                _os.close(self._r)
+            except OSError:
+                pass
 
     class _FakeProc:
         returncode = 0
