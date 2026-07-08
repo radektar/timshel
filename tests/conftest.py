@@ -163,6 +163,20 @@ def _clear_volume_session():
     volume_session.clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_prompts_in_flight():
+    """Reset the per-UUID prompt guard around every test.
+
+    ``file_monitor._PROMPTS_IN_FLIGHT`` is module-global; a test that leaves a
+    UUID in flight would silently suppress prompts in later tests.
+    """
+    from src import file_monitor
+
+    file_monitor._PROMPTS_IN_FLIGHT.clear()
+    yield
+    file_monitor._PROMPTS_IN_FLIGHT.clear()
+
+
 # --------------------------------------------------------------------------- #
 # Audio sample fixtures (L2/L3 scenario tests).
 #

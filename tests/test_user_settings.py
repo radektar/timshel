@@ -97,3 +97,78 @@ class TestUserSettings:
 
 
 
+
+
+class TestUserSettingsMutate:
+    """UserSettings.mutate — atomic load→fn→save under the write lock."""
+
+    def test_mutate_serializes_writers(self, tmp_path, monkeypatch):
+        """Writer B must not start until writer A's load→fn→save finished."""
+        import threading
+
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+
+        order = []
+        a_inside = threading.Event()
+        a_release = threading.Event()
+
+        def fn_a(settings):
+            order.append("a-start")
+            a_inside.set()
+            a_release.wait(timeout=5)
+            settings.add_trusted_volume("UUID-A", "DiskA", "trusted")
+            order.append("a-end")
+
+        def fn_b(settings):
+            order.append("b-start")
+            settings.add_trusted_volume("UUID-B", "DiskB", "blocked")
+            order.append("b-end")
+
+        t_a = threading.Thread(target=lambda: UserSettings.mutate(fn_a))
+        t_a.start()
+        assert a_inside.wait(timeout=5)
+
+        t_b = threading.Thread(target=lambda: UserSettings.mutate(fn_b))
+        t_b.start()
+        a_release.set()
+        t_a.join(timeout=5)
+        t_b.join(timeout=5)
+
+        assert order == ["a-start", "a-end", "b-start", "b-end"]
+        final = UserSettings.load()
+        assert final.find_trusted_volume("UUID-A") is not None
+        assert final.find_trusted_volume("UUID-B") is not None
+
+    def test_concurrent_mutates_both_land(self, tmp_path, monkeypatch):
+        """Two concurrent persists of different volumes must BOTH survive —
+        the bare load-modify-save this replaces was last-writer-wins."""
+        import threading
+
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+
+        barrier = threading.Barrier(2)
+
+        def persist(uuid, name):
+            barrier.wait(timeout=5)
+            UserSettings.mutate(
+                lambda s: s.add_trusted_volume(uuid, name, "trusted")
+            )
+
+        threads = [
+            threading.Thread(target=persist, args=(f"UUID-{i}", f"Disk{i}"))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        final = UserSettings.load()
+        assert final.find_trusted_volume("UUID-0") is not None
+        assert final.find_trusted_volume("UUID-1") is not None

@@ -78,9 +78,11 @@ from src.config import config
 from src.config.settings import UserSettings
 from src.file_monitor import (
     DECISION_BLOCKED,
+    DECISION_NONE,
     DECISION_ONCE,
     DECISION_TRUSTED,
 )
+from src import volume_session
 from src.logger import logger
 from src.app_core import MalincheTranscriber
 from src.app_status import AppStatus
@@ -876,20 +878,30 @@ class MalincheMenuApp(rumps.App):
             self._download_active = False
             logger.warning("whisper-cli repair did not start (download already in progress)")
 
-    def _prompt_unknown_volume(self, volume_path, uuid: str) -> str:
+    def _prompt_unknown_volume(
+        self, volume_path, uuid: str, timeout: float = 600
+    ) -> str:
         """Synchronicznie zapytaj usera o nieznany dysk: Tak/Nie/Raz.
 
         Wywoływane z wątku FileMonitora. Dialog rumps musi działać na main
         thread, więc używamy AppHelper + threading.Event do synchronizacji.
 
+        Timeout NIE oznacza "No": zwracamy ``DECISION_NONE`` (nic nie jest
+        persystowane; periodic scan zapyta ponownie), a późniejsza odpowiedź
+        w wiszącym wciąż dialogu zostaje zapisana przez
+        ``_record_late_decision`` — modalu rumps nie da się programowo
+        zamknąć, więc rejestrujemy spóźniony klik zamiast go gubić.
+
         Returns:
-            Jedną z DECISION_TRUSTED / DECISION_BLOCKED / DECISION_ONCE.
+            DECISION_TRUSTED / DECISION_BLOCKED / DECISION_ONCE / DECISION_NONE.
         """
-        result = {"decision": DECISION_BLOCKED}
+        state = {"decision": DECISION_NONE, "timed_out": False}
+        state_lock = threading.Lock()
         done = threading.Event()
         volume_name = volume_path.name if hasattr(volume_path, "name") else str(volume_path)
 
         def _ask_on_main() -> None:
+            decision = DECISION_NONE
             try:
                 response = rumps.alert(
                     title="🛡 New disk detected",
@@ -904,28 +916,77 @@ class MalincheMenuApp(rumps.App):
                     other="Once",
                 )
                 if response == 1:
-                    result["decision"] = DECISION_TRUSTED
+                    decision = DECISION_TRUSTED
                 elif response == -1:
-                    result["decision"] = DECISION_ONCE
+                    decision = DECISION_ONCE
                 else:
-                    result["decision"] = DECISION_BLOCKED
+                    decision = DECISION_BLOCKED
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     f"Dialog _prompt_unknown_volume failed: {exc}",
                     exc_info=True,
                 )
-                result["decision"] = DECISION_BLOCKED
+                decision = DECISION_NONE  # błąd UI nie może trwale blokować
             finally:
+                with state_lock:
+                    if state["timed_out"]:
+                        # Wątek monitora dawno wrócił z DECISION_NONE — zapisz
+                        # spóźnioną odpowiedź zamiast mutować martwy słownik.
+                        self._record_late_decision(uuid, volume_name, decision)
+                    else:
+                        state["decision"] = decision
                 done.set()
 
         _run_on_main_thread(_ask_on_main)
         # Czekaj na decyzję; UI się nie zawiesi (rumps.alert na main jest modalny).
-        done.wait(timeout=600)
-        decision = result["decision"]
+        if not done.wait(timeout=timeout):
+            with state_lock:
+                state["timed_out"] = True
+            logger.info(
+                f"Volume '{volume_name}' (uuid={uuid}) prompt timed out — "
+                "no decision persisted, will re-ask"
+            )
+            return DECISION_NONE
+        decision = state["decision"]
         logger.info(
             f"Volume '{volume_name}' (uuid={uuid}) decision={decision}"
         )
         return decision
+
+    @staticmethod
+    def _record_late_decision(uuid: str, volume_name: str, decision: str) -> None:
+        """Persist an answer given AFTER the prompt timed out.
+
+        The monitor thread already returned DECISION_NONE, so this is the only
+        place the user's actual click can still be honored.
+        """
+        if decision == DECISION_TRUSTED or decision == DECISION_BLOCKED:
+            try:
+                UserSettings.mutate(
+                    lambda s: s.add_trusted_volume(
+                        uuid=uuid, name=volume_name, decision=decision
+                    )
+                )
+                logger.info(
+                    "Late volume decision recorded: name=%r decision=%s uuid=%s",
+                    volume_name,
+                    decision,
+                    uuid,
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.error(
+                    "Failed to record late volume decision for %s: %s",
+                    volume_name,
+                    error,
+                    exc_info=True,
+                )
+        elif decision == DECISION_ONCE:
+            volume_session.approve_once(uuid)
+            logger.info(
+                "Late 'Once' approval recorded for %s (uuid=%s)",
+                volume_name,
+                uuid,
+            )
 
     def _update_status(self, _):
         """Update status menu item based on current state."""

@@ -1,12 +1,18 @@
 """User settings management."""
 
 import json
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from src.config.defaults import defaults
+
+# Serializes load→modify→save cycles across threads (FSEvents monitor,
+# periodic checker, UI) — without it two concurrent writers are
+# last-save-wins and silently clobber each other's changes.
+_SETTINGS_WRITE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -134,6 +140,21 @@ class UserSettings:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def mutate(cls, fn: Callable[["UserSettings"], None]) -> "UserSettings":
+        """Atomic load → ``fn(settings)`` → save under the write lock.
+
+        The safe way to persist a change from any thread: a bare
+        load-modify-save loses concurrent writes (last save wins). Existing
+        load/modify/save call sites elsewhere should migrate to this as they
+        are touched. Returns the saved instance.
+        """
+        with _SETTINGS_WRITE_LOCK:
+            settings = cls.load()
+            fn(settings)
+            settings.save()
+            return settings
 
     def to_dict(self) -> dict:
         """Serialize settings to JSON-friendly dict."""
