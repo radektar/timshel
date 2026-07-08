@@ -63,3 +63,13 @@ def test_empty_vault_raises(tmp_path):
     vault.mkdir()
     with pytest.raises(NothingToExportError):
         build_feedback_zip(vault, tmp_path / "out", timestamp="20260708-1400")
+
+
+def test_context_files_alone_do_not_satisfy_the_guard(tmp_path):
+    """A glossary created before any digest is NOT exportable evidence."""
+    vault = tmp_path / "vault"
+    sidecar = vault / config.SIDECAR_DIR_NAME
+    sidecar.mkdir(parents=True, exist_ok=True)
+    (sidecar / "vocabulary.json").write_text('{"terms":[]}', encoding="utf-8")
+    with pytest.raises(NothingToExportError):
+        build_feedback_zip(vault, tmp_path / "out", timestamp="20260708-1500")

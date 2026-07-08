@@ -629,12 +629,15 @@ class TimshelMenuApp(rumps.App):
             except RetranscribeLockBusyError:
                 logger.info("Text import busy — transcription in progress")
 
+                done_so_far = imported
+
                 def _on_main() -> None:
                     rumps.alert(
                         title="⏳ Transcription in progress",
                         message=(
-                            "Another transcription is running. "
-                            "Try importing again in a moment."
+                            f"Imported {done_so_far} of {total} before another "
+                            "transcription started. Re-run to import the rest "
+                            "(duplicates are skipped)."
                         ),
                         ok="OK",
                     )

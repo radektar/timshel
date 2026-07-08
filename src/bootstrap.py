@@ -70,6 +70,8 @@ _APP_SUPPORT_ITEMS = (
     "config.json",
     "state.json",
     "connections_state.json",
+    "license.json",
+    "license_cache.json",
     "bin",
     "models",
     "logs",
@@ -196,18 +198,23 @@ def _bundle_tester_flag() -> bool:
         return False
 
 
-def _adopt_tester_build_flag(settings: UserSettings) -> bool:
+def _adopt_tester_build_flag(
+    settings: UserSettings, already_configured: bool
+) -> bool:
     """One-shot: a tester DMG defaults ``tester_mode`` on at first launch.
 
-    Only fires when the persisted config has not yet recorded a ``tester_mode``
+    Only fires when the persisted config had NOT yet recorded a ``tester_mode``
     value AND the bundle is a tester build, so a user who later flips it off in
-    config.json is respected. Returns True when it changed and saved settings.
+    config.json is respected. ``already_configured`` MUST be captured from the
+    raw config.json *before* any ``save()`` this run — ``to_dict`` always writes
+    the key, so a save materialises it as ``false`` and re-reading here would
+    always see it (the flag would never enable). Returns True when it changed
+    and saved settings.
     """
+    if already_configured:
+        return False  # user/config already has an explicit value — respect it
     if not _bundle_tester_flag():
         return False
-    raw = _safe_json_read(UserSettings.config_path())
-    if "tester_mode" in raw:
-        return False  # user/config already has an explicit value — respect it
     settings.tester_mode = True
     settings.save()
     _logger().info("[bootstrap] tester build: enabled tester_mode")
@@ -326,11 +333,23 @@ def ensure_ready() -> UserSettings:
     paths = _legacy_paths(home)
 
     # Step 0 (order-critical): move the pre-rename Malinche app-support dir to
-    # Timshel BEFORE any config/state read below resolves the new root.
-    app_support_moved = _migrate_app_support(
-        paths["malinche_root"], paths["timshel_root"]
-    )
+    # Timshel BEFORE any config/state read below resolves the new root. A move
+    # failure (locked file, cross-volume partial copy) must never brick startup
+    # — degrade to "no migration this run" and let the app come up on defaults
+    # rather than crash before the menu bar loads.
+    try:
+        app_support_moved = _migrate_app_support(
+            paths["malinche_root"], paths["timshel_root"]
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger().error("[bootstrap] app-support migration failed: %s", exc)
+        app_support_moved = 0
     _remove_legacy_launch_agent(home)
+
+    # Capture whether tester_mode was ALREADY in config.json before any save()
+    # this run — to_dict always writes the key, so a save would materialise it
+    # and defeat the first-launch adoption below.
+    tester_preconfigured = "tester_mode" in _safe_json_read(paths["new_config_file"])
 
     # Fast path: config exists and migration flag set — skip legacy scan.
     if paths["new_config_file"].exists():
@@ -340,7 +359,7 @@ def ensure_ready() -> UserSettings:
             # Vault-side rename is independent of app-support: still guard it on
             # the fast path (guarded + cheap — a no-op once renamed).
             _migrate_vault_sidecars(Path(fast_settings.output_dir))
-            _adopt_tester_build_flag(fast_settings)
+            _adopt_tester_build_flag(fast_settings, tester_preconfigured)
             if fast_settings.setup_version != APP_VERSION:
                 fast_settings.setup_version = APP_VERSION
                 fast_settings.save()
@@ -404,7 +423,7 @@ def ensure_ready() -> UserSettings:
 
     # Vault-side rename (independent of app-support): guarded, non-destructive.
     moved_count += _migrate_vault_sidecars(Path(settings.output_dir))
-    _adopt_tester_build_flag(settings)
+    _adopt_tester_build_flag(settings, tester_preconfigured)
 
     if moved_count:
         _logger().info("[bootstrap] migrated %s items", moved_count)

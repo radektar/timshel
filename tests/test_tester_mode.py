@@ -42,7 +42,7 @@ def test_adopt_enables_on_tester_bundle_first_launch(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_bundle_tester_flag", lambda: True)
 
     settings = UserSettings()  # fresh, no tester_mode written yet
-    changed = bootstrap._adopt_tester_build_flag(settings)
+    changed = bootstrap._adopt_tester_build_flag(settings, already_configured=False)
 
     assert changed is True
     assert settings.tester_mode is True
@@ -56,22 +56,40 @@ def test_adopt_noop_on_non_tester_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_bundle_tester_flag", lambda: False)
 
     settings = UserSettings()
-    assert bootstrap._adopt_tester_build_flag(settings) is False
+    assert bootstrap._adopt_tester_build_flag(settings, already_configured=False) is False
     assert settings.tester_mode is False
 
 
 def test_adopt_respects_explicit_user_choice(tmp_path, monkeypatch):
-    """If config.json already records tester_mode, the bundle flag is ignored.
+    """When tester_mode was already persisted, the bundle flag is ignored.
 
     A tester who deliberately turns instrumentation off must stay off even on a
     tester DMG.
     """
-    config_file = _patch_config_path(monkeypatch, tmp_path)
+    _patch_config_path(monkeypatch, tmp_path)
     monkeypatch.setattr(bootstrap, "_bundle_tester_flag", lambda: True)
-    config_file.write_text(
-        json.dumps({"tester_mode": False}), encoding="utf-8"
-    )
 
-    settings = UserSettings.load()
-    assert bootstrap._adopt_tester_build_flag(settings) is False
+    settings = UserSettings(tester_mode=False)
+    assert (
+        bootstrap._adopt_tester_build_flag(settings, already_configured=True) is False
+    )
     assert settings.tester_mode is False
+
+
+def test_ensure_ready_enables_tester_mode_on_fresh_tester_build(tmp_path, monkeypatch):
+    """Integration: a fresh tester build (no config yet) ends up tester_mode=True.
+
+    Regression for the save()-before-adopt trap: to_dict always writes the key,
+    so the full ensure_ready path must capture key-presence BEFORE its save().
+    """
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(bootstrap, "_bundle_tester_flag", lambda: True)
+    monkeypatch.setattr(bootstrap, "ensure_importable", lambda *_a, **_k: None)
+
+    settings = bootstrap.ensure_ready()
+    assert settings.tester_mode is True
+
+    # And it sticks on the next (fast-path) launch.
+    assert bootstrap.ensure_ready().tester_mode is True

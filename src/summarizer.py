@@ -52,10 +52,13 @@ def _fingerprint_key(key: Optional[str]) -> str:
 # fails; both its branches (with/without transcript) carry this line, so a
 # single marker reliably tells a real summary from a placeholder. Callers use
 # it to reject a corrective retry that itself degraded to a fallback.
+# Markers must be specific to the canned fallback text — a phrase a real
+# summary could plausibly emit (e.g. "Przejrzeć transkrypcję ręcznie" as an
+# action item) would wrongly reject a good summary. The two below appear in the
+# fallback branches (the first in BOTH) and are not natural summary content.
 _FALLBACK_MARKERS = (
     "wymagana ręczna analiza transkrypcji",  # both fallback branches
     "Nie udało się wygenerować podsumowania",  # no-transcript branch
-    "Przejrzeć transkrypcję ręcznie",  # no-transcript branch
     "Brak podsumowania AI",  # legacy marker
 )
 

@@ -2,7 +2,7 @@
 
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -139,6 +139,12 @@ class UserSettings:
                     data["legacy_migrated"] = data.pop("transrec_migrated")
                 else:
                     data.pop("transrec_migrated", None)
+                # Tolerate unknown keys: a config written by a NEWER build (an
+                # added field) must not blow up cls(**data) on a downgrade and
+                # silently reset every setting (API key, trusted volumes, paths)
+                # to defaults. Drop keys this version doesn't know.
+                known = {f.name for f in fields(cls)}
+                data = {k: v for k, v in data.items() if k in known}
                 return cls(**data)
             except (json.JSONDecodeError, TypeError):
                 pass

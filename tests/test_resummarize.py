@@ -141,8 +141,11 @@ class TestFindAliasMisses:
 class TestGuards:
     def test_fallback_summaries_detected(self):
         assert is_fallback_summary("## Podsumowanie\n\nBrak podsumowania AI. ...")
-        assert is_fallback_summary("...\n- Przejrzeć transkrypcję ręcznie")
+        assert is_fallback_summary("...\nNie udało się wygenerować podsumowania")
         assert not is_fallback_summary("## Podsumowanie\n\nPrawdziwa treść.")
+        # A real action item that merely mentions reviewing the transcript must
+        # NOT be misread as a fallback (would discard a good alias-fix retry).
+        assert not is_fallback_summary("## Lista działań\n- Przejrzeć transkrypcję ręcznie")
 
     def test_discovery_ignores_subfolders(self, tmp_path):
         (tmp_path / "a.md").write_text("x", encoding="utf-8")

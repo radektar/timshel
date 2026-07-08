@@ -35,6 +35,12 @@ _SIDECAR_FILES = (
     "vocabulary.json",  # user glossary (context for interpreting misses)
 )
 
+# The subset whose presence means there is REAL H1 evidence to send. Context
+# files (vocabulary.json, connections.json, insights-latest.json) can exist
+# before a single digest has run, so they must not satisfy the empty guard on
+# their own — otherwise the operator gets a bundle with zero signal.
+_EVIDENCE_SIDECAR_FILES = frozenset({"signal.jsonl", "metrics.jsonl"})
+
 
 def build_feedback_zip(vault: Path, dest_dir: Path, *, timestamp: str) -> Path:
     """Zip the vault's H1 artefacts into ``dest_dir``; return the zip path.
@@ -49,16 +55,21 @@ def build_feedback_zip(vault: Path, dest_dir: Path, *, timestamp: str) -> Path:
     digest_dir = vault / config.DIGEST_DIR_NAME
 
     members: List[tuple] = []  # (arcname, absolute path)
+    has_evidence = False
     for name in _SIDECAR_FILES:
         p = sidecar / name
         if p.is_file():
             members.append((f"sidecar/{name}", p))
+            if name in _EVIDENCE_SIDECAR_FILES:
+                has_evidence = True
 
     digests = sorted(digest_dir.glob("*.md")) if digest_dir.is_dir() else []
     for p in digests:
         members.append((f"digests/{p.name}", p))
 
-    if not members:
+    # Real evidence = a signal/metrics log OR at least one digest. Context files
+    # alone (a glossary a tester created before any digest) don't count.
+    if not (has_evidence or digests):
         raise NothingToExportError(
             "No feedback yet — generate a digest and rate a few connections first."
         )
