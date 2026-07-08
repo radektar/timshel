@@ -1,6 +1,6 @@
 """Persistence for user-dismissed connections (the 'not relevant' affordance).
 
-Stored in ``{vault}/.malinche/connections.json`` using the same fcntl-locked,
+Stored in ``{vault}/.timshel/connections.json`` using the same fcntl-locked,
 atomic read-modify-write pattern as :class:`VaultIndex`, so the daemon and the
 menu app never corrupt it. A dismissed connection is filtered out at candidate
 assembly *and* fed back to the synthesis prompt as "do not re-surface" — which
@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from src.config.defaults import SIDECAR_DIR_NAME
 from src.connections.signature import connection_signature  # canonical (ADR-004)
 from src.logger import logger
 
@@ -42,7 +43,7 @@ class DismissalStore:
 
     def __init__(self, vault_dir: Path):
         self.vault_dir = Path(vault_dir)
-        self.dir = self.vault_dir / ".malinche"
+        self.dir = self.vault_dir / SIDECAR_DIR_NAME
         self.path = self.dir / "connections.json"
         self.lock_path = self.dir / "connections.lock"
         self._data: Dict[str, Any] = self._empty()

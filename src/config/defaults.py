@@ -8,8 +8,19 @@ from pathlib import Path
 # Obsidian dewelopera (iCloud), co u zewnętrznego usera tworzyło widmowe drzewo
 # iCloud~md~obsidian. Wizard nadal pozwala wskazać dowolny folder (w tym vault
 # Obsidian użytkownika).
-DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Malinche"
-CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Malinche"
+DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Timshel"
+
+# Single point of truth for the app-support container name. The project was
+# renamed Timshel→Timshel; the old "Timshel" dir is migrated on first launch
+# (src/bootstrap.py). Change here, not scattered across modules.
+APP_SUPPORT_DIR_NAME = "Timshel"
+APP_SUPPORT_DIR = (
+    Path.home() / "Library" / "Application Support" / APP_SUPPORT_DIR_NAME
+)
+# Hidden per-vault sidecar dir (metrics/signal/vocabulary/dismissals live here).
+SIDECAR_DIR_NAME = ".timshel"
+
+CONFIG_DIR = APP_SUPPORT_DIR
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Tryby monitorowania
@@ -85,6 +96,9 @@ class Defaults:
     """
 
     DEFAULT_OUTPUT_DIR: Path = DEFAULT_OUTPUT_DIR
+    APP_SUPPORT_DIR: Path = APP_SUPPORT_DIR
+    APP_SUPPORT_DIR_NAME: str = APP_SUPPORT_DIR_NAME
+    SIDECAR_DIR_NAME: str = SIDECAR_DIR_NAME
     CONFIG_DIR: Path = CONFIG_DIR
     CONFIG_FILE: Path = CONFIG_FILE
 

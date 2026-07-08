@@ -18,7 +18,7 @@ and feeds it back into the pipeline at two levels:
 
 Sources, in order of trust:
 
-1. ``{TRANSCRIBE_DIR}/.malinche/vocabulary.json`` — user-curated canonical
+1. ``{TRANSCRIBE_DIR}/.timshel/vocabulary.json`` — user-curated canonical
    terms with optional aliases. Highest trust, always included first.
 2. Wikilink targets ``[[...]]`` in vault notes — explicit references,
    confirmed by use (the summary's "Stances" section keeps adding these).
@@ -68,7 +68,7 @@ class Term:
 
 
 def _alias_file_path() -> Path:
-    return Path(config.TRANSCRIBE_DIR) / ".malinche" / "vocabulary.json"
+    return Path(config.TRANSCRIBE_DIR) / config.SIDECAR_DIR_NAME / "vocabulary.json"
 
 
 @dataclass

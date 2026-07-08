@@ -11,15 +11,15 @@ def show_pro_activation():
     if tier != FeatureTier.FREE:
         tier_name = "PRO Individual" if tier == FeatureTier.PRO else "PRO Organization"
         rumps.alert(
-            title="✅ Malinche PRO",
+            title="✅ Timshel PRO",
             message=f"You already have an active {tier_name} subscription!",
         )
         return
 
     response = rumps.alert(
-        title="🚀 Malinche PRO",
+        title="🚀 Timshel PRO",
         message=(
-            "Unlock the full Malinche feature set:\n\n"
+            "Unlock the full Timshel feature set:\n\n"
             "⭐ AI summaries and titles\n"
             "⭐ Smart Obsidian tags\n"
             "⭐ Diarization (who spoke when)\n"
@@ -31,7 +31,7 @@ def show_pro_activation():
     )
 
     if response == 1:
-        webbrowser.open("https://malinche.app/pro")
+        webbrowser.open("https://timshel.app/pro")
     elif response == 0:
         key_response = rumps.Window(
             title="PRO activation",
@@ -65,6 +65,6 @@ def show_pro_status():
             message += "Unlimited processing"
 
         rumps.alert(
-            title="💎 Malinche PRO status",
+            title="💎 Timshel PRO status",
             message=message,
         )

@@ -33,7 +33,7 @@ def write_settings(tmp_path, monkeypatch):
     temp-home singleton is dropped so unrelated tests rebuild from the real home.
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    cfg_dir = tmp_path / "Library" / "Application Support" / "Malinche"
+    cfg_dir = tmp_path / "Library" / "Application Support" / "Timshel"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     path = UserSettings.config_path()
     assert path == cfg_dir / "config.json"

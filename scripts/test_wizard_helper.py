@@ -6,11 +6,11 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Malinche"
+CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Timshel"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 BIN_DIR = CONFIG_DIR / "bin"
 MODELS_DIR = CONFIG_DIR / "models"
-LOG_FILE = CONFIG_DIR / "logs" / "malinche.log"
+LOG_FILE = CONFIG_DIR / "logs" / "timshel.log"
 
 
 def check_config_file() -> tuple[bool, Optional[Dict[str, Any]]]:

@@ -9,12 +9,12 @@ from types import SimpleNamespace
 
 import src.menu_app as ma
 import src.ui.insight_pipeline as ip
-from src.menu_app import MalincheMenuApp
+from src.menu_app import TimshelMenuApp
 from src.ui import insight_model as im
 
 
 def _app():
-    return MalincheMenuApp.__new__(MalincheMenuApp)
+    return TimshelMenuApp.__new__(TimshelMenuApp)
 
 
 def test_refresh_badge_shows_unseen_count(monkeypatch):
@@ -43,7 +43,7 @@ def test_notify_digest_lands_top_connection_thesis(monkeypatch):
     seen = {}
     monkeypatch.setattr(ma, "send_notification", lambda *a: seen.update(args=a))
     _app()._notify_digest_ready("digest.md")
-    assert seen["args"][0] == "Malinche"
+    assert seen["args"][0] == "Timshel"
     assert seen["args"][1] == conn.resolved_label()
     assert seen["args"][2] == "the tension sentence"
 
@@ -53,4 +53,4 @@ def test_notify_digest_falls_back_without_deck(monkeypatch):
     seen = {}
     monkeypatch.setattr(ma, "send_notification", lambda *a: seen.update(args=a))
     _app()._notify_digest_ready("digest.md")
-    assert seen["args"] == ("Malinche", "New synthesis digest ready", "digest.md")
+    assert seen["args"] == ("Timshel", "New synthesis digest ready", "digest.md")

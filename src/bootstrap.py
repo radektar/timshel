@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,7 +19,7 @@ from src.ui.constants import APP_VERSION
 
 def _logger() -> logging.Logger:
     """Return bootstrap logger without importing runtime config."""
-    return logging.getLogger("malinche")
+    return logging.getLogger("timshel")
 
 
 def _safe_json_read(path: Path) -> Dict[str, Any]:
@@ -34,24 +35,148 @@ def _safe_json_read(path: Path) -> Dict[str, Any]:
 
 
 def _legacy_paths(home: Path) -> Dict[str, Path]:
-    """Resolve all legacy and target paths for migration."""
-    malinche_root = home / "Library" / "Application Support" / "Malinche"
-    transrec_root = home / "Library" / "Application Support" / "Transrec"
+    """Resolve all legacy and target paths for migration.
+
+    The app-support container was renamed Malinche→Timshel. ``timshel_root`` is
+    the live target; ``malinche_root`` is now a *legacy* root migrated on first
+    launch (see :func:`_migrate_app_support`). All ``new_*`` targets hang off
+    ``timshel_root``.
+    """
+    support = home / "Library" / "Application Support"
+    timshel_root = support / "Timshel"
+    malinche_root = support / "Malinche"
+    transrec_root = support / "Transrec"
     return {
         "home": home,
+        "timshel_root": timshel_root,
         "malinche_root": malinche_root,
         "transrec_root": transrec_root,
         "legacy_runtime_root": home / ".olympus_transcriber",
         "legacy_state_file": home / ".olympus_transcriber_state.json",
         "legacy_log_file": home / "Library" / "Logs" / "olympus_transcriber.log",
-        "new_config_file": malinche_root / "config.json",
-        "new_state_file": malinche_root / "state.json",
-        "new_runtime_dir": malinche_root / "runtime",
-        "new_lock_file": malinche_root / "runtime" / "transcriber.lock",
-        "new_recordings_dir": malinche_root / "recordings",
-        "new_logs_dir": malinche_root / "logs",
-        "new_log_file": malinche_root / "logs" / "malinche.log",
+        "new_config_file": timshel_root / "config.json",
+        "new_state_file": timshel_root / "state.json",
+        "new_runtime_dir": timshel_root / "runtime",
+        "new_lock_file": timshel_root / "runtime" / "transcriber.lock",
+        "new_recordings_dir": timshel_root / "recordings",
+        "new_logs_dir": timshel_root / "logs",
+        "new_log_file": timshel_root / "logs" / "timshel.log",
     }
+
+
+# Items that make up an app-support container (used for a partial per-item
+# merge when BOTH the old and new roots exist).
+_APP_SUPPORT_ITEMS = (
+    "config.json",
+    "state.json",
+    "connections_state.json",
+    "bin",
+    "models",
+    "logs",
+    "runtime",
+    "recordings",
+)
+
+
+def _migrate_app_support(malinche_root: Path, timshel_root: Path) -> int:
+    """One-time Malinche→Timshel app-support migration (order-critical).
+
+    Runs BEFORE any ``UserSettings.load()`` so config/state resolve from the new
+    root. When the new root does not exist yet, the whole dir is moved wholesale
+    (near-atomic on one volume — no 700 MB re-download of bin/models). When both
+    roots exist (a half-migrated or reinstalled state), items are merged
+    per-item without ever overwriting an existing target. Idempotent: a no-op
+    once ``timshel_root`` is populated and ``malinche_root`` is gone.
+    """
+    if not malinche_root.exists():
+        return 0
+
+    if not timshel_root.exists():
+        timshel_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(malinche_root), str(timshel_root))
+        _logger().info(
+            "[bootstrap] migrated app-support %s -> %s (wholesale)",
+            malinche_root,
+            timshel_root,
+        )
+        return 1
+
+    moved = 0
+    for name in _APP_SUPPORT_ITEMS:
+        target = timshel_root / name
+        # A fresh Timshel root can hold EMPTY dirs (logs/runtime/recordings)
+        # created by the logger/config at import time, before this migration
+        # runs. Clear an empty target dir so the real item moves in cleanly
+        # instead of being treated as a collision and archived.
+        if target.is_dir():
+            try:
+                next(target.iterdir())
+            except StopIteration:
+                target.rmdir()
+            except OSError:  # pragma: no cover - defensive
+                pass
+        moved += int(
+            _move_with_backup(malinche_root / name, target, ".malinche.bak")
+        )
+    _cleanup_legacy_root(malinche_root, timshel_root)
+    if moved:
+        _logger().info(
+            "[bootstrap] merged %s app-support items %s -> %s",
+            moved,
+            malinche_root,
+            timshel_root,
+        )
+    return moved
+
+
+def _migrate_vault_sidecars(vault: Path) -> int:
+    """Rename the per-vault Malinche artefacts to their Timshel names.
+
+    Each move is guarded (source present, target absent) and never merges, so
+    running twice — or on a vault that only ever knew Timshel — is a no-op.
+    """
+    if not vault or not vault.exists():
+        return 0
+    renames = [
+        (vault / ".malinche", vault / ".timshel"),
+        (vault / "Malinche Digests", vault / "Timshel Digests"),
+        (vault / "Malinche Recall", vault / "Timshel Recall"),
+    ]
+    moved = 0
+    for src, dst in renames:
+        if src.exists() and not dst.exists():
+            try:
+                shutil.move(str(src), str(dst))
+                _logger().info("[bootstrap] vault sidecar %s -> %s", src, dst)
+                moved += 1
+            except OSError as exc:  # pragma: no cover - defensive
+                _logger().warning("[bootstrap] sidecar move failed %s: %s", src, exc)
+    return moved
+
+
+def _remove_legacy_launch_agent(home: Path) -> None:
+    """Best-effort removal of the pre-rename ``com.malinche.app`` LaunchAgent.
+
+    The new bundle re-registers under ``com.timshel.app`` when the user has
+    launch-at-login on; the stale agent must not linger pointing at a moved app.
+    """
+    plist = home / "Library" / "LaunchAgents" / "com.malinche.app.plist"
+    if not plist.exists():
+        return
+    try:
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/com.malinche.app"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 - launchctl absence/failure is non-fatal
+        pass
+    try:
+        plist.unlink()
+        _logger().info("[bootstrap] removed legacy LaunchAgent %s", plist)
+    except OSError:
+        pass
 
 
 def _newer_or_equal(src: Path, dst: Path) -> bool:
@@ -126,7 +251,11 @@ def migrate_from_old_config() -> Optional[UserSettings]:
     old_config = _safe_json_read(paths["legacy_state_file"])
 
     settings = UserSettings()
-    env_dir = os.getenv("MALINCHE_TRANSCRIBE_DIR") or os.getenv("OLYMPUS_TRANSCRIBE_DIR")
+    env_dir = (
+        os.getenv("TIMSHEL_TRANSCRIBE_DIR")
+        or os.getenv("MALINCHE_TRANSCRIBE_DIR")
+        or os.getenv("OLYMPUS_TRANSCRIBE_DIR")
+    )
     if env_dir:
         settings.output_dir = Path(env_dir).expanduser().resolve()
     elif old_config.get("transcribe_dir"):
@@ -158,13 +287,24 @@ def migrate_from_old_config() -> Optional[UserSettings]:
 def ensure_ready() -> UserSettings:
     """Ensure runtime is initialized and legacy paths migrated."""
     load_env_file()
-    paths = _legacy_paths(Path.home())
+    home = Path.home()
+    paths = _legacy_paths(home)
+
+    # Step 0 (order-critical): move the pre-rename Malinche app-support dir to
+    # Timshel BEFORE any config/state read below resolves the new root.
+    app_support_moved = _migrate_app_support(
+        paths["malinche_root"], paths["timshel_root"]
+    )
+    _remove_legacy_launch_agent(home)
 
     # Fast path: config exists and migration flag set — skip legacy scan.
     if paths["new_config_file"].exists():
         fast_settings = UserSettings.load()
         if getattr(fast_settings, "legacy_migrated", False):
             ensure_importable("anthropic")
+            # Vault-side rename is independent of app-support: still guard it on
+            # the fast path (guarded + cheap — a no-op once renamed).
+            _migrate_vault_sidecars(Path(fast_settings.output_dir))
             if fast_settings.setup_version != APP_VERSION:
                 fast_settings.setup_version = APP_VERSION
                 fast_settings.save()
@@ -189,13 +329,15 @@ def ensure_ready() -> UserSettings:
                 settings = migrated
                 settings.save()
 
+    moved_count += app_support_moved
+
     transrec_root = paths["transrec_root"]
-    malinche_root = paths["malinche_root"]
+    timshel_root = paths["timshel_root"]
     if transrec_root.exists():
         for name in ("bin", "models", "config.json", "state.json"):
             moved_count += int(
                 _move_with_backup(
-                    transrec_root / name, malinche_root / name, ".transrec.bak"
+                    transrec_root / name, timshel_root / name, ".transrec.bak"
                 )
             )
 
@@ -213,8 +355,8 @@ def ensure_ready() -> UserSettings:
     if legacy_log.exists() and not paths["new_log_file"].exists():
         moved_count += int(_move_with_backup(legacy_log, paths["new_log_file"]))
 
-    moved_count += _cleanup_legacy_root(paths["legacy_runtime_root"], malinche_root)
-    moved_count += _cleanup_legacy_root(paths["transrec_root"], malinche_root)
+    moved_count += _cleanup_legacy_root(paths["legacy_runtime_root"], timshel_root)
+    moved_count += _cleanup_legacy_root(paths["transrec_root"], timshel_root)
 
     # Best-effort safeguard: do not block startup when offline.
     ensure_importable("anthropic")
@@ -223,6 +365,9 @@ def ensure_ready() -> UserSettings:
     settings.legacy_migrated = True
     settings.setup_version = APP_VERSION
     settings.save()
+
+    # Vault-side rename (independent of app-support): guarded, non-destructive.
+    moved_count += _migrate_vault_sidecars(Path(settings.output_dir))
 
     if moved_count:
         _logger().info("[bootstrap] migrated %s items", moved_count)

@@ -13,6 +13,9 @@ from src.config.defaults import (
     SYSTEM_VOLUMES,
     CONFIG_DIR,
     CONFIG_FILE,
+    APP_SUPPORT_DIR,
+    APP_SUPPORT_DIR_NAME,
+    SIDECAR_DIR_NAME,
 )
 
 # Import Config and config from config.py module
@@ -39,4 +42,7 @@ __all__ = [
     "SYSTEM_VOLUMES",
     "CONFIG_DIR",
     "CONFIG_FILE",
+    "APP_SUPPORT_DIR",
+    "APP_SUPPORT_DIR_NAME",
+    "SIDECAR_DIR_NAME",
 ]

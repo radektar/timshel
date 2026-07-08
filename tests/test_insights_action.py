@@ -179,4 +179,4 @@ def test_dismiss_is_signal_not_suppressor(log_path, tmp_path, monkeypatch):
     ctrl.dismissClicked_(None)
     rows = _rows(log_path)
     assert rows[0]["target"] == "none" and rows[0]["kind"] == "none"
-    assert not (tmp_path / ".malinche" / "connections.json").exists()
+    assert not (tmp_path / ".timshel" / "connections.json").exists()

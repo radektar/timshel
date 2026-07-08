@@ -179,10 +179,10 @@ def test_full_user_journey_record_ask_open_synthesize_save(vault_engine):
     ctrl.saveAnswerClicked_(None)
     assert saved.get("path") and saved["path"].exists()
     body = saved["path"].read_text(encoding="utf-8")
-    assert "type: malinche-recall-answer" in body and "[[" in body
+    assert "type: timshel-recall-answer" in body and "[[" in body
 
     # frontmatter must be valid YAML even though the query is free text
     import yaml
 
     fm = body.split("---")[1]
-    assert yaml.safe_load(fm)["type"] == "malinche-recall-answer"
+    assert yaml.safe_load(fm)["type"] == "timshel-recall-answer"

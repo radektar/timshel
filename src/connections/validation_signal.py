@@ -2,7 +2,7 @@
 
 Every move the user makes on a surfaced connection — handing its selected
 directions to the connected LLM / a task / the calendar / the clipboard, or the
-quiet Zachowaj / Odrzuć — is one event in ``{vault}/.malinche/signal.jsonl``.
+quiet Zachowaj / Odrzuć — is one event in ``{vault}/.timshel/signal.jsonl``.
 The KPI is **action-rate**: the share of surfaced connections that produce at
 least one non-``none`` action. Storing an insight was never proof of value; only
 *doing something because of it* is — so this records the doing.
@@ -15,7 +15,7 @@ Design:
 * **Best-effort for the UI, loud in the log** — a write failure never reaches the
   click handler, but it is *logged* (``logger.warning``), so a broken vault path
   surfaces in ``make logs`` instead of silently voiding weeks of data.
-* **Shared ``.malinche`` dir** — the path is derived from the same place
+* **Shared ``.timshel`` dir** — the path is derived from the same place
   ``insight_pipeline`` resolves its sidecar, so the two can never drift apart.
 * **Canonical signature** — every event carries the one
   :func:`~src.connections.signature.connection_signature` so it joins back to the
@@ -68,7 +68,7 @@ def signal_log_path() -> Optional[Path]:
     """Path to ``signal.jsonl``, or ``None`` if config is unavailable.
 
     Derived from the insights sidecar's directory so the validation log and the
-    digest sidecar always share the one ``.malinche`` folder.
+    digest sidecar always share the one ``.timshel`` folder.
     """
     try:
         from src.ui.insight_pipeline import latest_insights_file

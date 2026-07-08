@@ -1,6 +1,6 @@
 """Per-digest cost + coverage instrument for the magic-insights prototype.
 
-Every digest run appends one record to ``{vault}/.malinche/metrics.jsonl``:
+Every digest run appends one record to ``{vault}/.timshel/metrics.jsonl``:
 which model ran, tokens in/out (incl. cache read/creation), the derived USD
 cost, how many candidates were assembled, and how many genuine connections
 came back. This is the evidence base for the prototype's kill-tests — H1
@@ -13,7 +13,7 @@ Design mirrors :mod:`src.connections.validation_signal`:
 * **Best-effort for the pipeline, loud in the log** — a write failure never
   reaches the daemon tick, but it *is* logged, so a broken vault path shows up
   in ``make logs`` instead of silently voiding the prototype's data.
-* **Shared ``.malinche`` dir** — same directory the insights sidecar and the
+* **Shared ``.timshel`` dir** — same directory the insights sidecar and the
   action signal resolve to, so the three instruments never drift apart.
 * **Pure + side-effect-isolated** — the cost model is a pure function; the only
   side effect is the append, isolated to :func:`record_digest_metrics`.
@@ -117,11 +117,11 @@ def usage_tokens(usage: object) -> Dict[str, int]:
 
 
 def metrics_log_path() -> Optional[Path]:
-    """``{vault}/.malinche/metrics.jsonl`` — the append target, or None."""
+    """``{vault}/.timshel/metrics.jsonl`` — the append target, or None."""
     base = getattr(config, "TRANSCRIBE_DIR", None)
     if not base:
         return None
-    return Path(base) / ".malinche" / "metrics.jsonl"
+    return Path(base) / str(config.SIDECAR_DIR_NAME) / "metrics.jsonl"
 
 
 def build_record(

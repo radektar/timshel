@@ -6,7 +6,7 @@ Notes are plain markdown files, so the opener is a configurable strategy
 is one option among several, and stays the default for existing users.
 
 Kept AppKit-free; URL/argv building and path resolution stay config-free and
-unit-testable on their own — only the ``open_*`` helpers touch the OS. Malinche
+unit-testable on their own — only the ``open_*`` helpers touch the OS. Timshel
 is a lens over the vault, not a second reader: clicking a note hands off to the
 chosen app rather than rendering it in-app.
 """

@@ -17,8 +17,8 @@ Three modes, escalating trust:
 
   (default)   plan only — list the batch, no API calls, no writes
   --preview   generate via API, write rebuilt notes to
-              .malinche/resummarize-preview/ — the VAULT IS NOT TOUCHED
-  --apply     generate + back up originals to .malinche/resummarize-backup/
+              .timshel/resummarize-preview/ — the VAULT IS NOT TOUCHED
+  --apply     generate + back up originals to .timshel/resummarize-backup/
               + overwrite the summary layer in place
 
 Run from a terminal with Full Disk Access (the vault lives in iCloud):
@@ -138,7 +138,7 @@ def find_alias_misses(summary_md: str, vocab) -> List[Tuple[str, str]]:
 def discover_notes(root: Path) -> List[Path]:
     """Transcript notes only — top level of TRANSCRIBE_DIR, oldest first.
 
-    Subfolders (Malinche Digests / Malinche Recall) are products of the
+    Subfolders (Timshel Digests / Timshel Recall) are products of the
     pipeline, not transcripts; rglob would drag them in.
     """
     return sorted(p for p in root.glob("*.md"))
@@ -178,7 +178,7 @@ def main() -> int:
     mode.add_argument(
         "--preview",
         action="store_true",
-        help="generate and write to .malinche/resummarize-preview/ (vault untouched)",
+        help="generate and write to .timshel/resummarize-preview/ (vault untouched)",
     )
     mode.add_argument(
         "--apply",
@@ -278,8 +278,8 @@ def main() -> int:
             return 0
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    preview_dir = vault / ".malinche" / "resummarize-preview"
-    backup_dir = vault / ".malinche" / "resummarize-backup" / stamp
+    preview_dir = vault / config.SIDECAR_DIR_NAME / "resummarize-preview"
+    backup_dir = vault / config.SIDECAR_DIR_NAME / "resummarize-backup" / stamp
 
     done = failed = 0
     stances_notes = 0

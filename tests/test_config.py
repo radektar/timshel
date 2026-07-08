@@ -33,11 +33,11 @@ def test_config_paths():
         marker in str(config.TRANSCRIBE_DIR)
         for marker in ("11-Transcripts", "Transcriptions", "Malinche", "Timshel")
     )
-    assert "Application Support/Malinche/logs" in str(config.LOG_DIR)
-    assert "Application Support/Malinche" in str(config.LOCAL_RECORDINGS_DIR)
+    assert "Application Support/Timshel/logs" in str(config.LOG_DIR)
+    assert "Application Support/Timshel" in str(config.LOCAL_RECORDINGS_DIR)
     assert "recordings" in str(config.LOCAL_RECORDINGS_DIR)
-    assert "Application Support/Malinche/state.json" in str(config.STATE_FILE)
-    assert "Application Support/Malinche/logs/malinche.log" in str(config.LOG_FILE)
+    assert "Application Support/Timshel/state.json" in str(config.STATE_FILE)
+    assert "Application Support/Timshel/logs/timshel.log" in str(config.LOG_FILE)
 
 
 def test_config_audio_extensions():
@@ -60,19 +60,19 @@ def test_config_whisper_cpp_paths():
     assert isinstance(config.WHISPER_CPP_MODELS_DIR, Path)
 
 
-def test_config_uses_malinche_runtime_paths(tmp_path, monkeypatch):
-    """Config should consistently use Malinche runtime paths."""
+def test_config_uses_timshel_runtime_paths(tmp_path, monkeypatch):
+    """Config should consistently use the Timshel runtime paths."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-    malinche_root = tmp_path / "Library" / "Application Support" / "Malinche"
-    malinche_models = malinche_root / "models"
-    malinche_bin = malinche_root / "bin"
-    malinche_models.mkdir(parents=True, exist_ok=True)
-    malinche_bin.mkdir(parents=True, exist_ok=True)
+    timshel_root = tmp_path / "Library" / "Application Support" / "Timshel"
+    timshel_models = timshel_root / "models"
+    timshel_bin = timshel_root / "bin"
+    timshel_models.mkdir(parents=True, exist_ok=True)
+    timshel_bin.mkdir(parents=True, exist_ok=True)
 
     config = Config()
 
-    assert config.WHISPER_CPP_MODELS_DIR == malinche_models
+    assert config.WHISPER_CPP_MODELS_DIR == timshel_models
     assert str(config.FFMPEG_PATH).endswith("/ffmpeg") or config.FFMPEG_PATH.name == "ffmpeg"
 
 

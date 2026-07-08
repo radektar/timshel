@@ -12,7 +12,7 @@ RUNTIME_DEPS_DIR = (
     Path.home()
     / "Library"
     / "Application Support"
-    / "Malinche"
+    / "Timshel"
     / "runtime"
     / "python-deps"
 )

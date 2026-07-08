@@ -83,7 +83,7 @@ class TestUserSettings:
         """Ścieżka wskazuje na właściwą lokalizację."""
         path = UserSettings.config_path()
         assert "Application Support" in str(path)
-        assert "Malinche" in str(path)
+        assert "Timshel" in str(path)
         assert path.name == "config.json"
 
     def test_load_invalid_json(self, tmp_path, monkeypatch):

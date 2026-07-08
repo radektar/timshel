@@ -1,4 +1,4 @@
-"""Logging configuration for Malinche."""
+"""Logging configuration for Timshel."""
 
 import logging
 import logging.handlers
@@ -14,7 +14,7 @@ _LOG_BACKUP_COUNT = 5  # keep up to 5 rotated files (~25 MB total ceiling)
 
 
 def setup_logger(
-    name: str = "malinche",
+    name: str = "timshel",
     level: int = logging.INFO,
     log_to_file: bool = True,
     log_to_console: bool = True,
@@ -54,7 +54,7 @@ def setup_logger(
             # encoding to często ASCII, co powodowało, że logi zawierające
             # emoji (🎙️/🔄/✓/⚠️) rzucały UnicodeEncodeError i były ciche
             # gubione. Bez tego whole transcription path był niewidoczny
-            # w pliku malinche.log mimo prawidłowego wykonania.
+            # w pliku timshel.log mimo prawidłowego wykonania.
             file_handler = logging.handlers.RotatingFileHandler(
                 config.LOG_FILE,
                 maxBytes=_LOG_MAX_BYTES,

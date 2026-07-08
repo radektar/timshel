@@ -1,7 +1,7 @@
 """Pure data model for the Insights dashboard (Direction B).
 
 The "Konstelacja" window is a thin AppKit renderer over this data: a queue of
-connections Malinche found across notes (contradictions over time, shared
+connections Timshel found across notes (contradictions over time, shared
 threads, emergent ideas), each carrying the full rationale / source notes /
 directions that the digest produces. Keeping it pure (no AppKit) makes
 navigation and keep/dismiss fully unit-testable — the view-model / renderer

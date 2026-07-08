@@ -2,7 +2,7 @@
 
 At personal-vault scale (thousands of notes -> tens of thousands of chunks) exact
 KNN is sub-millisecond, so no ANN index is needed. One ``sqlite-vec`` file lives in
-``.malinche/`` beside the other local state. Vectors are L2-normalized upstream, so
+``.timshel/`` beside the other local state. Vectors are L2-normalized upstream, so
 ``sqlite-vec``'s L2 distance orders identically to cosine.
 
 Incremental by note: ``upsert_note`` replaces a note's chunks; ``delete_note``

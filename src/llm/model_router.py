@@ -1,6 +1,6 @@
 """Per-stage LLM model resolution.
 
-Malinche is model-agnostic: any model can be plugged at any stage of the
+Timshel is model-agnostic: any model can be plugged at any stage of the
 pipeline (summary / tags / synthesis / judge). A stage reads its own
 ``LLM_MODEL_<STAGE>`` override from config and falls back to the global
 ``LLM_MODEL`` when the override is unset.

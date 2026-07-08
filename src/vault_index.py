@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 import fcntl
 
+from src.config.defaults import SIDECAR_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,11 +29,11 @@ class IndexEntry:
 
 
 class VaultIndex:
-    """Index manager backed by .malinche/index.json."""
+    """Index manager backed by the vault sidecar dir's index.json."""
 
     def __init__(self, vault_dir: Path):
         self.vault_dir = Path(vault_dir)
-        self.index_dir = self.vault_dir / ".malinche"
+        self.index_dir = self.vault_dir / SIDECAR_DIR_NAME
         self.index_path = self.index_dir / "index.json"
         self.lock_path = self.index_dir / "index.lock"
         self._data: Dict[str, Any] = {"version": 1, "entries": {}}

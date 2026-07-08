@@ -1,4 +1,4 @@
-"""Aztec earth-tone palette used as accents across the Malinche UI."""
+"""Aztec earth-tone palette used as accents across the Timshel UI."""
 
 from __future__ import annotations
 

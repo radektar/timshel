@@ -142,6 +142,6 @@ class TestAboutDialog:
         
         mock_alert.assert_called_once()
         call_args = mock_alert.call_args
-        assert "About Malinche" in call_args[1]["title"] or call_args[0][0] == "About Malinche"
+        assert "About Timshel" in call_args[1]["title"] or call_args[0][0] == "About Timshel"
         assert TEXTS["about_message"] in call_args[1]["message"] or call_args[0][1] == TEXTS["about_message"]
 

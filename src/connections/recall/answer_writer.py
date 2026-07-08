@@ -3,7 +3,7 @@
 The card is grounded (thesis + cited evidence + directions), so saving it keeps a
 durable, linkable record with live ``[[wikilinks]]`` back to the source notes —
 the "save answer to vault" step of the pull surface. ``render_answer_md`` is pure
-(testable); ``save_answer`` writes it under a ``Malinche Recall`` sub-folder.
+(testable); ``save_answer`` writes it under a ``Timshel Recall`` sub-folder.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from src.connections.digest_writer import _unique_path
 
-RECALL_DIR_NAME = "Malinche Recall"
+RECALL_DIR_NAME = "Timshel Recall"
 
 _SLUG_STRIP = re.compile(r"[^\w\s-]", re.UNICODE)
 _SLUG_SPACE = re.compile(r"\s+")
@@ -48,10 +48,10 @@ def render_answer_md(query: str, answer, *, date_str: str) -> str:
     """Render a synthesized answer as a markdown note (pure — no I/O)."""
     lines = [
         "---",
-        "type: malinche-recall-answer",
+        "type: timshel-recall-answer",
         f'question: "{_yaml_str(query)}"',
         f"date: {date_str}",
-        "tags: [malinche-recall]",
+        "tags: [timshel-recall]",
         "---",
         "",
         f"> [!question] {_oneline(query)}",

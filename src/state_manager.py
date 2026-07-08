@@ -1,4 +1,4 @@
-"""State management for Malinche."""
+"""State management for Timshel."""
 
 import json
 from pathlib import Path

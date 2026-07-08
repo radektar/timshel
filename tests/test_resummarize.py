@@ -141,7 +141,7 @@ class TestGuards:
 
     def test_discovery_ignores_subfolders(self, tmp_path):
         (tmp_path / "a.md").write_text("x", encoding="utf-8")
-        digests = tmp_path / "Malinche Digests"
+        digests = tmp_path / "Timshel Digests"
         digests.mkdir()
         (digests / "2026-07-01 Synthesis.md").write_text("x", encoding="utf-8")
         names = [p.name for p in rsv.discover_notes(tmp_path)]

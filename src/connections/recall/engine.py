@@ -14,6 +14,7 @@ from src.connections.recall.embedding import resolve_embedder
 from src.connections.recall.indexer import index_note
 from src.connections.recall.retriever import HybridRetriever, Result
 from src.connections.recall.vector_store import VaultVectorStore
+from src.config.defaults import SIDECAR_DIR_NAME
 from src.logger import logger
 
 DB_FILENAME = "vault_vectors.db"
@@ -26,7 +27,9 @@ class RecallEngine:
         self._vault = Path(vault_dir)
         self._embedder = resolve_embedder(provider, model)
         self._db_path = (
-            Path(db_path) if db_path else self._vault / ".malinche" / DB_FILENAME
+            Path(db_path)
+            if db_path
+            else self._vault / SIDECAR_DIR_NAME / DB_FILENAME
         )
         self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
@@ -127,7 +130,7 @@ class RecallEngine:
         return stored == content_hash(body.strip())
 
     def _iter_notes(self) -> List[Path]:
-        digest_dir_name = "Malinche Digests"
+        digest_dir_name = "Timshel Digests"
         try:
             from src.config.config import get_config
 

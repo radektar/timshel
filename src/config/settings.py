@@ -77,7 +77,7 @@ class UserSettings:
 
     # How clicking a note/transcript opens it: "obsidian" (deep link, default),
     # "finder" (reveal in Finder), "default" (system .md handler), or
-    # "app:<Name>" (e.g. "app:Pile"). Decouples Malinche from assuming Obsidian.
+    # "app:<Name>" (e.g. "app:Pile"). Decouples Timshel from assuming Obsidian.
     note_opener: str = "obsidian"
 
     # Local recall engine — embeddings for "ask your corpus". Local, no API key;
@@ -216,7 +216,7 @@ class UserSettings:
             Path.home()
             / "Library"
             / "Application Support"
-            / "Malinche"
+            / defaults.APP_SUPPORT_DIR_NAME
             / "config.json"
         )
 

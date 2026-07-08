@@ -1,4 +1,4 @@
-"""Transcription engine for Malinche."""
+"""Transcription engine for Timshel."""
 
 import fcntl
 import json
@@ -2180,7 +2180,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         """Copy a manually chosen audio file into the local staging area.
 
         Fallback path for when automatic recorder/SD detection misses a file:
-        the user points Malinche at an audio file anywhere on disk. The
+        the user points Timshel at an audio file anywhere on disk. The
         original is never touched — a copy is placed in
         ``LOCAL_RECORDINGS_DIR`` (collision-safe) and returned for transcription.
 

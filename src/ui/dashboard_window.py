@@ -1,7 +1,7 @@
 """The Insights window (Direction B) — native AppKit, action-engine redesign.
 
 A standalone, resizable ``NSWindow`` that is the *home* for the connections
-Malinche finds: a left rail listing the queue, and a scrolling reader that lays
+Timshel finds: a left rail listing the queue, and a scrolling reader that lays
 out one connection as **spark → ground → act** (ADR-004 / the dashboard
 redesign):
 
@@ -641,7 +641,7 @@ if _APPKIT_AVAILABLE:
             win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, win_w, win_h), mask, NSBackingStoreBuffered, False
             )
-            win.setTitle_("Malinche — Konstelacja")
+            win.setTitle_("Timshel — Konstelacja")
             win.setReleasedWhenClosed_(False)
             win.setTitlebarAppearsTransparent_(True)
             win.setMovableByWindowBackground_(True)
@@ -2031,7 +2031,7 @@ if _APPKIT_AVAILABLE:
         def _build_empty(self, view, frame, title=None, subtitle=None):
             title = title or "Cisza w korpusie"
             subtitle = subtitle or (
-                "Wszystkie połączenia przejrzane. Malinche czyta dalej — gdy coś "
+                "Wszystkie połączenia przejrzane. Timshel czyta dalej — gdy coś "
                 "się zapali, wróci tu rozbłysk."
             )
             view.addSubview_(
