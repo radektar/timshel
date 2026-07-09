@@ -1826,13 +1826,11 @@ if _APPKIT_AVAILABLE:
                     cy += 30
             cy += 34
 
-            # push→pull bridge: ask the corpus about this insight ("Zapytaj o to")
-            ask_btn = _pill_button(
-                "✦ Zapytaj o to", NSMakeRect(_READER_PAD_X, cy, 148, 26),
-                _terracotta(), _c(217, 84, 42, 0.10), _c(217, 84, 42, 0.5),
-                self, "askAboutInsightClicked:", 12.0)
-            doc.addSubview_(ask_btn)
-            cy += 36
+            # NOTE: the beta.17 "✦ Zapytaj o to" pill is CUT — in the redesign
+            # the card carries no such button (A1: eyebrow → thesis → chips →
+            # Dowód → Kierunki). The push→pull entry from a card is a gesture
+            # into the ask-bar with a prefill (spec C); askAboutInsightClicked_
+            # stays wired for that entry point.
 
             # ground — evidence toggle + (when expanded) rows
             if conn.evidence:
