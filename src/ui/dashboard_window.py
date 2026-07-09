@@ -2261,14 +2261,15 @@ if _APPKIT_AVAILABLE:
                     "triad", "#E3C16B",
                 )
             )
-            h = _label(title, 20, _cream(), bold=True)
-            h.setFrame_(NSMakeRect(0, frame.size.height / 2, frame.size.width, 26))
+            h = _typo_label(
+                title, "empty_title",
+                NSMakeRect(0, frame.size.height / 2, frame.size.width, 24), wrapping=False,
+            )
             h.setAlignment_(1)
             view.addSubview_(h)
-            p = _wrapping_label(
-                subtitle,
-                13.5, _muted(),
-                NSMakeRect(frame.size.width / 2 - 150, frame.size.height / 2 + 30, 300, 50),
+            p = _typo_label(
+                subtitle, "empty_desc",
+                NSMakeRect(frame.size.width / 2 - 170, frame.size.height / 2 + 28, 340, 50),
             )
             p.setAlignment_(1)
             view.addSubview_(p)
