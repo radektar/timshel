@@ -85,6 +85,9 @@ _HEADER_H = 40.0
 _RAIL_W = 236.0
 _PAD = 16.0
 _READER_PAD_X = 24.0
+# Thesis reading measure — handoff ".thesis max 30em" (em = the 24pt font-size).
+# Tunable pending the Claude Design redline; caps the line length on wide windows.
+_THESIS_MEASURE = 30.0 * 24.0
 _ROW_H = 58.0
 _FOOTER_H = 46.0
 _BAR_H = 48.0
@@ -329,6 +332,45 @@ if _APPKIT_AVAILABLE:
 
     def _eyebrow(text, color):
         return _label((text or "").upper(), 10.5, color)
+
+    def _typo_label(text, style, frame, wrapping=True):
+        """Wrapping/label NSTextField styled from the typography ramp (attrs)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        field = (
+            NSTextField.wrappingLabelWithString_(s)
+            if wrapping
+            else NSTextField.labelWithString_(s)
+        )
+        attrs = _T.attributes(style)
+        if attrs is not None:
+            field.setAttributedStringValue_(
+                NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+            )
+        field.setSelectable_(False)
+        field.setFrame_(frame)
+        return field
+
+    def _typo_measure(text, style, width):
+        """Wrap height for ``text`` in ``style`` at ``width`` (kern+leading aware)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        f = NSTextField.wrappingLabelWithString_(s)
+        attrs = _T.attributes(style)
+        if attrs is not None:
+            f.setAttributedStringValue_(
+                NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+            )
+        sz = f.cell().cellSizeForBounds_(NSMakeRect(0, 0, width, 100000.0))
+        return float(sz.height)
 
     def _sigil(frame, layout, hexcol):
         v = _SigilView.alloc().initWithFrame_(frame)
@@ -776,47 +818,10 @@ if _APPKIT_AVAILABLE:
                 )
                 cy += _ROW_H
 
-            foot_y = frame.size.height - 96
-            fdiv = NSView.alloc().initWithFrame_(
-                NSMakeRect(pad, foot_y - 10, frame.size.width - 2 * pad, 1)
-            )
-            fdiv.setWantsLayer_(True)
-            if fdiv.layer() is not None:
-                fdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
-            view.addSubview_(fdiv)
-            fhead = _eyebrow("Ostatnie transkrypty", _c(126, 117, 101))
-            fhead.setFrame_(NSMakeRect(pad, foot_y, 200, 13))
-            view.addSubview_(fhead)
-            ry = foot_y + 20
-            recents = self._recent_transcripts()
-            self._recent_paths = [r.get("path") for r in recents]
-            if not recents:
-                empty = _label("—", 11, _c(111, 102, 90))
-                empty.setFrame_(NSMakeRect(pad, ry, frame.size.width - 2 * pad, 14))
-                view.addSubview_(empty)
-            for i, r in enumerate(recents):
-                btn = NSButton.alloc().initWithFrame_(
-                    NSMakeRect(pad - 4, ry - 3, frame.size.width - 2 * pad + 8, 18)
-                )
-                btn.setBordered_(False)
-                btn.setTransparent_(True)
-                btn.setTitle_("")
-                btn.setTarget_(self)
-                btn.setAction_("transcriptClicked:")
-                btn.setTag_(i)
-                btn.setToolTip_("Otwórz w Obsidian")
-                lab = _label(r.get("label", "Transkrypt"), 11, _muted())
-                lab.setFrame_(NSMakeRect(4, 2, frame.size.width - 2 * pad, 14))
-                lab.setLineBreakMode_(4)
-                btn.addSubview_(lab)
-                when = r.get("when")
-                if when:
-                    t = _label(when, 11, _c(111, 102, 90))
-                    t.setFrame_(NSMakeRect(frame.size.width - pad - 34, ry, 34, 14))
-                    t.setAlignment_(2)
-                    view.addSubview_(t)
-                view.addSubview_(btn)
-                ry += 19
+            # "Ostatnie transkrypty" cut per redesign (redesign-changelog):
+            # the rail holds Podsunięte + collapsed Zapytałeś only; recents move
+            # out of the window. Handler kept as a no-op via an empty path list.
+            self._recent_paths = []
             return view
 
         @objc.python_method
@@ -1675,22 +1680,29 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(
                 _sigil(NSMakeRect(_READER_PAD_X, cy, 34, 34), conn.layout(), conn.resolved_tcolor())
             )
-            tlabel = _eyebrow(conn.resolved_label(), _hex(conn.resolved_tcolor()))
-            tlabel.setFrame_(NSMakeRect(_READER_PAD_X + 44, cy + 10, inner_w - 160, 14))
+            # type eyebrow — gold, uppercase, tracked (typography ramp)
+            tlabel = _typo_label(
+                conn.resolved_label(), "eyebrow",
+                NSMakeRect(_READER_PAD_X + 44, cy + 12, inner_w - 160, 14),
+                wrapping=False,
+            )
             doc.addSubview_(tlabel)
-            eye = _label("✦ NOWY INSIGHT", 10.5, _c(154, 140, 123))
-            eye.setFrame_(NSMakeRect(reader_w - 160, cy + 10, 136, 14))
+            eye = _typo_label(
+                "✦ Nowy insight", "eyebrow",
+                NSMakeRect(reader_w - 190, cy + 12, 166, 14), wrapping=False,
+            )
             eye.setAlignment_(2)
             doc.addSubview_(eye)
             cy += 46
 
-            # thesis (the spark)
+            # thesis (the spark) — display 24pt, capped to a readable measure (30em)
             thesis = "„" + conn.rationale + "”"
-            th = max(30.0, _measure_height(thesis, 21, inner_w))
+            measure = min(inner_w, _THESIS_MEASURE)
+            th = max(30.0, _typo_measure(thesis, "thesis", measure))
             doc.addSubview_(
-                _wrapping_label(thesis, 21, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, th))
+                _typo_label(thesis, "thesis", NSMakeRect(_READER_PAD_X, cy, measure, th))
             )
-            cy += th + 14
+            cy += th + 16
 
             # note chips
             self._note_basenames = list(conn.notes)
