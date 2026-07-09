@@ -169,6 +169,10 @@ release-tester:
 	@echo "Running TESTER release pipeline (H1 instrumentation on)..."
 	TESTER_BUILD=1 bash scripts/build_release.sh
 
+verify-tester:
+	@echo "Running the autonomous tester-build acceptance harness (A1-A8)..."
+	./venv312/bin/python scripts/verify_tester.py
+
 
 
 
