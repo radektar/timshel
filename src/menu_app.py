@@ -98,6 +98,45 @@ from src.ui.pro_activation import show_pro_status
 from src.ui.download_window import DownloadWindow
 
 
+def _render_sigil_menu_png(pixel, *, alpha=1.0, dot_hex=None, sigil_rgb=(0.0, 0.0, 0.0)):
+    """Render the menu-bar wave sigil (redesign F) to PNG bytes.
+
+    Geometry from ``theme.SIGIL_BARS``. Base/dim variants are black at ``alpha``
+    (used as a macOS template image → system-tinted); the badged variant passes
+    ``dot_hex`` (gold, non-template so the colour survives) over a cream sigil.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    from src.ui.theme import SIGIL_BARS, SIGIL_VIEWBOX, _hex_to_rgb
+
+    ss = 4
+    s = pixel * ss
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    pad = s * 0.06
+    scale = (s - 2 * pad) / SIGIL_VIEWBOX
+    col = tuple(int(c * 255) for c in sigil_rgb) + (int(255 * alpha),)
+    for x, y, w, h, rx in SIGIL_BARS:
+        x0, y0 = pad + x * scale, pad + y * scale
+        d.rounded_rectangle(
+            (x0, y0, x0 + w * scale, y0 + h * scale), radius=rx * scale, fill=col
+        )
+    if dot_hex:
+        dr, dg, db = _hex_to_rgb(dot_hex)
+        r = s * 0.11
+        cx, cy = s - pad - r * 0.6, pad + r * 0.6
+        d.ellipse(
+            (cx - r, cy - r, cx + r, cy + r),
+            fill=(int(dr * 255), int(dg * 255), int(db * 255), 255),
+        )
+    img = img.resize((pixel, pixel), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 class TimshelMenuApp(rumps.App):
     """macOS menu bar application wrapper for Timshel."""
 
@@ -262,37 +301,37 @@ class TimshelMenuApp(rumps.App):
         """
         import tempfile
 
-        from src.ui import style
-
         resolved: dict[AppStatus, Optional[str]] = {
             status: None for status in AppStatus
         }
-        if not getattr(style, "_APPKIT_AVAILABLE", False):
-            return resolved
-
         # Parallel set of badged (gold-dot) icons for the "unseen insight" signal.
         dot_resolved: dict[AppStatus, Optional[str]] = {
             status: None for status in AppStatus
         }
 
+        # Redesign F: the menu-bar mark is the wave sigil, with two state
+        # modifiers — indexing = dimmed to 55%, everything else = full. The
+        # gold-dot badge (unseen insight) survives as a non-template overlay.
+        active = {
+            AppStatus.SCANNING,
+            AppStatus.TRANSCRIBING,
+            AppStatus.DOWNLOADING,
+            AppStatus.MIGRATING,
+        }
         icon_dir = Path(tempfile.mkdtemp(prefix="timshel-menubar-icons-"))
         for status in AppStatus:
             try:
-                name = style.symbol_name_for_status(status)
-                png = style.render_symbol_png(
-                    name, point=15.0, weight="regular", pixel_size=36
+                alpha = 0.55 if status in active else 1.0
+                png = _render_sigil_menu_png(36, alpha=alpha)  # black → template
+                out = icon_dir / f"{status.value}.png"
+                out.write_bytes(png)
+                resolved[status] = str(out)
+                dot_png = _render_sigil_menu_png(
+                    36, alpha=alpha, dot_hex="#D6B033", sigil_rgb=(0.98, 0.95, 0.89)
                 )
-                if png:
-                    out = icon_dir / f"{status.value}.png"
-                    out.write_bytes(png)
-                    resolved[status] = str(out)
-                dot_png = style.render_symbol_png(
-                    name, point=15.0, weight="regular", pixel_size=36, dot=True
-                )
-                if dot_png:
-                    dot_out = icon_dir / f"{status.value}-dot.png"
-                    dot_out.write_bytes(dot_png)
-                    dot_resolved[status] = str(dot_out)
+                dot_out = icon_dir / f"{status.value}-dot.png"
+                dot_out.write_bytes(dot_png)
+                dot_resolved[status] = str(dot_out)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         self._icon_paths_dot = dot_resolved
