@@ -1,0 +1,128 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1200x1000" name="Port AppKit — request" subtitle="Czego HTML-handoff nie oddaje 1:1 w AppKit. Worksheet do wypełnienia przez Claude Design: rampa typograficzna + inwentarz komponentów (blokery), resize/ruch/hairline'y (wysokie), sigile/marki (nice)." -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — Port AppKit · request do Claude Design</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../redesign-spec.css">
+<style>
+  /* Lokalne dodatki: priorytetowe plakietki + „?" do wypełnienia. */
+  .prio { display:inline-block; font-family:var(--font-mono); font-size:11px; font-weight:500;
+          letter-spacing:.02em; padding:2px 8px; border-radius:6px; margin-left:10px; vertical-align:middle; }
+  .prio.block { background:rgba(217,84,42,.14); color:#E0633A; border:1px solid rgba(217,84,42,.4); }
+  .prio.high  { background:rgba(214,176,51,.12); color:#D6B033; border:1px solid rgba(214,176,51,.4); }
+  .prio.nice  { background:rgba(70,177,126,.12); color:#46B17E; border:1px solid rgba(70,177,126,.4); }
+  table.redline td.q { color:#E0633A; font-weight:700; }        /* do wypełnienia */
+  table.redline td.k { color:var(--ink-soft); }                  /* znane z handoffu */
+  .askrow td:first-child { white-space:normal; }
+  ul.tight { margin:8px 0 0; padding-left:18px; } ul.tight li { margin:4px 0; }
+</style>
+<body class="spec">
+<div class="page">
+
+  <div class="eyebrow">Timshel · redesign 2026-07 · port AppKit/PyObjC · request do Claude Design</div>
+  <h1>Domknięcie handoffu do pixel-perfect portu (AppKit)</h1>
+  <p class="lede">Handoff jest mocny — redline'y per ekran, tokeny, pełne siatki stanów, plus wiążące „ograniczenie odwzorowalności" (layer/tint/wash). <b>Zaczynamy port na tym, co jest.</b> Poniżej to, czego HTML nie oddaje 1:1 w AppKit — nie blokuje startu, ale bez tego port będzie „blisko", nie „pixel-perfect". <b>Nie przeprojektowuj</b> — sformalizuj to, co handoff już implikuje, w formie do wklejenia w kod. <span class="prio block">🔴 bloker</span> <span class="prio high">🟡 wysokie</span> <span class="prio nice">🟢 nice</span>. Komórki <b style="color:#E0633A">na czerwono</b> = do wypełnienia; szare = znane z handoffu.</p>
+
+  <!-- #1 TYPE RAMP -->
+  <section class="sec" data-screen-label="#1 · Rampa typograficzna">
+    <div class="sec-bar"><span class="sec-id">#1</span><h2>Natywna rampa typograficzna <span class="prio block">🔴 bloker</span></h2></div>
+    <p>Pojedynczy najważniejszy artefakt. Rozstrzygnij jawnie: <b>(a)</b> Text czy Display per styl — SF Pro przełącza optykę na <b>20&nbsp;pt</b>; <b>(b)</b> czy redline'owe <code>px</code> = punkty @1x; <b>(c)</b> waga „500" = <code>.medium</code> czy <code>.semibold</code>; <b>(d)</b> tracking <code>-.012em</code>/<code>.1em</code> → NSKern w <b>pt</b> per rozmiar (bierze punkty, nie em); <b>(e)</b> lineHeight → <code>lineHeightMultiple</code>.</p>
+    <table class="redline">
+      <tr><th>Styl (selektor)</th><th>SF Pro Text/Display</th><th>pt</th><th>NSFontWeight</th><th>Tracking (pt)</th><th>lineHeightMult.</th><th>Token koloru</th></tr>
+      <tr><td>teza <code>.thesis</code></td><td class="q">? (24≥20→Display?)</td><td class="k">24</td><td class="q">? (500=.medium/.semibold)</td><td class="q">? (−.012em→pt)</td><td class="k">1.3</td><td class="k">window-hi #FAF3E2</td></tr>
+      <tr><td>pytanie-tytuł <code>.r-q</code></td><td class="q">?</td><td class="k">21–24</td><td class="q">?</td><td class="q">?</td><td class="k">1.25</td><td class="k">window-hi</td></tr>
+      <tr><td>eyebrow typu</td><td class="q">? (Text)</td><td class="k">10.5–11</td><td class="q">?</td><td class="q">? (.1em→pt)</td><td class="q">?</td><td class="k">gold #D6B033</td></tr>
+      <tr><td>szyna — tytuł <code>.rrow .tt</code></td><td class="q">?</td><td class="k">12.5</td><td class="k">700</td><td class="q">?</td><td class="q">?</td><td class="k">window-hi</td></tr>
+      <tr><td>szyna — skrót <code>.dd</code></td><td class="q">?</td><td class="k">11.5</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.55)</td></tr>
+      <tr><td>nagłówek-przełącznik <code>.collapsed-h</code></td><td class="q">?</td><td class="k">10.5</td><td class="q">?</td><td class="q">? (.1em)</td><td class="q">?</td><td class="k">rgba(hi,.55)</td></tr>
+      <tr><td>chip źródła <code>.nchip</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
+      <tr><td>przycisk <code>.btn</code></td><td class="q">?</td><td class="k">12.5</td><td class="k">500</td><td class="q">?</td><td class="q">—</td><td class="k">per wariant</td></tr>
+      <tr><td>data wyniku (mono)</td><td class="k">SF Mono</td><td class="k">11–12</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="k">gold #D6B033</td></tr>
+      <tr><td>tytuł wyniku</td><td class="q">?</td><td class="q">?</td><td class="k">700</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
+      <tr><td>cytat wyniku</td><td class="q">?</td><td class="k">12.5</td><td class="q">?</td><td class="q">?</td><td class="k">1.5</td><td class="k">rgba(hi,.66)</td></tr>
+      <tr><td>licznik stopki (mono)</td><td class="k">SF Mono</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="k">rgba(hi,.4)</td></tr>
+      <tr><td>menu — pozycja / skrót (mono)</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="q">?</td></tr>
+      <tr><td>ask-bar — pole / placeholder</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="q">?</td></tr>
+      <tr><td>toast <code>.toastc</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td></tr>
+      <tr><td>ślad <code>.trace</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td></tr>
+      <tr><td>kierunek <code>.dirrow</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
+    </table>
+  </section>
+
+  <!-- #2 COMPONENT INVENTORY -->
+  <section class="sec" data-screen-label="#2 · Inwentarz komponentów">
+    <div class="sec-bar"><span class="sec-id">#2</span><h2>Inwentarz komponentów: custom vs natywny <span class="prio block">🔴 bloker</span></h2></div>
+    <p>Pixel-perfect stoi na tej granicy — <b>natywna kontrolka niesie własny padding, baseline, focus-ring i hit-area</b>, których nie nadpiszę. Dla każdego: layer-backed NSView rysowany ręcznie, czy natywny AppKit (jaki) z tintem?</p>
+    <table class="redline">
+      <tr><th>Komponent</th><th>Custom NSView / Natywny (jaki)</th><th>Uwaga</th></tr>
+      <tr><td>przyciski <code>.btn-jade/ghost/syn/terra</code></td><td class="q">?</td><td class="k">custom czy stylowany NSButton?</td></tr>
+      <tr><td>checkbox <code>.cbx</code> (16&nbsp;px)</td><td class="q">?</td><td class="k">custom czy NSButton typu checkbox?</td></tr>
+      <tr><td>filtr „Nowe 3 ⌄"</td><td class="q">? NSMenu</td><td class="k">trigger = custom view?</td></tr>
+      <tr><td>menu / popover <code>.menu</code></td><td class="q">?</td><td class="k">hover-terakota + padding 6×9 → custom NSPanel?</td></tr>
+      <tr><td>ask-bar <code>.ask</code></td><td class="k">NSPanel</td><td class="q">pole = NSTextField / NSTextView?</td></tr>
+      <tr><td>split-CTA „Kontynuuj w Claude ▾"</td><td class="q">?</td><td class="k">custom / NSButton+NSMenu / NSSegmented?</td></tr>
+      <tr><td>chip · wiersz wyniku · wiersz kierunku · ślad · toast</td><td class="q">? (custom)</td><td class="k">zakładam custom — potwierdź</td></tr>
+      <tr><td>title-bar</td><td class="q">?</td><td class="k">titlebarAppearsTransparent + accessory?</td></tr>
+      <tr><td>wizard / ustawienia <code>.nativewin</code></td><td class="q">?</td><td class="k">które kontrolki 100% stock vs tint?</td></tr>
+    </table>
+  </section>
+
+  <!-- #3 RESIZE -->
+  <section class="sec" data-screen-label="#3 · Resize">
+    <div class="sec-bar"><span class="sec-id">#3</span><h2>Reguły resize / reflow <span class="prio high">🟡 wysokie</span></h2></div>
+    <p>Redline'y są dla jednej szerokości; okno resizable (min <span class="kbd">740×460</span>, domyślnie ~62% ekranu).</p>
+    <ul class="tight">
+      <li><b>Szyna 236&nbsp;pt</b> — stała na każdym rozmiarze, czy min/collapse?</li>
+      <li><b>Reader (fluid)</b> — teza „max 30em": przy jakim pt się rozwiązuje i czy <b>cała kolumna ma max-width (wyśrodkowana)</b>, czy rośnie z oknem? Padding readera min vs szeroko?</li>
+      <li>Co <b>zawija</b>, a co <b>ucina</b> przy min szerokości: chipy, tekst kierunku, wiersze wyników, tytuł.</li>
+      <li>Zachowanie <b>stopki triażu</b> i <b>paska handoffu</b> przy resize; default ~62% vs zmaksymalizowane.</li>
+    </ul>
+  </section>
+
+  <!-- #4 MOTION -->
+  <section class="sec" data-screen-label="#4 · Ruch">
+    <div class="sec-bar"><span class="sec-id">#4</span><h2>Specyfikacja ruchu → CAAnimation <span class="prio high">🟡 wysokie</span></h2></div>
+    <p>Per animacja: <b>easing</b> (punkty cubic-bezier lub nazwa), <b>która właściwość</b> (<code>opacity</code> / <code>transform.translateY</code> o ile pt / oba) + from→to.</p>
+    <ul class="tight">
+      <li>Odsłonięcie <b>paska handoffu</b> (0→1 kierunek) · wsuwanie <b>karty syntezy</b> (D2) · <b>flash-ring</b> btn-jade (180&nbsp;ms) · wejście/wyjście <b>toastu</b> · wymiana <b>chrome</b> przy zmianie trybu (B5).</li>
+      <li><code>prefers-reduced-motion</code> → „cięcie zamiast wsuwania": potwierdź, że cięcie = natychmiastowa opacity (0&nbsp;ms).</li>
+    </ul>
+  </section>
+
+  <!-- #5 HAIRLINES -->
+  <section class="sec" data-screen-label="#5 · Hairline'y">
+    <div class="sec-bar"><span class="sec-id">#5</span><h2>Hairline'y i sub-pixelowe obramowania <span class="prio high">🟡 wysokie</span></h2></div>
+    <p>Na Retinie „1px CSS" = 1 device px = <b>0.5&nbsp;pt</b> — łatwo pomylić wagę całego UI. Dla borderów <code>0.5 / 1 / 1.5 / 2.5px</code>:</p>
+    <ul class="tight">
+      <li>Które to <b>prawdziwe 1-device-px hairline'y</b> (render 0.5&nbsp;pt), a które <b>logiczne pt</b>?</li>
+      <li>Pionowy pasek aktywnego wiersza <code>2.5px</code> — 2.5&nbsp;pt logiczne czy device? Border checkboxa <code>1.5px</code>?</li>
+    </ul>
+  </section>
+
+  <!-- #6 SIGILS -->
+  <section class="sec" data-screen-label="#6 · Sigile">
+    <div class="sec-bar"><span class="sec-id">#6</span><h2>Geometria sygili do Core Graphics <span class="prio nice">🟢 nice</span></h2></div>
+    <p><code>redesign-sigils.js</code> daje SVG. Do <code>_SigilView.drawRect_</code>: współrzędne węzłów per typ (contradiction/shared/emergent), gradient radialny poświaty i złotego rozbłysku (środek/promień/stopy), grubości/opacity łuków i linii. Jeśli JS jest źródłem prawdy — potwierdź. Port z JS zrobimy; to redukcja iteracji.</p>
+  </section>
+
+  <!-- #7 BRANDS -->
+  <section class="sec" data-screen-label="#7 · Marki">
+    <div class="sec-bar"><span class="sec-id">#7</span><h2>Znaki marek (brands) <span class="prio nice">🟢 nice</span></h2></div>
+    <p>Handoff: <code>brands/claude.svg</code> + <code>openai.svg</code> „do dostarczenia" jako tintowane template-image. <b>Oba już mamy w repo</b> — potwierdź, że odpowiadają docelowym glifom (szczególnie <b>Claude</b> — w prototypie placeholder <code>mIco('claude')</code>), albo dostarcz kanoniczne jednokolorowe SVG w rozmiarach 16&nbsp;px (UI) i ~20&nbsp;px (CTA).</p>
+  </section>
+
+  <!-- CONFIRMATIONS -->
+  <section class="sec" data-screen-label="Potwierdzenia">
+    <div class="sec-bar"><span class="sec-id">✓</span><h2>Potwierdzenia — cele portu (obecny build beta.17 się rozjeżdża)</h2></div>
+    <ul class="tight">
+      <li>Pasek aktywnego <b>insightu</b> = <b>złoto <code>#D6B033</code></b> (§7). <i>Build używa terakoty.</i></li>
+      <li>Title-bar po prawej = <b>tylko ⌕</b>. <i>Build pokazuje pager „N z N".</i></li>
+      <li>Stopka triażu ze środkowym <b>„1 z 3"</b>, tylko w trybie Przegląd.</li>
+      <li>Wycięte: <b>stały ask-bar</b> w oknie, <b>„OSTATNIE TRANSKRYPTY"</b> w szynie, <b>segment triażu</b> 3-przyciskowy.</li>
+    </ul>
+    <p class="lede" style="margin-top:22px">Priorytet, gdyby był czas tylko na jedno: <b>#1 (rampa) + #2 (inwentarz)</b> — dwie rzeczy nie do wyprowadzenia z CSS bez zgadywania, decydujące o „pixel-perfect vs blisko". Reszta jest w handoffie; port ruszamy na tym.</p>
+  </section>
+
+</div>
+</body>
+</html>
