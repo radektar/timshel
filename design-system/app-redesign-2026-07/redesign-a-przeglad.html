@@ -1,0 +1,187 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1000" name="A — Tryb Przegląd" subtitle="Domyślny stan okna: kolejka Podsuniętych. Pełny kadr + siatki stanów: wiersz szyny, filtr triażu, stopka, stany puste. Spec do portu AppKit." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — A · Tryb Przegląd</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran A z 9 · po akceptacji mapy IA</div>
+    <h1>A — Okno Konstelacji: tryb Przegląd</h1>
+    <p class="lede">Stan spoczynkowy okna. Jedna główna rzecz: <b>karta aktywnego połączenia</b>. Jedna główna akcja: <b>Zachowaj</b>. Segment triażu zdegradowany do filtra w nagłówku szyny; Zapytałeś zwinięte do nagłówka-przełącznika; ask-bar nie istnieje w chrome (⌕ w title-barze → ekran C). Kierunki i handoff — ekran E.</p>
+  </header>
+
+  <!-- ═══════ pełny kadr ═══════ -->
+  <section class="sec" data-screen-label="A1 · Pełny kadr">
+    <div class="sec-bar"><span class="sec-id">A1</span><h2>Pełny kadr — widok „Nowe”, aktywne połączenie</h2>
+      <p>Duże okno (~62% ekranu). Dane realne: digest 8moons, liczniki Nowe 3 · Zachowane 1 · Odrzucone 2. Złoty pasek aktywnego wiersza = rola insightu; terakota tylko na akcjach.</p></div>
+
+    <div class="win" style="width:1120px">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="win-title">Timshel — <b>Konstelacja</b></div>
+        <div class="tb-right"><span data-ico="szukaj" style="opacity:.55"></span></div>
+      </div>
+      <div class="body-split" style="min-height:560px">
+        <div class="rail">
+          <div class="rail-h lit"><span>Podsunięte</span><span class="rail-filter n">Nowe <span class="gold">3</span> ⌄</span></div>
+          <div class="rrow active au">
+            <div class="ic"><span data-sigil="contradiction" data-size="18"></span></div>
+            <div><div class="tt">Sprzeczność w czasie</div><div class="dd">Założenie o jakości przesunęło się w miesiąc.</div></div>
+          </div>
+          <div class="rrow quiet">
+            <div class="ic"><span data-sigil="shared" data-size="18"></span></div>
+            <div><div class="tt">Wspólny wątek</div><div class="dd">Okna jako wąskie gardło w dwóch notatkach.</div></div>
+          </div>
+          <div class="rrow quiet">
+            <div class="ic"><span data-sigil="emergent" data-size="18"></span></div>
+            <div><div class="tt">Emergentny pomysł</div><div class="dd">Ten sam dylemat skali w różnych projektach.</div></div>
+          </div>
+          <div style="flex:1"></div>
+          <div class="collapsed-h"><span>Zapytałeś</span><span class="n">2 ›</span></div>
+        </div>
+        <div class="reader" style="padding:26px 32px 0">
+          <div class="r-eyebrow">
+            <span style="display:inline-flex;align-items:center;gap:8px"><span data-sigil="contradiction" data-size="26"></span><span class="gold" style="letter-spacing:.1em">Sprzeczność w czasie</span></span>
+            <span style="margin-left:auto" class="cloud-chip">digest 30.06 · z chmury</span>
+          </div>
+          <p class="thesis" style="margin-top:18px">„Założenie o jakości przesunęło się w miesiąc — z fundamentu projektu w pozycję do negocjacji pod presją budżetu.”</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px">
+            <span class="nchip"><span class="d"></span>Haetta — rozmowa z konstruktorem <span class="o">↗</span></span>
+            <span class="nchip"><span class="d"></span>8Moons — filmiki 2 <span class="o">↗</span></span>
+          </div>
+          <div style="margin-top:16px;font-size:12px;color:rgba(250,243,226,.5)">⌄ Dowód · 2 zacytowane fragmenty</div>
+          <div style="margin-top:26px">
+            <div style="font-size:10.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:rgba(250,243,226,.55);margin-bottom:10px">Kierunki <span style="text-transform:none;letter-spacing:0;font-weight:400;color:rgba(250,243,226,.4)">— wybierz, by przekazać</span></div>
+            <div class="dirrow" style="max-width:640px"><span class="cbx"></span>Co wymusiło zmianę założenia jakościowego — jednorazowy kompromis, czy trwała zmiana kierunku, którą warto nazwać wprost?</div>
+            <div class="dirrow" style="max-width:640px"><span class="cbx"></span>Filary projektu — bronić mimo budżetu, czy zrewidować i szukać oszczędności gdzie indziej?</div>
+          </div>
+        </div>
+      </div>
+      <div class="wfooter">
+        <span class="btn btn-ghost">Odrzuć</span>
+        <span style="font-size:11px;color:rgba(250,243,226,.4);font-family:var(--font-mono)">1 z 3</span>
+        <span class="btn btn-jade">Zachowaj</span>
+      </div>
+    </div>
+    <div class="callout"><b>Co zniknęło z kadru względem beta.17:</b> stały ask-bar (56 px), segment triażu (3 przyciski), „✦ Nowy insight” w title-barze, licznik pozycji w title-barze (zszedł do stopki), rozwinięta sekcja Zapytałeś. Pasek handoffu pojawia się dopiero po zaznaczeniu kierunku (ekran E).</div>
+  </section>
+
+  <!-- ═══════ wiersz szyny ═══════ -->
+  <section class="sec" data-screen-label="A2 · Wiersz szyny">
+    <div class="sec-bar"><span class="sec-id">A2</span><h2>Wiersz połączenia w szynie — 4 stany</h2>
+      <p>Sygil (18 px, kształt = typ) + tytuł + 1-linijkowy skrót. Aktywny: złoty pasek 2,5 px + tło <span class="tok">rgba(255,255,255,.07)</span>.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">default</div>
+        <div class="dark-cell" style="width:280px"><div class="rrow quiet"><div class="ic"><span data-sigil="shared" data-size="18"></span></div><div><div class="tt">Wspólny wątek</div><div class="dd">Okna jako wąskie gardło w dwóch notatkach.</div></div></div></div></div>
+      <div class="state"><div class="state-label on">hover</div>
+        <div class="dark-cell" style="width:280px"><div class="rrow quiet is-hover"><div class="ic"><span data-sigil="shared" data-size="18"></span></div><div><div class="tt">Wspólny wątek</div><div class="dd">Okna jako wąskie gardło w dwóch notatkach.</div></div></div></div>
+        <div class="state-note">wash <span class="tok">rgba(255,255,255,.04)</span>, bez zmiany tekstu</div></div>
+      <div class="state"><div class="state-label on">aktywny</div>
+        <div class="dark-cell" style="width:280px"><div class="rrow active au"><div class="ic"><span data-sigil="shared" data-size="18"></span></div><div><div class="tt">Wspólny wątek</div><div class="dd">Okna jako wąskie gardło w dwóch notatkach.</div></div></div></div>
+        <div class="state-note">złoty pasek (rola insightu) + tło <span class="tok">.07</span>; tytuł pełną bielą</div></div>
+      <div class="state"><div class="state-label">wyciszony (zachowany)</div>
+        <div class="dark-cell" style="width:280px"><div class="rrow quiet dim"><div class="ic"><span data-sigil="shared" data-size="18"></span></div><div><div class="tt">Wspólny wątek</div><div class="dd">Zachowane wczoraj.</div></div></div></div>
+        <div class="state-note">opacity .55 — znacznik w widokach Zachowane/Odrzucone</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ filtr triażu ═══════ -->
+  <section class="sec" data-screen-label="A3 · Filtr triażu">
+    <div class="sec-bar"><span class="sec-id">A3</span><h2>Filtr triażu — następca segmentu Nowe / Zachowane / Odrzucone</h2>
+      <p>Model 3 widoków zostaje (Odrzuć odwracalny), znika tylko jego stała obecność: jeden element w nagłówku sekcji zamiast trzech przycisków. Mieści się w 236 px bez skrótów.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">default</div>
+        <div class="dark-cell" style="width:260px"><div class="rail-h lit" style="padding:0"><span>Podsunięte</span><span class="rail-filter">Nowe <span class="gold">3</span> ⌄</span></div></div></div>
+      <div class="state"><div class="state-label on">hover</div>
+        <div class="dark-cell" style="width:260px"><div class="rail-h lit" style="padding:0"><span>Podsunięte</span><span class="rail-filter is-hover">Nowe <span class="gold">3</span> ⌄</span></div></div></div>
+      <div class="state"><div class="state-label on">otwarty</div>
+        <div class="dark-cell" style="width:260px;padding-bottom:12px">
+          <div class="rail-h lit" style="padding:0"><span>Podsunięte</span><span class="rail-filter is-hover">Nowe <span class="gold">3</span> ⌄</span></div>
+          <div class="menu" style="width:196px;margin:10px 0 0 auto">
+            <div class="mi is-hover">Nowe <span class="sc">3</span></div>
+            <div class="mi">Zachowane <span class="sc">1</span></div>
+            <div class="mi">Odrzucone <span class="sc">2</span></div>
+          </div>
+        </div>
+        <div class="state-note">NSMenu przy nagłówku; wybór przełącza widok szyny i czytnika</div></div>
+      <div class="state"><div class="state-label">widok „Odrzucone”</div>
+        <div class="dark-cell" style="width:260px">
+          <div class="rail-h lit" style="padding:0"><span>Podsunięte</span><span class="rail-filter">Odrzucone <span class="n" style="color:rgba(250,243,226,.5)">2</span> ⌄</span></div>
+          <div class="rrow quiet dim" style="margin-top:8px"><div class="ic"><span data-sigil="emergent" data-size="18"></span></div><div><div class="tt">Emergentny pomysł</div><div class="dd">Odrzucone 28.06 — Zachowaj odzyskuje.</div></div></div>
+        </div>
+        <div class="state-note">licznik bez złota (nic nowego); wiersze wyciszone; etykiety stopki bez zmian</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ stopka ═══════ -->
+  <section class="sec" data-screen-label="A4 · Stopka">
+    <div class="sec-bar"><span class="sec-id">A4</span><h2>Stopka Zachowaj / Odrzuć — istnieje tylko w Przeglądzie</h2>
+      <p>Zachowaj = jadeitowy afirmatyw (zostaje u Ciebie, lokalnie), Odrzuć = ghost. Etykiety stałe we wszystkich trzech widokach — w „Odrzucone” Zachowaj znaczy „odzyskaj” z kontekstu. Wysokość 46 px, przyciski 31 px, radius 6.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">zachowaj · default</div><div class="dark-cell"><span class="btn btn-jade">Zachowaj</span></div></div>
+      <div class="state"><div class="state-label on">hover</div><div class="dark-cell"><span class="btn btn-jade is-hover">Zachowaj</span></div></div>
+      <div class="state"><div class="state-label on">pressed</div><div class="dark-cell"><span class="btn btn-jade is-pressed">Zachowaj</span></div></div>
+      <div class="state"><div class="state-label on">flash po kliknięciu</div><div class="dark-cell"><span class="btn btn-jade" style="box-shadow:0 0 0 4px rgba(70,177,126,.22);background:rgba(70,177,126,.3);color:#C9F5DE">Zachowano ✓</span></div>
+        <div class="state-note">180 ms rozbłysk + toast z Cofnij (ekran I); potem przeskok do następnego Nowego</div></div>
+      <div class="state"><div class="state-label">odrzuć · default</div><div class="dark-cell"><span class="btn btn-ghost">Odrzuć</span></div></div>
+      <div class="state"><div class="state-label on">hover</div><div class="dark-cell"><span class="btn btn-ghost is-hover">Odrzuć</span></div></div>
+      <div class="state"><div class="state-label on">pressed</div><div class="dark-cell"><span class="btn btn-ghost is-pressed">Odrzuć</span></div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ stany puste ═══════ -->
+  <section class="sec" data-screen-label="A5 · Stany puste">
+    <div class="sec-bar"><span class="sec-id">A5</span><h2>Stany puste ×3 — spokojne, nie smutne</h2>
+      <p>Sygil wyciszony + tytuł + jedno zdanie. Zero przycisków — pusty widok nie namawia.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">nowe — puste</div>
+        <div class="dark-cell" style="width:330px;height:200px;display:grid;place-items:center;text-align:center">
+          <div><div style="opacity:.4;display:flex;justify-content:center"><span data-sigil="shared" data-size="34"></span></div>
+          <div style="font-family:var(--font-display);font-size:16px;margin-top:10px">Wszystko przejrzane</div>
+          <div style="font-size:12px;color:rgba(250,243,226,.5);margin-top:5px;max-width:26ch">Nowe połączenia pojawią się z kolejnym digestem.</div></div>
+        </div></div>
+      <div class="state"><div class="state-label">zachowane — puste</div>
+        <div class="dark-cell" style="width:330px;height:200px;display:grid;place-items:center;text-align:center">
+          <div><div style="opacity:.4;display:flex;justify-content:center"><span data-sigil="contradiction" data-size="34"></span></div>
+          <div style="font-family:var(--font-display);font-size:16px;margin-top:10px">Nic zachowanego</div>
+          <div style="font-size:12px;color:rgba(250,243,226,.5);margin-top:5px;max-width:26ch">Zachowaj odkłada połączenie tutaj, na później.</div></div>
+        </div></div>
+      <div class="state"><div class="state-label">odrzucone — puste</div>
+        <div class="dark-cell" style="width:330px;height:200px;display:grid;place-items:center;text-align:center">
+          <div><div style="opacity:.4;display:flex;justify-content:center"><span data-sigil="emergent" data-size="34"></span></div>
+          <div style="font-family:var(--font-display);font-size:16px;margin-top:10px">Nic odrzuconego</div>
+          <div style="font-size:12px;color:rgba(250,243,226,.5);margin-top:5px;max-width:26ch">Odrzucone trafiają tu — Zachowaj je odzyskuje.</div></div>
+        </div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ redline ═══════ -->
+  <section class="sec" data-screen-label="A6 · Redline">
+    <div class="sec-bar"><span class="sec-id">A6</span><h2>Redline — metryki do portu</h2></div>
+    <table class="redline">
+      <thead><tr><th>Element</th><th>Wymiar</th><th>Kolor / token</th></tr></thead>
+      <tbody>
+        <tr><td>Szyna</td><td><span class="px">236 px</span> (bez zmian, _RAIL_W)</td><td>tło <code>rgba(0,0,0,.16)</code> · border <code>rgba(255,255,255,.06)</code></td></tr>
+        <tr><td>Wiersz szyny</td><td>padding <span class="px">9×8</span>, radius <span class="px">8</span>, sygil <span class="px">18</span></td><td>hover <code>rgba(255,255,255,.04)</code> · aktywny <code>.07</code> + pasek <span class="px">2,5 px</span> <code>--gold #D6B033</code></td></tr>
+        <tr><td>Filtr triażu</td><td>wys. <span class="px">22 px</span>, radius <span class="px">5</span>; menu <span class="px">196 px</span></td><td>licznik nowych <code>--gold</code>; menu = NSMenu, zaznaczenie <code>--terracotta</code></td></tr>
+        <tr><td>Karta — eyebrow typu</td><td>sygil <span class="px">26–30 px</span> + etykieta 10,5/500/.1em</td><td>etykieta <code>--gold</code> (rola: insight) · znacznik „z chmury” <code>--grad-gold</code></td></tr>
+        <tr><td>Teza</td><td><span class="px">24 px</span> / 1.3, max <span class="px">30em</span></td><td><code>--font-display</code> 500 · <code>#FAF3E2</code></td></tr>
+        <tr><td>Stopka</td><td>wys. <span class="px">46 px</span>; przyciski <span class="px">31 px</span>, radius <span class="px">6</span></td><td>Zachowaj <code>rgba(70,177,126,.16)</code> + border <code>.45</code>, tekst <code>#8BE0B5</code>; Odrzuć ghost <code>rgba(255,255,255,.16)</code></td></tr>
+        <tr><td>Title-bar</td><td>wys. <span class="px">40 px</span>; tylko ⌕ po prawej</td><td>⌕ <code>rgba(250,243,226,.55)</code>, hover pełna biel → otwiera ask-bar (ekran C)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> kierunki + pasek handoffu → ekran E · ask-bar → C · toast/ślady → I · przełącznik trybów i „Zapytaj o to” → B. Port: AppKit, fonty → SF Pro / SF Pro Text, sygile → Core Graphics (<code style="font-family:var(--font-mono)">_SigilView</code>).</div>
+
+</div>
+</body>
+</html>

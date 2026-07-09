@@ -1,0 +1,101 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x900" name="C — Ask-bar (overlay)" subtitle="Jedyne miejsce wpisywania: spotlight ⌥Space. Stany: pusty · pisanie · głos · prefill z karty. Ląduje w oknie w trybie Pytanie." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — C · Ask-bar</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran C z 9</div>
+    <h1>C — Ask-bar: przelotny overlay, nie chrome</h1>
+    <p class="lede">Panel do <b>wpisania</b> myśli; okno do <b>wyrenderowania</b> odpowiedzi. ⌥Space z dowolnego miejsca (także bez okna), ⌕ z title-baru, „Zapytaj o to” z karty insightu. Enter → ląduje w oknie w trybie Pytanie. Esc → znika bez śladu. Mikrofon żyje wyłącznie tutaj.</p>
+  </header>
+
+  <section class="sec" data-screen-label="C1 · Stany pola">
+    <div class="sec-bar"><span class="sec-id">C1</span><h2>Cztery stany</h2>
+      <p>NSPanel bez title-baru, wyśrodkowany w ⅓ wysokości ekranu, przyciemnienie tła <span class="tok">rgba(0,0,0,.25)</span>. Podpowiedzi tylko w stanie pustym — dwa ostatnie tematy z korpusu, nie marketing.</p></div>
+    <div class="states" style="gap:34px">
+      <div class="state"><div class="state-label">pusty — z podpowiedziami</div>
+        <div class="dark-cell" style="padding:30px">
+          <div class="ask"><span data-ico="szukaj" style="color:#D9542A"></span><span class="q"><span class="ph">Zapytaj swój korpus…</span></span><span class="askmic"><span data-ico="mic"></span></span></div>
+          <div class="askfoot"><span style="letter-spacing:.08em;text-transform:uppercase;font-size:10px">Spróbuj</span>
+            <span class="sugg"><span data-ico="szukaj" style="opacity:.5"></span>co z dostawą okien i opóźnieniem dachu?</span>
+            <span class="sugg"><span data-ico="szukaj" style="opacity:.5"></span>co ustaliłem w sprawie jakości materiałów?</span>
+          </div>
+          <div class="askfoot" style="margin-top:6px"><span><span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">⌥Space</span> z dowolnego miejsca</span><span style="margin-left:auto"><span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">↵</span> ląduje w oknie Konstelacja</span></div>
+        </div></div>
+      <div class="state"><div class="state-label on">pisanie — fokus</div>
+        <div class="dark-cell" style="padding:30px">
+          <div class="ask focus"><span data-ico="szukaj" style="color:#D9542A"></span><span class="q">Co z dostawą okien i opóźnieniem dachu?<span class="caret"></span></span><span class="askmic"><span data-ico="mic"></span></span></div>
+          <div class="askfoot"><span style="margin-left:auto"><span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">↵</span> szukaj · <span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">Esc</span> zamknij</span></div>
+        </div>
+        <div class="state-note">podpowiedzi znikają przy pierwszym znaku; ring <span class="tok">rgba(217,84,42,.18)</span> + border terakota</div></div>
+      <div class="state"><div class="state-label on">głos — nasłuch</div>
+        <div class="dark-cell" style="padding:30px">
+          <div class="ask focus" style="border-color:rgba(217,84,42,.5)"><span data-ico="szukaj" style="color:rgba(250,243,226,.35)"></span><span class="q"><span class="ph">Słucham…</span></span><span class="askmic live"><span data-ico="mic"></span></span></div>
+          <div class="askfoot"><span>transkrypcja lokalna — myśl na głos</span><span style="margin-left:auto"><span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">↵</span> szukaj · <span class="kbd" style="border-color:rgba(255,255,255,.2);color:rgba(250,243,226,.5)">Esc</span> przerwij</span></div>
+        </div>
+        <div class="state-note">poziom głosu = delikatny puls obrysu mic (opacity, bez animacji layoutu); tekst pojawia się w polu na żywo</div></div>
+      <div class="state"><div class="state-label">prefill — „Zapytaj o to” z karty</div>
+        <div class="dark-cell" style="padding:30px">
+          <div class="ask focus"><span data-ico="szukaj" style="color:#D9542A"></span><span class="q">Plan B na okna?<span class="caret"></span></span><span class="askmic"><span data-ico="mic"></span></span></div>
+          <div class="askfoot"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(214,176,51,.4);border-radius:6px;padding:4px 9px;color:#F4DD8E;font-size:11.5px">zawężone do źródeł insightu · 2 notatki <span style="color:rgba(250,243,226,.4);cursor:default">×</span></span></div>
+        </div>
+        <div class="state-note">chip zakresu — usuwalny (×); po usunięciu zapytanie idzie po całym korpusie</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="C2 · Lądowanie">
+    <div class="sec-bar"><span class="sec-id">C2</span><h2>Lądowanie — overlay oddaje, okno renderuje</h2>
+      <p>Po ↵ overlay znika, okno Konstelacji staje się kluczowe w trybie Pytanie z zapytaniem jako tytułem (ekran B). Jeśli okno było zamknięte — otwiera się wprost w tym stanie. Bez okna pośredniego, bez spinnera w overlayu.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">sekwencja</div>
+        <div class="light-cell" style="display:flex;align-items:center;gap:18px;padding:26px">
+          <div style="text-align:center"><div class="ask" style="width:300px;transform:scale(.92)"><span data-ico="szukaj" style="color:#D9542A"></span><span class="q" style="font-size:12.5px">Co z dostawą okien…?</span></div><div style="font-size:11px;color:var(--ink-soft);margin-top:8px;font-family:var(--font-mono)">↵</div></div>
+          <div style="font-size:20px;color:var(--ink-soft)">→</div>
+          <div class="win" style="width:360px;font-size:9px">
+            <div class="titlebar" style="height:26px"><div class="lights" style="width:40px"><i style="width:7px;height:7px"></i><i style="width:7px;height:7px"></i><i style="width:7px;height:7px"></i></div><div class="win-title" style="font-size:9px">Timshel — <b>Konstelacja</b></div><div class="tb-right" style="width:40px"></div></div>
+            <div style="display:flex;min-height:150px">
+              <div style="width:86px;background:rgba(0,0,0,.16);border-right:1px solid rgba(255,255,255,.06);padding:8px 6px;font-size:7px">
+                <div style="letter-spacing:.08em;text-transform:uppercase;color:rgba(250,243,226,.6);padding:4px 2px">Zapytałeś</div>
+                <div style="background:rgba(255,255,255,.07);border-left:2px solid #D9542A;border-radius:4px;padding:5px;color:#FAF3E2">Co z dostawą okien…</div>
+              </div>
+              <div style="flex:1;padding:10px">
+                <div style="font-size:6.5px;letter-spacing:.08em;text-transform:uppercase;color:rgba(250,243,226,.5)">Zapytałeś · 4 fragmenty <span style="color:#8BE0B5">· lokalnie</span></div>
+                <div style="font-family:var(--font-display);font-size:11px;margin-top:5px">Co z dostawą okien i opóźnieniem dachu?</div>
+                <div style="margin-top:7px;border-top:1px solid rgba(255,255,255,.08);padding-top:6px;color:rgba(250,243,226,.6);font-size:7.5px">14.06 · Przygotowania do Eight Moons…</div>
+                <div style="margin-top:5px;color:rgba(250,243,226,.6);font-size:7.5px">09.06 · Planowanie budowy domu…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">wyniki liczą się w czasie wpisywania (embeddingi lokalne) — lądowanie jest natychmiastowe, bez stanu „szukam”</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="C3 · Redline">
+    <div class="sec-bar"><span class="sec-id">C3</span><h2>Redline</h2></div>
+    <table class="redline">
+      <thead><tr><th>Element</th><th>Wymiar</th><th>Kolor / token</th></tr></thead>
+      <tbody>
+        <tr><td>Panel</td><td><span class="px">560 px</span> szer.; pole <span class="px">52 px</span>, radius <span class="px">10</span></td><td>tło <code>rgba(32,30,40,.98)</code> · border <code>rgba(255,255,255,.16)</code> · cień float</td></tr>
+        <tr><td>Fokus</td><td>ring <span class="px">3 px</span></td><td>border <code>rgba(217,84,42,.65)</code> + ring <code>rgba(217,84,42,.18)</code>; caret <code>--terracotta-lit</code></td></tr>
+        <tr><td>Mikrofon</td><td><span class="px">36 px</span>, radius <span class="px">7</span></td><td>nasłuch: border/tekst <code>--terracotta-lit</code>, tło <code>rgba(217,84,42,.12)</code></td></tr>
+        <tr><td>Podpowiedzi</td><td>chip <span class="px">28 px</span>, radius <span class="px">6</span>, max 2</td><td>border <code>rgba(255,255,255,.13)</code>; treść = ostatnie tematy korpusu</td></tr>
+        <tr><td>Chip zakresu</td><td>radius <span class="px">6</span>, usuwalny</td><td>border <code>rgba(214,176,51,.4)</code>, tekst <code>#F4DD8E</code> (kontekst insightu)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> lądowanie → B · „Zapytaj o to” na karcie → A/E · głos = istniejąca transkrypcja lokalna. Port: NSPanel (nonactivating), globalny hotkey przez istniejący mechanizm menu-bar.</div>
+
+</div>
+</body>
+</html>

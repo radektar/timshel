@@ -1,7 +1,20 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-08 · Faza: test
+Data: 2026-07-09 · Faza: design
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Kolejna faza: redesign UI (design → kod)
+
+Handoff Claude Design `Timshel.zip` (`design_handoff_app_redesign_2026_07`) = hi-fi
+spec redesignu CAŁEJ apki: jedno okno „Konstelacja" + 2 tryby (Przegląd/Pytanie),
+ask-bar overlay, wizard, ustawienia, feedback. 9 ekranów A–I + spec.css + tokens.css
++ sigile (Core Graphics) + changelog beta.17→redesign. Cel: **port natywny AppKit
+(u nas PyObjC `src/ui/`), NIE kopiowanie HTML.** Fonty → systemowe SF Pro. 3 akcenty
+egzekwowane twardo: terakota #C24010 (akcja) · jadeit #46B17E (lokalne) · złoto #D6B033
+(insight/chmura). Ikona idzie w NOWY kierunek: mesh sygnet (fala 6 słupków) na kaflu
+#141414 (obecna = kremowy waveform — do wymiany).
+Sekwencja: **(1) paczka assetów do wdrożenia [TERAZ] → (2) dalsze testy → (3) port ekranów A–I.**
+Handoff wypakowany: `scratchpad/handoff/…`. Wdrożenie assetów = wątek bieżący.
 
 ## Ostatnia decyzja + dlaczego
 

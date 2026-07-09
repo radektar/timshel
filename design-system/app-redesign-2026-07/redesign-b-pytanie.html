@@ -1,0 +1,175 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1000" name="B — Tryb Pytanie" subtitle="Pull: pytanie jako tytuł, cytowane fragmenty (bez LLM), abstynencja, historia zapytań, przełączanie trybów. Spec do portu AppKit." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — B · Tryb Pytanie</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran B z 9</div>
+    <h1>B — Okno Konstelacji: tryb Pytanie</h1>
+    <p class="lede">Pull. Wchodzi się gestem (⌥Space / ⌕ / „Zapytaj o to”), wychodzi Esc. Pytanie jest <b>tytułem czytnika</b>, nie polem tekstowym. Wyniki to dowody — cytowane fragmenty bez LLM, ze znacznikiem <span class="jade-chip" style="color:#1E7A52">lokalnie</span>. Jedyny przycisk: eskalacja „Zsyntetyzuj” (ekran D). <b>Stopka triażu w tym trybie nie istnieje.</b></p>
+  </header>
+
+  <!-- ═══════ pełny kadr ═══════ -->
+  <section class="sec" data-screen-label="B1 · Pełny kadr">
+    <div class="sec-bar"><span class="sec-id">B1</span><h2>Pełny kadr — 4 trafienia</h2>
+      <p>Zapytanie realne (korpus 8moons). Data w eyebrow (mono, złoto — wyróżniona), cytat spokojniejszy niż teza insightu: dowód &lt; teza.</p></div>
+    <div class="win" style="width:1120px">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="win-title">Timshel — <b>Konstelacja</b></div>
+        <div class="tb-right"><span data-ico="szukaj" style="opacity:.55"></span></div>
+      </div>
+      <div class="body-split" style="min-height:560px">
+        <div class="rail">
+          <div class="rail-h lit"><span>Zapytałeś</span><span class="n">2</span></div>
+          <div class="rrow active">
+            <div class="ic"><span data-ico="szukaj" style="color:#D9542A"></span></div>
+            <div><div class="tt">Co z dostawą okien i opóźnieniem dachu?</div><div class="dd">4 fragmenty</div></div>
+          </div>
+          <div class="rrow quiet">
+            <div class="ic"><span data-ico="szukaj"></span></div>
+            <div><div class="tt">Co ustaliłem w sprawie jakości materiałów?</div><div class="dd">2 fragmenty · wczoraj</div></div>
+          </div>
+          <div style="flex:1"></div>
+          <div class="collapsed-h"><span>Podsunięte</span><span class="n"><span class="gold">3 nowe</span> ›</span></div>
+        </div>
+        <div class="reader" style="padding:26px 32px 0">
+          <div class="r-eyebrow"><span>Zapytałeś · 4 fragmenty</span><span class="jade-chip">lokalnie</span><span style="margin-left:auto;font-size:11px;color:rgba(250,243,226,.4);text-transform:none;letter-spacing:0">ponów · edytuj</span></div>
+          <div class="r-q" style="font-size:24px">Co z dostawą okien i opóźnieniem dachu?</div>
+          <div style="height:8px"></div>
+          <div class="res"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons — okna i fundamenty</span><span class="op">↗ otwórz</span></div>
+            <div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna — to <mark>blokuje fundamenty</mark>, a bez nich harmonogram nie ruszy…”</div></div>
+          <div class="res"><div class="m"><span class="dt">09.06</span><span class="ti">Planowanie budowy domu — materiały okna dach</span><span class="op">↗ otwórz</span></div>
+            <div class="qt">„…<mark>producenci okien nie odpowiadają</mark>, a bez nich <mark>dach</mark> i tak stoi w miejscu…”</div></div>
+          <div class="res"><div class="m"><span class="dt">11.06</span><span class="ti">Harmonogram 2-tyg. projektu</span><span class="op">↗ otwórz</span></div>
+            <div class="qt">„…dach zejdzie po <mark>oknach</mark> — obsuwa okien przesuwa cały montaż o tydzień w prawo…”</div></div>
+          <div class="res" style="border-bottom:none"><div class="m"><span class="dt">17.06</span><span class="ti">Haetta — rozmowa z konstruktorem</span><span class="op">↗ otwórz</span></div>
+            <div class="qt">„…konstruktor pyta o stolarkę: bez wymiarów <mark>okien</mark> nie zamknie projektu więźby…”</div></div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:auto;padding:16px 0 18px">
+            <span class="cloud-chip">do chmury</span>
+            <span class="btn btn-syn">Zsyntetyzuj te wyniki</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="callout"><b>Konsekwencja soczewki:</b> klik wiersza lub „↗ otwórz” otwiera źródło w skonfigurowanej appce (Obsidian / Pile / Finder) — okno trwa obok, wiersz dostaje krótki wash potwierdzenia. Żadnego czytnika w środku (rezerwa Fazy 6 → mapa IA §7).</div>
+  </section>
+
+  <!-- ═══════ wiersz wyniku ═══════ -->
+  <section class="sec" data-screen-label="B2 · Wiersz wyniku">
+    <div class="sec-bar"><span class="sec-id">B2</span><h2>Wiersz wyniku — 4 stany</h2>
+      <p>Cały wiersz jest jedną akcją: otwórz źródło. „↗ otwórz” zawsze obecne, dyskretne; hover podnosi je do terakoty (akcja).</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">default</div>
+        <div class="dark-cell" style="width:430px"><div class="res" style="border-bottom:none"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op">↗ otwórz</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div></div></div>
+      <div class="state"><div class="state-label on">hover</div>
+        <div class="dark-cell" style="width:430px"><div class="res is-hover" style="border-bottom:none"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op">↗ otwórz</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div></div>
+        <div class="state-note">wash <span class="tok">.04</span> na całym wierszu; „↗ otwórz” → <span class="tok">--terracotta-lit</span></div></div>
+      <div class="state"><div class="state-label on">pressed</div>
+        <div class="dark-cell" style="width:430px"><div class="res is-pressed" style="border-bottom:none"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op">↗ otwórz</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div></div></div>
+      <div class="state"><div class="state-label">po otwarciu</div>
+        <div class="dark-cell" style="width:430px"><div class="res" style="border-bottom:none;opacity:.66"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op" style="color:#8BE0B5">otwarto ✓</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div></div>
+        <div class="state-note">2 s po otwarciu w appce; wraca do default — nie jest to stan trwały</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ nagłówek + historia ═══════ -->
+  <section class="sec" data-screen-label="B3 · Nagłówek i historia">
+    <div class="sec-bar"><span class="sec-id">B3</span><h2>Nagłówek zapytania + historia w szynie</h2>
+      <p>„Ponów · edytuj” to ciche tekst-akcje widoczne w hover nagłówka (edycja otwiera ask-bar z prefill). Historia trwała między sesjami, w pełni lokalna.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">nagłówek · default</div>
+        <div class="dark-cell" style="width:430px"><div class="r-eyebrow"><span>Zapytałeś · 4 fragmenty</span><span class="jade-chip">lokalnie</span></div><div class="r-q">Co z dostawą okien i opóźnieniem dachu?</div></div></div>
+      <div class="state"><div class="state-label on">nagłówek · hover</div>
+        <div class="dark-cell" style="width:430px"><div class="r-eyebrow"><span>Zapytałeś · 4 fragmenty</span><span class="jade-chip">lokalnie</span><span style="margin-left:auto;font-size:11px;text-transform:none;letter-spacing:0"><span style="color:#E0633A">ponów</span><span style="color:rgba(250,243,226,.35)"> · </span><span style="color:#E0633A">edytuj</span></span></div><div class="r-q">Co z dostawą okien i opóźnieniem dachu?</div></div></div>
+      <div class="state"><div class="state-label">historia · wiersze</div>
+        <div class="dark-cell" style="width:300px">
+          <div class="rail-h lit" style="padding-top:0"><span>Zapytałeś</span><span class="n">3</span></div>
+          <div class="rrow active"><div class="ic"><span data-ico="szukaj" style="color:#D9542A"></span></div><div><div class="tt">Co z dostawą okien i opóźnieniem dachu?</div><div class="dd">4 fragmenty</div></div></div>
+          <div class="rrow quiet is-hover"><div class="ic"><span data-ico="szukaj"></span></div><div><div class="tt">Co ustaliłem w sprawie jakości materiałów?</div><div class="dd">2 fragmenty · wczoraj</div></div></div>
+          <div class="rrow quiet"><div class="ic"><span data-ico="szukaj"></span></div><div><div class="tt">Plan B na okna?</div><div class="dd">synteza · <span style="color:#8BE0B5">zapisano ↗</span></div></div></div>
+          <div style="padding:10px 8px 0;font-size:11px;color:rgba(250,243,226,.35)">wyczyść historię</div>
+        </div>
+        <div class="state-note">wpis z zapisaną syntezą niesie trwały ślad (ekran I); „wyczyść” — cichy tekst, potwierdzenie NSAlert</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ abstynencja + partial ═══════ -->
+  <section class="sec" data-screen-label="B4 · Abstynencja i częściowy indeks">
+    <div class="sec-bar"><span class="sec-id">B4</span><h2>Abstynencja + częściowy indeks</h2>
+      <p>Zero dopisywania. Uczciwy komunikat, najbliższe trafienie, dwa wyjścia — jedyne miejsce, gdzie „poszerz / przekaż” istnieją.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">abstynencja — 0 trafień</div>
+        <div class="dark-cell" style="width:560px">
+          <div class="r-eyebrow"><span>Zapytałeś · 0 trafień</span><span class="jade-chip">lokalnie</span></div>
+          <div class="r-q" style="font-size:19px">Co ustaliłem w sprawie ceny gruntu w Haetcie?</div>
+          <p style="font-size:13px;color:rgba(250,243,226,.66);margin-top:6px;max-width:52ch">Nic w Twoich notatkach o cenie gruntu. Najbliższe trafienie:</p>
+          <div class="res" style="margin-top:8px;border-bottom:none;opacity:.75"><div class="m"><span class="dt">17.06</span><span class="ti">Haetta — rozmowa z konstruktorem</span><span class="op">↗ otwórz</span></div><div class="qt">„…koszt działki poza rozmową — konstruktor odsyła do geodety…”</div></div>
+          <div style="display:flex;gap:10px;margin-top:14px"><span class="btn btn-ghost">Poszerz zakres</span><span class="btn btn-ghost">Przekaż do Claude <span class="cloud-chip" style="font-size:9px">✦</span></span></div>
+        </div></div>
+      <div class="state"><div class="state-label">częściowy indeks</div>
+        <div class="dark-cell" style="width:430px">
+          <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#8BE0B5;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.07)"><span style="width:6px;height:6px;border-radius:999px;background:#46B17E"></span>Przeszukuję 240 z 1800 notatek — indeksuję w tle</div>
+          <div class="res" style="border-bottom:none"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op">↗ otwórz</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div>
+        </div>
+        <div class="state-note">jedna linia nad wynikami, jadeit (proces lokalny); znika po zakończeniu — status ma dom w pasku menu (ekran F)</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ przełączanie trybów ═══════ -->
+  <section class="sec" data-screen-label="B5 · Przełączanie trybów">
+    <div class="sec-bar"><span class="sec-id">B5</span><h2>Przełączanie trybów — nagłówki szyny są przełącznikiem</h2>
+      <p>Klik zwiniętego nagłówka wymienia tryb i cały chrome. Esc w Pytaniu = powrót do Przeglądu. Animacja: crossfade 150 ms (odwzorowalne natywnie), reduced-motion: cięcie.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">w Przeglądzie</div>
+        <div class="dark-cell" style="width:300px">
+          <div class="rail-h lit" style="padding-top:0"><span>Podsunięte</span><span class="rail-filter">Nowe <span class="gold">3</span> ⌄</span></div>
+          <div class="rrow active au"><div class="ic"><span data-sigil="contradiction" data-size="18"></span></div><div><div class="tt">Sprzeczność w czasie</div></div></div>
+          <div class="collapsed-h" style="margin-top:14px"><span>Zapytałeś</span><span class="n">2 ›</span></div>
+        </div></div>
+      <div class="state"><div class="state-label on">hover na zwiniętym</div>
+        <div class="dark-cell" style="width:300px">
+          <div class="rail-h lit" style="padding-top:0"><span>Podsunięte</span><span class="rail-filter">Nowe <span class="gold">3</span> ⌄</span></div>
+          <div class="rrow active au"><div class="ic"><span data-sigil="contradiction" data-size="18"></span></div><div><div class="tt">Sprzeczność w czasie</div></div></div>
+          <div class="collapsed-h is-hover" style="margin-top:14px"><span>Zapytałeś</span><span class="n">2 ›</span></div>
+        </div></div>
+      <div class="state"><div class="state-label">po kliknięciu — w Pytaniu</div>
+        <div class="dark-cell" style="width:300px">
+          <div class="rail-h lit" style="padding-top:0"><span>Zapytałeś</span><span class="n">2</span></div>
+          <div class="rrow active"><div class="ic"><span data-ico="szukaj" style="color:#D9542A"></span></div><div><div class="tt">Co z dostawą okien i opóźnieniem dachu?</div></div></div>
+          <div class="collapsed-h" style="margin-top:14px"><span>Podsunięte</span><span class="n"><span class="gold">3 nowe</span> ›</span></div>
+        </div>
+        <div class="state-note">sekcje zamieniają się rolami; czytnik i stopka wymieniają się w całości</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ redline ═══════ -->
+  <section class="sec" data-screen-label="B6 · Redline">
+    <div class="sec-bar"><span class="sec-id">B6</span><h2>Redline — metryki do portu</h2></div>
+    <table class="redline">
+      <thead><tr><th>Element</th><th>Wymiar</th><th>Kolor / token</th></tr></thead>
+      <tbody>
+        <tr><td>Pytanie-tytuł</td><td><span class="px">24 px</span> / 1.25, display 500</td><td><code>#FAF3E2</code>; eyebrow 10,5/.1em + znacznik <code>--grad-jade</code> „lokalnie”</td></tr>
+        <tr><td>Wiersz wyniku</td><td>padding <span class="px">13×10</span> (hover), radius <span class="px">6</span></td><td>data <code>--gold</code> mono · cytat <code>rgba(250,243,226,.66)</code> · match <code>rgba(214,176,51,.22)</code></td></tr>
+        <tr><td>„↗ otwórz”</td><td>zawsze obecne, wyrównane do prawej</td><td>default <code>.45</code> → hover <code>--terracotta-lit</code></td></tr>
+        <tr><td>Eskalacja</td><td>przycisk <span class="px">31 px</span> + znacznik „do chmury” po lewej</td><td>border <code>rgba(214,176,51,.5)</code>, tekst <code>#F4DD8E</code> (rola: insight/synteza)</td></tr>
+        <tr><td>Wiersz historii</td><td>jak wiersz szyny; ikona ⌕ <span class="px">16 px</span></td><td>aktywny: pasek <code>--terracotta-lit</code> (pull = Twoja akcja; złoto zarezerwowane dla insightów)</td></tr>
+        <tr><td>Banner indeksu</td><td>1 linia, <span class="px">11,5 px</span>, nad wynikami</td><td>kropka + tekst <code>#8BE0B5</code>; znika po ukończeniu</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> wejścia do trybu → C (ask-bar) · eskalacja → D (synteza) · ślady zapisu → I · status indeksowania → F. Stopka triażu, kierunki i handoff nie istnieją w tym trybie (A, E).</div>
+
+</div>
+</body>
+</html>

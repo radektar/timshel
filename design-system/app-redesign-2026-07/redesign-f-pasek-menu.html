@@ -1,0 +1,105 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x900" name="F — Pasek menu + indeksowanie" subtitle="Korzeń aplikacji: stany ikony, menu w trzech wariantach (spoczynek · indeksuję · digest gotowy). Status indeksowania żyje tylko tutaj." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — F · Pasek menu</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+<style>
+  .sygnet-ico { display: inline-block; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--logo-sygnet) center / contain no-repeat; mask: var(--logo-sygnet) center / contain no-repeat; }
+</style>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran F z 9</div>
+    <h1>F — Pasek menu: korzeń aplikacji</h1>
+    <p class="lede">Jedyny trwały punkt Timshel. Ikona = sygnet (template-image, tint systemowy). Menu niesie status, wejścia do okna i ask-bara, ręczny digest i Ustawienia. <b>Status indeksowania żyje tylko tutaj</b> — okno pokazuje co najwyżej jedną linię zakresu (B4).</p>
+  </header>
+
+  <section class="sec" data-screen-label="F1 · Ikona">
+    <div class="sec-bar"><span class="sec-id">F1</span><h2>Stany ikony</h2>
+      <p>Sygnet w pasku menu, monochromatyczny (systemowy tint). Stany różnią się minimalnie — pasek menu to nie miejsce na teatr.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">spoczynek</div>
+        <div class="dark-cell" style="padding:12px 16px"><span class="osicon"><span class="sygnet-ico" style="color:#FAF3E2"></span></span></div></div>
+      <div class="state"><div class="state-label on">nagrywam</div>
+        <div class="dark-cell" style="padding:12px 16px"><span class="osicon"><span class="sygnet-ico" style="color:#FAF3E2"></span><span style="width:6px;height:6px;border-radius:999px;background:#E0633A"></span></span></div>
+        <div class="state-note">terakotowa kropka przy sygnecie (istniejący wzorzec nagrywania)</div></div>
+      <div class="state"><div class="state-label on">indeksuję</div>
+        <div class="dark-cell" style="padding:12px 16px"><span class="osicon"><span class="sygnet-ico" style="color:rgba(250,243,226,.55)"></span></span></div>
+        <div class="state-note">sygnet przygaszony do 55% — praca w tle, bez pulsowania</div></div>
+      <div class="state"><div class="state-label on">menu otwarte</div>
+        <div class="dark-cell" style="padding:12px 16px"><span class="osicon open"><span class="sygnet-ico" style="color:#FAF3E2"></span></span></div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="F2 · Menu — trzy warianty">
+    <div class="sec-bar"><span class="sec-id">F2</span><h2>Menu — trzy warianty</h2>
+      <p>NSMenu z jednym customowym widokiem statusu u góry. Pierwsza pozycja akcji = Otwórz Konstelację. Ręczny „Nowy digest” mieszka tu — nie w chrome okna.</p></div>
+    <div class="states" style="gap:34px">
+      <div class="state"><div class="state-label">spoczynek</div>
+        <div class="dark-cell" style="padding:18px">
+          <div class="menu">
+            <div class="mstatus">Spoczynek · vault zaindeksowany<br><b>1 800 notatek · ostatni digest 30.06</b></div>
+            <div class="msep"></div>
+            <div class="mi is-hover">Otwórz Konstelację <span class="sc">⌘⇧K</span></div>
+            <div class="mi">Zapytaj korpus… <span class="sc">⌥Space</span></div>
+            <div class="mi">Nowy digest <span class="sc"><span class="cloud-chip" style="font-size:9px">✦</span></span></div>
+            <div class="msep"></div>
+            <div class="mi">Ustawienia… <span class="sc">⌘,</span></div>
+            <div class="mi">Zakończ <span class="sc">⌘Q</span></div>
+          </div>
+        </div></div>
+      <div class="state"><div class="state-label on">indeksuję</div>
+        <div class="dark-cell" style="padding:18px">
+          <div class="menu">
+            <div class="mstatus">Indeksuję <b>240 z 1 800</b> · ~4 min<div class="bar"><i></i></div></div>
+            <div class="msep"></div>
+            <div class="mi">Otwórz Konstelację <span class="sc">⌘⇧K</span></div>
+            <div class="mi">Zapytaj korpus… <span class="sc">⌥Space</span></div>
+            <div class="mi dis">Nowy digest <span class="sc">po indeksowaniu</span></div>
+            <div class="msep"></div>
+            <div class="mi">Ustawienia… <span class="sc">⌘,</span></div>
+            <div class="mi">Zakończ <span class="sc">⌘Q</span></div>
+          </div>
+        </div>
+        <div class="state-note">uczciwy szacunek czasu; pytać można od razu (częściowy zakres — B4); digest czeka na pełny indeks</div></div>
+      <div class="state"><div class="state-label on">digest gotowy</div>
+        <div class="dark-cell" style="padding:18px">
+          <div class="menu">
+            <div class="mstatus"><span class="gold">✦ 3 nowe połączenia</span> · digest 02.07<br><b>kliknij, by przejrzeć</b></div>
+            <div class="msep"></div>
+            <div class="mi is-hover">Przejrzyj połączenia <span class="sc">3</span></div>
+            <div class="mi">Zapytaj korpus… <span class="sc">⌥Space</span></div>
+            <div class="msep"></div>
+            <div class="mi">Ustawienia… <span class="sc">⌘,</span></div>
+            <div class="mi">Zakończ <span class="sc">⌘Q</span></div>
+          </div>
+        </div>
+        <div class="state-note">„Przejrzyj połączenia” otwiera okno w Przeglądzie na pierwszym Nowym; równolegle wychodzi jedna notyfikacja (I)</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="F3 · Zasady">
+    <div class="sec-bar"><span class="sec-id">F3</span><h2>Zasady</h2></div>
+    <table class="redline">
+      <thead><tr><th>Zasada</th><th>Konsekwencja</th></tr></thead>
+      <tbody>
+        <tr><td>Status ma jeden dom</td><td>Postęp indeksowania wyłącznie w tym menu; okno — jedna linia zakresu nad wynikami, znika po ukończeniu. Zero okien postępu.</td></tr>
+        <tr><td>Digest ręczny jest rzadki</td><td>„Nowy digest” tylko tutaj, ze znacznikiem ✦ (tekst wychodzi do chmury). Usunięty z title-baru okna.</td></tr>
+        <tr><td>Menu nie zastępuje okna</td><td>Żadnych wyników ani kart w menu — status i wejścia. Maks. 7 pozycji.</td></tr>
+        <tr><td>Ikona nie teatralizuje</td><td>Trzy stany: pełny / przygaszony (indeksuję) / + kropka (nagrywam). Bez animacji.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> „Zapytaj korpus…” → C · „Przejrzyj połączenia” → A · notyfikacje → I · pierwszy bieg → G. Port: NSStatusItem + NSMenu; widok statusu = jeden custom NSView (tekst + pasek 3 px).</div>
+
+</div>
+</body>
+</html>

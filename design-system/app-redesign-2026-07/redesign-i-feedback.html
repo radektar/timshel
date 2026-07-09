@@ -1,0 +1,103 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1000" name="I — System feedbacku" subtitle="Jedna zasada: toast (odwracalne) · trwały ślad (klikalny, w miejscu skutku) · notyfikacja (asynchroniczne). Mapa wszystkich zdarzeń aplikacji." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — I · System feedbacku</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran I z 9</div>
+    <h1>I — System feedbacku</h1>
+    <p class="lede">Jedna zasada: <b>kto zainicjował × jak trwały skutek.</b> Użytkownik + odwracalne → toast. Użytkownik + trwałe → klikalny ślad w miejscu skutku. Aplikacja + asynchroniczne → notyfikacja systemowa. Nigdy dwa kanały dla jednego zdarzenia; nigdy echo akcji, którą użytkownik właśnie widział.</p>
+  </header>
+
+  <section class="sec" data-screen-label="I1 · Toast">
+    <div class="sec-bar"><span class="sec-id">I1</span><h2>Toast — 2 s, z Cofnij, dół okna</h2>
+      <p>Wyłącznie skutki lokalne i odwracalne. Zawsze z Cofnij, jeśli odwrócenie ma sens. Jeden naraz — nowy zastępuje stary.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label on">zachowano</div>
+        <div class="dark-cell"><span class="toastc jade"><span class="jd"></span>Zachowano <span class="undo">Cofnij</span></span></div></div>
+      <div class="state"><div class="state-label on">odrzucono</div>
+        <div class="dark-cell"><span class="toastc">Odrzucono <span class="undo">Cofnij</span></span></div></div>
+      <div class="state"><div class="state-label on">skopiowano</div>
+        <div class="dark-cell"><span class="toastc">Skopiowano 2 kierunki</span></div>
+        <div class="state-note">bez Cofnij — schowek nie potrzebuje odwrotu</div></div>
+      <div class="state"><div class="state-label">hover na cofnij</div>
+        <div class="dark-cell"><span class="toastc jade"><span class="jd"></span>Zachowano <span class="undo is-hover">Cofnij</span></span></div>
+        <div class="state-note">hover wstrzymuje zegar; Esc zamyka</div></div>
+      <div class="state"><div class="state-label">umiejscowienie</div>
+        <div class="dark-cell" style="padding:0;width:340px">
+          <div style="position:relative;height:190px">
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column">
+              <div style="flex:1"></div>
+              <div style="display:flex;justify-content:center;padding-bottom:56px"><span class="toastc jade" style="transform:scale(.9)"><span class="jd"></span>Zachowano <span class="undo">Cofnij</span></span></div>
+              <div class="wfooter" style="margin-top:0"><span class="btn btn-ghost" style="transform:scale(.85)">Odrzuć</span><span class="btn btn-jade" style="transform:scale(.85)">Zachowaj</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">wyśrodkowany nad stopką, <span class="tok">10 px</span> odstępu; nie zasłania akcji</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="I2 · Trwały ślad">
+    <div class="sec-bar"><span class="sec-id">I2</span><h2>Trwały ślad — klikalny, w miejscu skutku</h2>
+      <p>Każda akcja z trwałym skutkiem (albo skutkiem poza aplikacją) zostawia ślad, który przeżywa zamknięcie okna. Jadeit = wróciło do Ciebie (zapis lokalny), złoto = wyszło do chmury.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label on">zapis notatki (jadeit)</div>
+        <div class="dark-cell" style="width:480px"><span class="trace">Zapisano: <span class="f">okna-waskie-gardlo.md</span> <span class="o">↗ otwórz</span> <span class="t">14:32</span></span></div>
+        <div class="state-note">pod kartą syntezy <b>i</b> przy wpisie historii (D4)</div></div>
+      <div class="state"><div class="state-label on">handoff (złoto)</div>
+        <div class="dark-cell" style="width:480px"><span class="trace" style="background:rgba(231,180,92,.07);border-color:rgba(231,180,92,.3)"><span style="color:#E7B45C">✦</span> Przekazano do Claude <span class="o">↗ otwórz wątek</span> <span class="t">14:32</span></span></div>
+        <div class="state-note">na karcie insightu, nad kierunkami (E4)</div></div>
+      <div class="state"><div class="state-label">ślad w szynie</div>
+        <div class="dark-cell" style="width:300px">
+          <div class="rrow quiet"><div class="ic"><span data-ico="szukaj"></span></div><div><div class="tt">Co z dostawą okien i opóźnieniem dachu?</div><div class="dd">4 fragmenty · synteza · <span style="color:#8BE0B5">zapisano ↗</span></div></div></div>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="I3 · Notyfikacje">
+    <div class="sec-bar"><span class="sec-id">I3</span><h2>Notyfikacja systemowa — rzadka, zawsze klikalna</h2>
+      <p>Tylko zdarzenia asynchroniczne poza uwagą użytkownika. Klik prowadzi do właściwego miejsca. Dwa rodzaje w całej aplikacji.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label on">digest gotowy</div>
+        <div class="dark-cell" style="padding:18px"><div class="notif"><span class="aicon"><i></i></span><div><div class="nt">3 nowe połączenia</div><div class="nb">Digest z 42 notatek ostatnich dwóch dni.</div></div><span class="when">9:00</span></div></div>
+        <div class="state-note">klik → okno, Przegląd, pierwsze Nowe</div></div>
+      <div class="state"><div class="state-label on">indeks gotowy</div>
+        <div class="dark-cell" style="padding:18px"><div class="notif"><span class="aicon"><i></i></span><div><div class="nt">Vault zaindeksowany</div><div class="nb">1 800 notatek. Zapytaj: ⌥Space</div></div><span class="when">teraz</span></div></div>
+        <div class="state-note">klik → ask-bar; tylko przy pierwszym biegu i przebudowie</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="I4 · Mapa zdarzeń">
+    <div class="sec-bar"><span class="sec-id">I4</span><h2>Mapa wszystkich zdarzeń — spec rozstrzygający</h2>
+      <p>Każde zdarzenie aplikacji ma dokładnie jeden kanał. Nowe zdarzenie w kodzie musi znaleźć wiersz w tej tabeli, zanim dostanie UI.</p></div>
+    <table class="redline" style="max-width:1150px">
+      <thead><tr><th>Zdarzenie</th><th>Inicjator</th><th>Kanał</th><th>Treść / cel kliku</th></tr></thead>
+      <tbody>
+        <tr><td>Zachowaj / Odrzuć</td><td>użytkownik</td><td><b>toast</b></td><td>„Zachowano · Cofnij” — odwracalne w miejscu</td></tr>
+        <tr><td>Kopiowanie (kierunki, cytat)</td><td>użytkownik</td><td><b>toast</b></td><td>„Skopiowano…” — bez Cofnij</td></tr>
+        <tr><td>Zapis syntezy do vaulta</td><td>użytkownik</td><td><b>ślad</b> (jadeit)</td><td>„Zapisano: plik.md ↗” — otwiera w appce; podwójny: karta + historia</td></tr>
+        <tr><td>Handoff do Claude/ChatGPT</td><td>użytkownik</td><td><b>ślad</b> (złoto ✦)</td><td>„Przekazano do… ↗ otwórz wątek” — na karcie</td></tr>
+        <tr><td>Otwarcie źródła (soczewka)</td><td>użytkownik</td><td><b>mikro-wash</b></td><td>„otwarto ✓” 2 s na wierszu (B2) — poniżej progu toastu</td></tr>
+        <tr><td>Digest gotowy</td><td>aplikacja</td><td><b>notyfikacja</b></td><td>„3 nowe połączenia” → okno, Przegląd</td></tr>
+        <tr><td>Indeksowanie zakończone</td><td>aplikacja</td><td><b>notyfikacja</b></td><td>„Vault zaindeksowany” → ask-bar; tylko pierwszy bieg / przebudowa</td></tr>
+        <tr><td>Postęp indeksowania</td><td>aplikacja</td><td><b>status</b> (pasek menu)</td><td>menu F2 + linia zakresu w wynikach (B4); zero toastów i notyfikacji</td></tr>
+        <tr><td>Błąd syntezy / sieci</td><td>aplikacja</td><td><b>w miejscu</b></td><td>komunikat w miejscu karty + „Spróbuj ponownie” (D4); nigdy NSAlert</td></tr>
+        <tr><td>Nagrywanie start/stop</td><td>użytkownik</td><td><b>status</b> (ikona)</td><td>kropka przy sygnecie (F1); bez toastu</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Anty-zasady:</b> nigdy dwa kanały dla jednego zdarzenia · nigdy notyfikacja jako echo akcji użytkownika · nigdy toast dla skutku trwałego (musiałby zostawić ślad, a nie zdążyć zniknąć). Port: toast = NSView nad stopką; notyfikacje = UNUserNotificationCenter.</div>
+
+</div>
+</body>
+</html>

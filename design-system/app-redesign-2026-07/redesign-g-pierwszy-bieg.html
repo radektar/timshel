@@ -1,0 +1,121 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1000" name="G — Pierwsze uruchomienie" subtitle="Wizard 2 kroki (natywny, tokeny) + minuta 0/2/10: indeksowanie w tle, częściowe pytania, jedna notyfikacja. Nic nie blokuje." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — G · Pierwsze uruchomienie</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+<style>
+  .wizstep { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-soft); }
+  .wizstep i { width: 6px; height: 6px; border-radius: 999px; background: rgba(20,20,20,.18); }
+  .wizstep i.on { background: var(--terracotta); }
+  .radio { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(20,20,20,.14); border-radius: 8px; font-size: 13px; background: #FFF; }
+  .radio .rb { width: 15px; height: 15px; border-radius: 999px; border: 1.5px solid rgba(20,20,20,.3); display: grid; place-items: center; }
+  .radio.on { border-color: var(--terracotta); }
+  .radio.on .rb { border-color: var(--terracotta); }
+  .radio.on .rb::after { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--terracotta); }
+</style>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran G z 9</div>
+    <h1>G — Pierwsze uruchomienie</h1>
+    <p class="lede">Dwa kroki i aplikacja znika do paska menu. Indeksowanie startuje w tle, <b>nie blokuje niczego</b> — pytać można od minuty 0 (częściowy zakres). Dziś przy starcie nie ma żadnego sygnału; w tej podróży sygnał ma jeden dom (pasek menu) i jedno zwieńczenie (notyfikacja).</p>
+  </header>
+
+  <section class="sec" data-screen-label="G1 · Wizard">
+    <div class="sec-bar"><span class="sec-id">G1</span><h2>Wizard — natywny, dwa kroki</h2>
+      <p>Rama natywna (jasna/ciemna za systemem), tokeny: tint terakota, radius 6, SF Pro. Copy PL, cicho, bez hype — zero „drugiego mózgu”.</p></div>
+    <div class="states" style="gap:30px">
+      <div class="state"><div class="state-label">krok 1 — vault</div>
+        <div class="nativewin" style="width:440px">
+          <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Timshel</b></div><div class="tb-right"></div></div>
+          <div style="padding:24px 26px 22px">
+            <div class="wizstep"><i class="on"></i><i></i></div>
+            <div style="font-family:var(--font-display);font-weight:500;font-size:19px;margin-top:12px">Gdzie leżą Twoje notatki?</div>
+            <p style="font-size:13px;color:var(--ink-soft);margin-top:6px;line-height:1.5">Timshel czyta folder z plikami Markdown. Nic nie przenosi, nic nie zmienia.</p>
+            <div class="nfield" style="margin-top:14px"><span style="flex:1;color:var(--ink)">~/Notatki/vault-8moons</span><span style="color:var(--terracotta);font-size:12.5px">Zmień…</span></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px"><span class="nbtn primary">Dalej</span></div>
+          </div>
+        </div></div>
+      <div class="state"><div class="state-label">krok 2 — appka źródeł</div>
+        <div class="nativewin" style="width:440px">
+          <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Timshel</b></div><div class="tb-right"></div></div>
+          <div style="padding:24px 26px 22px">
+            <div class="wizstep"><i></i><i class="on"></i></div>
+            <div style="font-family:var(--font-display);font-weight:500;font-size:19px;margin-top:12px">Gdzie otwierać źródła?</div>
+            <p style="font-size:13px;color:var(--ink-soft);margin-top:6px;line-height:1.5">Cytaty i notatki otwierają się w Twojej appce — Timshel jest soczewką, nie czytnikiem.</p>
+            <div style="display:grid;gap:8px;margin-top:14px">
+              <div class="radio on"><span class="rb"></span>Obsidian</div>
+              <div class="radio"><span class="rb"></span>Pile</div>
+              <div class="radio"><span class="rb"></span>Finder</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px"><span class="nbtn">Wstecz</span><span class="nbtn primary">Zacznij</span></div>
+          </div>
+        </div></div>
+      <div class="state"><div class="state-label on">finał — do tła</div>
+        <div class="nativewin" style="width:440px">
+          <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Timshel</b></div><div class="tb-right"></div></div>
+          <div style="padding:24px 26px 22px">
+            <div style="font-family:var(--font-display);font-weight:500;font-size:19px">Indeksuję w tle</div>
+            <p style="font-size:13px;color:var(--ink-soft);margin-top:6px;line-height:1.5">1 800 notatek · ~5 min. Możesz już pytać: <span class="kbd">⌥Space</span>. Postęp znajdziesz w pasku menu.</p>
+            <div style="height:4px;border-radius:2px;background:rgba(20,20,20,.1);margin-top:14px;overflow:hidden"><span style="display:block;height:100%;width:9%;background:var(--terracotta);border-radius:2px"></span></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:20px"><span class="nbtn primary">Zamknij</span></div>
+          </div>
+        </div>
+        <div class="state-note">okno można zamknąć od razu — indeksowanie żyje dalej w pasku menu (F2)</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="G2 · Minuta 0/2/10">
+    <div class="sec-bar"><span class="sec-id">G2</span><h2>Minuta 0 · 2 · 10 — sygnał zawsze w tym samym miejscu</h2></div>
+    <div class="states" style="gap:30px">
+      <div class="state"><div class="state-label">minuta 0 — pasek menu</div>
+        <div class="dark-cell" style="padding:18px">
+          <div class="menu">
+            <div class="mstatus">Indeksuję <b>40 z 1 800</b> · ~5 min<div class="bar"><i style="width:3%"></i></div></div>
+            <div class="msep"></div>
+            <div class="mi">Zapytaj korpus… <span class="sc">⌥Space</span></div>
+          </div>
+        </div></div>
+      <div class="state"><div class="state-label">minuta 2 — można pytać</div>
+        <div class="dark-cell" style="width:400px">
+          <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#8BE0B5;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.07)"><span style="width:6px;height:6px;border-radius:999px;background:#46B17E"></span>Przeszukuję 240 z 1 800 notatek — indeksuję w tle</div>
+          <div class="res" style="border-bottom:none"><div class="m"><span class="dt">14.06</span><span class="ti">Przygotowania do Eight Moons…</span><span class="op">↗ otwórz</span></div><div class="qt">„…dostępność <mark>okien</mark> przed sierpniem niepewna…”</div></div>
+        </div>
+        <div class="state-note">wyniki nad częściowym indeksem — uczciwa linia zakresu (B4); Przegląd w tym czasie → G3</div></div>
+      <div class="state"><div class="state-label on">minuta 10 — jedna notyfikacja</div>
+        <div class="dark-cell" style="padding:18px">
+          <div class="notif">
+            <span class="aicon"><i></i></span>
+            <div><div class="nt">Vault zaindeksowany</div><div class="nb">1 800 notatek. Zapytaj: ⌥Space</div></div>
+            <span class="when">teraz</span>
+          </div>
+        </div>
+        <div class="state-note">jedyna notyfikacja pierwszego dnia; klik → ask-bar. Pierwszy digest przyjdzie swoim rytmem</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="G3 · Przegląd w trakcie">
+    <div class="sec-bar"><span class="sec-id">G3</span><h2>Przegląd przed pierwszym digestem</h2></div>
+    <div class="states">
+      <div class="state"><div class="state-label">stan oczekiwania</div>
+        <div class="dark-cell" style="width:430px;height:210px;display:grid;place-items:center;text-align:center">
+          <div><div style="opacity:.4;display:flex;justify-content:center"><span data-sigil="emergent" data-size="34"></span></div>
+          <div style="font-family:var(--font-display);font-size:16px;margin-top:10px">Pierwszy digest przygotuję po indeksowaniu</div>
+          <div style="font-size:12px;color:rgba(250,243,226,.5);margin-top:5px;max-width:32ch">Możesz już pytać swój korpus — ⌥Space z dowolnego miejsca.</div></div>
+        </div>
+        <div class="state-note">jedyne miejsce, gdzie pusty stan podpowiada gest — pierwszy bieg usprawiedliwia jedną wskazówkę</div></div>
+    </div>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> status i menu → F · linia zakresu i wyniki → B · notyfikacje → I · Ustawienia (zmiana vaulta/openera później) → H. Port: NSWindow (wizard), standardowe kontrolki, accent <code style="font-family:var(--font-mono)">--terracotta</code>.</div>
+
+</div>
+</body>
+</html>

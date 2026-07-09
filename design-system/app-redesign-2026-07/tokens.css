@@ -1,0 +1,195 @@
+/* ============================================================
+   Timshel — Design Tokens (canonical)
+
+   v3 — neutral handhold-style base + a single Timshel accent (Poppy).
+   White paper, near-black ink, warm-grey panels; a warm Salinas
+   "Poppy" orange is the one brand accent (buttons / links). Type is
+   all-grotesk: Neue Montreal for display, Neue Haas Grotesk for body/UI.
+   Color otherwise lives only in grainy gradient media.
+
+   Semantic token architecture (surface / content / border /
+   interactive) borrowed from handhold.io; values are Timshel's.
+   This file is the single source of truth.
+   ============================================================ */
+
+/* ─── FONT FACES ─────────────────────────────────────────────
+   url()s are relative to THIS file (project root), so they
+   resolve the same no matter which page links the stylesheet. */
+@font-face {
+  font-family: "Neue Montreal";
+  src: url("fonts/NeueMontreal-Regular.otf") format("opentype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Neue Montreal";
+  src: url("fonts/NeueMontreal-Medium.otf") format("opentype");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Neue Montreal";
+  src: url("fonts/NeueMontreal-Bold.otf") format("opentype");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk";
+  src: url("fonts/NeueHaasGrotesk-Roman.ttf") format("truetype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk";
+  src: url("fonts/NeueHaasGrotesk-Medium.ttf") format("truetype");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Neue Haas Grotesk";
+  src: url("fonts/NeueHaasGrotesk-Bold.ttf") format("truetype");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* ─── TYPOGRAPHY ──────────────────────────────────────────
+     Neue Montreal = display/headings. Neue Haas = body/UI.
+     Mono = code / token values. */
+  --font-display: "Neue Montreal", system-ui, sans-serif;
+  --font-body:    "Neue Haas Grotesk", system-ui, sans-serif;
+  --font-sans:    var(--font-body);    /* alias */
+  --font-serif:   var(--font-display); /* legacy alias — now grotesk, not serif */
+  --font-mono:    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-bold:     700;
+
+  /* Fluid display scale — larger, more editorial */
+  --text-h1:   clamp(2.6rem, 7.5vw, 6rem);
+  --text-h2:   clamp(2rem, calc(1.4rem + 2.6vw), 3.5rem);
+  --text-h3:   clamp(1.3rem, calc(1.1rem + 0.8vw), 1.7rem);
+  --text-lead: clamp(1.06rem, calc(1rem + 0.45vw), 1.32rem);
+  --text-body: 1.0625rem; /* 17px */
+
+  /* Static UI scale (rem) */
+  --text-xs:   0.8125rem; /* 13px — eyebrow / labels */
+  --text-sm:   0.9375rem; /* 15px */
+  --text-base: 1rem;
+  --text-lg:   1.18rem;
+
+  --leading-tight:  1.04;  /* display headings */
+  --leading-snug:   1.22;  /* multi-line headings */
+  --leading-normal: 1.6;   /* body */
+
+  --tracking-tight:   -0.022em; /* display */
+  --tracking-snug:    -0.012em; /* sub-display */
+  --tracking-eyebrow:  0.1em;   /* uppercase eyebrows */
+
+  /* ─── RAW PALETTE ─────────────────────────────────────────
+     Neutral base + one accent. Gradient hues are media-only. */
+  --paper:    #FFFFFF;  /* page background */
+  --panel:    #F3F1EB;  /* warm-grey elevated panel */
+  --panel-2:  #ECEAE3;  /* sunken / tag chips */
+  --obsidian: #141414;  /* dark sections / black pills */
+  --ink:      #1A1A1A;  /* primary text */
+  --ink-soft: #6E6A64;  /* secondary text */
+
+  --terracotta:      #AC4B16;  /* THE accent — Poppy (Salinas): buttons, links. Name kept; optional rename → --accent* later */
+  --terracotta-deep: #8B3A0E;  /* accent hover */
+  --terracotta-lit:  #E0733C;  /* accent on dark surfaces */
+
+  /* Grainy-gradient hues — used ONLY in media, never as UI color */
+  --grad-gold: #E7B45C;
+  --grad-blue: #5B83F0;
+  --grad-jade: #46B17E;
+
+  --line: rgba(20, 20, 20, 0.10);
+
+  /* ─── SEMANTIC: SURFACE ──────────────────────────────────── */
+  --surface-base:     var(--paper);
+  --surface-elevated: var(--panel);
+  --surface-sunken:   var(--panel-2);
+  --surface-inverse:  var(--obsidian);
+  --surface-hero:     var(--paper);
+  --surface-overlay:  rgba(20, 20, 20, 0.55);
+
+  /* ─── SEMANTIC: CONTENT (text / icons) ───────────────────── */
+  --content-primary:   var(--ink);
+  --content-secondary: var(--ink-soft);
+  --content-contrast:  #FFFFFF;          /* on dark surfaces */
+  --content-accent:    var(--terracotta);
+  --content-accent-on-dark: var(--terracotta-lit);
+
+  /* ─── SEMANTIC: BORDER ───────────────────────────────────── */
+  --border-base:    var(--line);
+  --border-strong:  rgba(20, 20, 20, 0.22);
+  --border-accent:  var(--terracotta);
+  --border-on-dark: rgba(255, 255, 255, 0.16);
+
+  /* ─── SEMANTIC: INTERACTIVE ──────────────────────────────── */
+  --interactive-primary-base:  var(--terracotta);  /* terracotta pill */
+  --interactive-primary-hover: var(--terracotta-deep);
+  --interactive-dark-base:     var(--obsidian);     /* black pill (alt) */
+  --interactive-dark-hover:    #000000;
+  --interactive-ghost-border:  var(--line);
+  --interactive-ghost-hover:   var(--ink);
+
+  /* ─── SEMANTIC: STATUS (demoted — gradient hues) ─────────── */
+  --status-local:   var(--grad-jade);  /* runs locally / private */
+  --status-insight: var(--grad-gold);  /* hypothesis / connection */
+
+  /* ─── SPACING (4px base + generous section rhythm) ───────── */
+  --spacing: 0.25rem;
+  --space-1: 0.25rem;  --space-2: 0.5rem;  --space-3: 0.75rem;
+  --space-4: 1rem;     --space-6: 1.5rem;  --space-8: 2rem;
+  --space-12: 3rem;    --space-16: 4rem;   --space-24: 6rem;
+  --space-section: clamp(4rem, 9vw, 8rem);    /* .block padding-block */
+  --space-gutter:  clamp(1.25rem, 5vw, 4rem); /* .wrap padding-inline */
+
+  /* ─── RADIUS (larger + softer) ───────────────────────────── */
+  --radius-sm:   0.375rem;  /* 6px  */
+  --radius-md:   0.625rem;  /* 10px */
+  --radius-lg:   0.875rem;  /* 14px — brand chip */
+  --radius-xl:   1.125rem;  /* 18px — small cards */
+  --radius-2xl:  1.5rem;    /* 24px — feature / media cards */
+  --radius-3xl:  1.75rem;   /* 28px — large panels */
+  --radius-4xl:  2.25rem;   /* 36px — hero / signup */
+  --radius-pill: 999px;     /* round things: status dots, eyebrow tags */
+  /* interactive controls — decision C (2026-06): sharp 6px, native macOS feel */
+  --radius-button: 0.375rem; /* 6px — buttons, inputs, segmented, split */
+  --radius-chip:   0.375rem; /* 6px — note chips / metadata pills */
+
+  /* ─── ELEVATION (neutral, restrained) ────────────────────── */
+  --shadow-accent: 0 10px 28px -12px rgba(172, 75, 22, 0.45); /* Poppy button */
+  --shadow-card:   0 1px 2px rgba(20, 20, 20, 0.04), 0 16px 40px -28px rgba(20, 20, 20, 0.20);
+  --shadow-float:  0 28px 70px -28px rgba(20, 20, 20, 0.28);  /* floating media */
+  --shadow-chip:   inset 0 0 0 1px rgba(20, 20, 20, 0.05);
+
+  /* ─── BRAND MOTIFS ───────────────────────────────────────── */
+  /* Mesoamerican greca + merlon removed in the Timshel refresh (2026-07).
+     Section seams are now open space + a faint "horizon" hairline (plain CSS,
+     no token). If a divider is ever needed, add a single low-opacity valley
+     contour band — not reintroduced here by default. */
+  /* Film grain — overlaid on gradient media for the noisy look */
+  --motif-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); /* @kind other */
+  /* Grainy mesh gradient — gold + blue + jade, media placeholder base */
+  --grad-mesh: radial-gradient(60% 70% at 18% 28%, var(--grad-gold) 0%, transparent 58%),
+               radial-gradient(55% 65% at 82% 22%, var(--grad-blue) 0%, transparent 55%),
+               radial-gradient(65% 75% at 62% 88%, var(--grad-jade) 0%, transparent 60%); /* @kind other */
+
+  /* ─── LOGO SYGNET ────────────────────────────────────────────
+     Sygnet = fala odwzorowana z ikony menu (6 zaokrąglonych słupków).
+     Użycie:
+       • app icon  → gradientowy sygnet na czarnym kaflu (#141414)
+       • Lockup B   → ten sam sygnet bez kafla, na jasnym/ciemnym tle
+     Maska: nakładasz ją na element wypełniony --logo-mesh (+ grain). */
+  --logo-sygnet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Crect x='2.1' y='8.95' width='1.8' height='4.1' rx='.9'/%3E%3Crect x='5.3' y='5.6' width='1.8' height='10.8' rx='.9'/%3E%3Crect x='8.5' y='2' width='1.8' height='18' rx='.9'/%3E%3Crect x='11.7' y='6.65' width='1.8' height='8.7' rx='.9'/%3E%3Crect x='14.9' y='4.05' width='1.8' height='13.9' rx='.9'/%3E%3Crect x='18.1' y='8.15' width='1.8' height='5.7' rx='.9'/%3E%3C/svg%3E"); /* @kind other */
+  /* Mesh wypełniające sygnet — złoto · błękit · jade nad ciepłą bazą (mesh-a). */
+  --logo-mesh: radial-gradient(58% 64% at 22% 26%,#F2C879 0,transparent 60%),radial-gradient(54% 60% at 80% 18%,#7FA0F7 0,transparent 58%),radial-gradient(60% 72% at 64% 90%,#5BC495 0,transparent 62%),radial-gradient(70% 80% at 38% 70%,#EE9F7E 0,transparent 70%),#F4D9A8; /* @kind other */
+
+  /* ─── LAYOUT ─────────────────────────────────────────────── */
+  --max-width: 1200px;
+  --measure:   60ch;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1); /* @kind other */
+
+  /* ─── BACKWARD-COMPAT ALIASES ────────────────────────────── */
+  --maxw: var(--max-width);
+  --cream:    var(--paper);   /* legacy name */
+  --cream-hi: var(--panel);   /* legacy name */
+}

@@ -1,0 +1,113 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x900" name="H — Ustawienia" subtitle="Natywne okno preferencji z tokenami (tint terakota, 6 px, SF Pro). Zakładki: Ogólne · Vault · Prywatność. Konstelacja pozostaje jedyną powierzchnią customową." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — H · Ustawienia</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+<style>
+  .tabs { display: flex; justify-content: center; gap: 4px; padding: 8px 0 10px; background: #ECEAE4; border-bottom: 1px solid rgba(20,20,20,.1); }
+  .tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 14px; border-radius: 6px; font-size: 11px; color: var(--ink-soft); }
+  .tab.on { background: rgba(194,64,16,.1); color: var(--terracotta); }
+  .prow { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 11px 0; border-bottom: 1px solid rgba(20,20,20,.07); font-size: 13px; align-items: baseline; }
+  .prow:last-child { border-bottom: none; }
+  .plabel { text-align: right; color: var(--ink-soft); }
+  .ncheck { display: inline-flex; align-items: center; gap: 8px; }
+  .ncheck .cb { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid rgba(20,20,20,.3); }
+  .ncheck.on .cb { background: var(--terracotta); border-color: var(--terracotta); position: relative; }
+  .ncheck.on .cb::after { content: ""; position: absolute; left: 3px; top: 3.5px; width: 6px; height: 3.5px; border-left: 1.6px solid #FFF; border-bottom: 1.6px solid #FFF; transform: rotate(-45deg); }
+  .nselect { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 9px; border: 1px solid rgba(20,20,20,.2); border-radius: 6px; background: #FFF; font-size: 12.5px; }
+  .nselect .cr { color: var(--ink-soft); font-size: 9px; }
+</style>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran H z 9</div>
+    <h1>H — Ustawienia: natywne, z tokenami</h1>
+    <p class="lede">Rozstrzygnięcie z mapy IA §5: <b>jedna powierzchnia customowa (Konstelacja), reszta natywna.</b> Ustawienia to standardowe okno preferencji — spójność niesie akcent terakoty, radius 6, typografia i głos, nie kolor tła. Copy całość PL.</p>
+  </header>
+
+  <section class="sec" data-screen-label="H1 · Ogólne">
+    <div class="sec-bar"><span class="sec-id">H1</span><h2>Ogólne</h2></div>
+    <div class="nativewin" style="width:560px">
+      <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Ustawienia</b></div><div class="tb-right"></div></div>
+      <div class="tabs">
+        <div class="tab on">Ogólne</div>
+        <div class="tab">Vault</div>
+        <div class="tab">Prywatność</div>
+      </div>
+      <div style="padding:18px 28px 20px">
+        <div class="prow"><div class="plabel">Otwieraj źródła w</div><div><span class="nselect">Obsidian <span class="cr">▾</span></span></div></div>
+        <div class="prow"><div class="plabel">Skrót zapytania</div><div><span class="kbd" style="font-size:12px">⌥Space</span> <span style="color:var(--ink-soft);font-size:12px;margin-left:8px">zmień — kliknij i wciśnij nowy</span></div></div>
+        <div class="prow"><div class="plabel">Start</div><div><span class="ncheck on"><span class="cb"></span>Uruchamiaj przy logowaniu</span></div></div>
+        <div class="prow"><div class="plabel">Narzędzie handoffu</div><div><span class="nselect">Claude <span class="cr">▾</span></span> <span style="color:var(--ink-soft);font-size:12px;margin-left:8px">domyślne dla „Kontynuuj w…”</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="H2 · Vault">
+    <div class="sec-bar"><span class="sec-id">H2</span><h2>Vault</h2></div>
+    <div class="nativewin" style="width:560px">
+      <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Ustawienia</b></div><div class="tb-right"></div></div>
+      <div class="tabs">
+        <div class="tab">Ogólne</div>
+        <div class="tab on">Vault</div>
+        <div class="tab">Prywatność</div>
+      </div>
+      <div style="padding:18px 28px 20px">
+        <div class="prow"><div class="plabel">Folder</div><div><div class="nfield" style="max-width:330px"><span style="flex:1">~/Notatki/vault-8moons</span><span style="color:var(--terracotta);font-size:12.5px">Zmień…</span></div></div></div>
+        <div class="prow"><div class="plabel">Indeks</div><div>1 800 notatek · zaktualizowany dziś 09:14<br><span class="nbtn" style="margin-top:8px">Przebuduj indeks</span> <span style="color:var(--ink-soft);font-size:12px;margin-left:6px">~5 min, w tle</span></div></div>
+        <div class="prow"><div class="plabel">Nowe nagrania</div><div><span class="ncheck on"><span class="cb"></span>Indeksuj przyrostowo, bez pytania</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="H3 · Prywatność">
+    <div class="sec-bar"><span class="sec-id">H3</span><h2>Prywatność — granica lokalne / chmura wprost</h2>
+      <p>Ta zakładka jest umową produktu: co nigdy nie opuszcza Maca, a co wychodzi tylko na Twój gest. Te same role kolorów co w oknie: jadeit = lokalne, złoto = do chmury.</p></div>
+    <div class="nativewin" style="width:560px">
+      <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="win-title"><b>Ustawienia</b></div><div class="tb-right"></div></div>
+      <div class="tabs">
+        <div class="tab">Ogólne</div>
+        <div class="tab">Vault</div>
+        <div class="tab on">Prywatność</div>
+      </div>
+      <div style="padding:18px 28px 20px">
+        <div style="border:1px solid rgba(70,177,126,.4);background:rgba(70,177,126,.06);border-radius:8px;padding:12px 14px;font-size:12.5px;line-height:1.55">
+          <div style="display:flex;align-items:center;gap:7px;font-weight:700;color:#1E7A52"><span style="width:7px;height:7px;border-radius:999px;background:var(--grad-jade)"></span>Zawsze lokalnie</div>
+          <div style="color:var(--ink-soft);margin-top:4px">Nagrania, transkrypcje, indeks, wyszukiwanie, historia zapytań. Nic z tego nie opuszcza Maca.</div>
+        </div>
+        <div style="border:1px solid rgba(231,180,92,.5);background:rgba(231,180,92,.08);border-radius:8px;padding:12px 14px;font-size:12.5px;line-height:1.55;margin-top:10px">
+          <div style="display:flex;align-items:center;gap:7px;font-weight:700;color:#8A6416">✦ Do chmury — tylko na Twój gest</div>
+          <div style="color:var(--ink-soft);margin-top:4px">Digest (fragmenty do połączeń), synteza (dopasowane fragmenty), handoff (wybrane kierunki). Zawsze oznaczone ✦ w oknie.</div>
+        </div>
+        <div class="prow" style="margin-top:8px"><div class="plabel">Model</div><div><span class="nselect">Claude · API <span class="cr">▾</span></span></div></div>
+        <div class="prow"><div class="plabel">Klucz API</div><div><div class="nfield" style="max-width:330px"><span style="flex:1;font-family:var(--font-mono);font-size:12px;color:var(--ink-soft)">sk-ant-•••••••••••••</span></div></div></div>
+        <div class="prow"><div class="plabel">Digest</div><div><span class="nselect">Co 2 dni <span class="cr">▾</span></span> <span style="color:var(--ink-soft);font-size:12px;margin-left:8px">albo ręcznie z paska menu</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="H4 · Zasady">
+    <div class="sec-bar"><span class="sec-id">H4</span><h2>Zasady portu</h2></div>
+    <table class="redline">
+      <thead><tr><th>Zasada</th><th>Konsekwencja</th></tr></thead>
+      <tbody>
+        <tr><td>Rama natywna</td><td>NSWindow + NSToolbar (styl preferencji), standardowe kontrolki; jasny/ciemny za systemem — bez ciemnego custom chrome.</td></tr>
+        <tr><td>Tokeny na kontrolkach</td><td><code>NSApp.appearance</code> bez zmian; accent = terakota (<code>--terracotta</code>), radius 6 tam, gdzie kontrolka na to pozwala; reszta systemowa.</td></tr>
+        <tr><td>Trzy zakładki, nie więcej</td><td>Ogólne · Vault · Prywatność. Nowa opcja musi wygrać miejsce w jednej z nich albo nie istnieć.</td></tr>
+        <tr><td>Prywatność = umowa</td><td>Bloki jadeit/złoto to stały element, nie marketing — te same role kolorów co w Konstelacji.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> opener i skrót → C/B · narzędzie handoffu → E · rytm digestu → F. Wizard (G) używa tych samych kontrolek.</div>
+
+</div>
+</body>
+</html>
