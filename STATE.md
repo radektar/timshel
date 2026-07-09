@@ -13,8 +13,14 @@ ask-bar overlay, wizard, ustawienia, feedback. 9 ekranów A–I + spec.css + tok
 egzekwowane twardo: terakota #C24010 (akcja) · jadeit #46B17E (lokalne) · złoto #D6B033
 (insight/chmura). Ikona idzie w NOWY kierunek: mesh sygnet (fala 6 słupków) na kaflu
 #141414 (obecna = kremowy waveform — do wymiany).
-Sekwencja: **(1) paczka assetów do wdrożenia [TERAZ] → (2) dalsze testy → (3) port ekranów A–I.**
-Handoff wypakowany: `scratchpad/handoff/…`. Wdrożenie assetów = wątek bieżący.
+Sekwencja: **(1) paczka assetów ✅ DOWIEZIONA i ZATWIERDZONA → (2) dalsze testy [NASTĘPNE] → (3) port ekranów A–I.**
+Assety: handoff wpięty `design-system/app-redesign-2026-07/`; tokeny w `src/ui/theme.py`
+(rodziny akcentów + MESH_STOPS + SIGIL_BARS); nowa ikona (mesh sygnet na #141414,
+`assets/gen_icon.py`) — Radek zatwierdził kierunek; znak menu-bar mono
+(`assets/menu_bar/sigil.png` +@2x, wpięcie do menu_app = faza 3). Tester DMG
+przebudowany z nową ikoną. Fonty handoffu NIE wdrożone (→ SF Pro).
+NIE ruszać w assetach: fonty Neue Haas/Montreal (mapują na SF Pro); port ekranów A–I
+(osobna faza kodu po testach).
 
 ## Ostatnia decyzja + dlaczego
 
