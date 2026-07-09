@@ -2,7 +2,7 @@
 
 At personal-vault scale (thousands of notes -> tens of thousands of chunks) exact
 KNN is sub-millisecond, so no ANN index is needed. One ``sqlite-vec`` file lives in
-``.malinche/`` beside the other local state. Vectors are L2-normalized upstream, so
+``.timshel/`` beside the other local state. Vectors are L2-normalized upstream, so
 ``sqlite-vec``'s L2 distance orders identically to cosine.
 
 Incremental by note: ``upsert_note`` replaces a note's chunks; ``delete_note``
@@ -12,6 +12,7 @@ drops them. Pin the ``sqlite-vec`` version you ship — it is pre-1.0.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -42,7 +43,11 @@ class VaultVectorStore:
         self.dim = int(dim)
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(self._path))
+        # The lazy engine is shared across threads (UI search + daemon indexing),
+        # so the connection must allow cross-thread use and a lock must serialize
+        # access — sqlite3 is not safe for concurrent use of one connection.
+        self._db = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._lock = threading.RLock()
         self._load_extension()
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS chunks("
@@ -77,45 +82,48 @@ class VaultVectorStore:
         """Replace all stored chunks for ``note_id`` with a fresh set (incremental)."""
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors length mismatch")
-        self.delete_note(note_id)
-        cur = self._db.cursor()
-        for ch, vec in zip(chunks, vectors):
-            if len(vec) != self.dim:
-                raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")
-            cur.execute(
-                "INSERT INTO chunks(note_id, seq, text, parent_text, char_start, char_end, version_hash) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (note_id, ch.seq, ch.text, ch.parent_text, ch.char_start, ch.char_end, ch.version_hash),
-            )
-            cur.execute(
-                "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
-                (cur.lastrowid, self._serialize(vec)),
-            )
-        self._db.commit()
+        with self._lock:
+            self.delete_note(note_id)
+            cur = self._db.cursor()
+            for ch, vec in zip(chunks, vectors):
+                if len(vec) != self.dim:
+                    raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")
+                cur.execute(
+                    "INSERT INTO chunks(note_id, seq, text, parent_text, char_start, char_end, version_hash) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (note_id, ch.seq, ch.text, ch.parent_text, ch.char_start, ch.char_end, ch.version_hash),
+                )
+                cur.execute(
+                    "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
+                    (cur.lastrowid, self._serialize(vec)),
+                )
+            self._db.commit()
 
     def delete_note(self, note_id: str) -> None:
-        cur = self._db.cursor()
-        ids = [r[0] for r in cur.execute("SELECT id FROM chunks WHERE note_id=?", (note_id,)).fetchall()]
-        for cid in ids:
-            cur.execute("DELETE FROM chunk_vec WHERE rowid=?", (cid,))
-        cur.execute("DELETE FROM chunks WHERE note_id=?", (note_id,))
-        self._db.commit()
+        with self._lock:
+            cur = self._db.cursor()
+            ids = [r[0] for r in cur.execute("SELECT id FROM chunks WHERE note_id=?", (note_id,)).fetchall()]
+            for cid in ids:
+                cur.execute("DELETE FROM chunk_vec WHERE rowid=?", (cid,))
+            cur.execute("DELETE FROM chunks WHERE note_id=?", (note_id,))
+            self._db.commit()
 
     def knn(self, query_vec: Sequence[float], k: int = 50) -> List[Hit]:
         """Top-``k`` chunks by vector distance (ascending)."""
-        rows = self._db.execute(
-            "SELECT rowid, distance FROM chunk_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-            (self._serialize(query_vec), int(k)),
-        ).fetchall()
-        if not rows:
-            return []
-        by_id = {r[0]: r[1] for r in rows}
-        placeholders = ",".join("?" for _ in by_id)
-        meta = self._db.execute(
-            f"SELECT id, note_id, seq, text, parent_text, char_start, char_end, version_hash "
-            f"FROM chunks WHERE id IN ({placeholders})",
-            tuple(by_id.keys()),
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT rowid, distance FROM chunk_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                (self._serialize(query_vec), int(k)),
+            ).fetchall()
+            if not rows:
+                return []
+            by_id = {r[0]: r[1] for r in rows}
+            placeholders = ",".join("?" for _ in by_id)
+            meta = self._db.execute(
+                f"SELECT id, note_id, seq, text, parent_text, char_start, char_end, version_hash "
+                f"FROM chunks WHERE id IN ({placeholders})",
+                tuple(by_id.keys()),
+            ).fetchall()
         hits = [
             Hit(
                 chunk_id=m[0], note_id=m[1], seq=m[2], text=m[3], parent_text=m[4],
@@ -128,9 +136,10 @@ class VaultVectorStore:
 
     def all_chunks(self) -> List[Hit]:
         """Every stored chunk (distance=0) — the corpus for the lexical channel."""
-        rows = self._db.execute(
-            "SELECT id, note_id, seq, text, parent_text, char_start, char_end, version_hash FROM chunks"
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, note_id, seq, text, parent_text, char_start, char_end, version_hash FROM chunks"
+            ).fetchall()
         return [
             Hit(chunk_id=r[0], note_id=r[1], seq=r[2], text=r[3], parent_text=r[4],
                 char_start=r[5], char_end=r[6], version_hash=r[7], distance=0.0)
@@ -138,25 +147,39 @@ class VaultVectorStore:
         ]
 
     def count(self) -> int:
-        return int(self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        with self._lock:
+            return int(self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
 
     def note_ids(self) -> List[str]:
-        return [r[0] for r in self._db.execute("SELECT DISTINCT note_id FROM chunks").fetchall()]
+        with self._lock:
+            return [r[0] for r in self._db.execute("SELECT DISTINCT note_id FROM chunks").fetchall()]
+
+    def note_version(self, note_id: str) -> Optional[str]:
+        """The stored ``version_hash`` for a note (any chunk — they share it), or None
+        if the note isn't indexed. Lets an incremental backfill skip unchanged notes."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT version_hash FROM chunks WHERE note_id=? LIMIT 1", (note_id,)
+            ).fetchone()
+        return row[0] if row else None
 
     def set_meta(self, key: str, value: str) -> None:
-        self._db.execute(
-            "INSERT INTO meta(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, str(value)),
-        )
-        self._db.commit()
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO meta(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)),
+            )
+            self._db.commit()
 
     def get_meta(self, key: str) -> Optional[str]:
-        row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
     def close(self) -> None:
-        try:
-            self._db.close()
-        except sqlite3.Error as exc:  # pragma: no cover - defensive
-            logger.debug("vector store close failed: %s", exc)
+        with self._lock:
+            try:
+                self._db.close()
+            except sqlite3.Error as exc:  # pragma: no cover - defensive
+                logger.debug("vector store close failed: %s", exc)

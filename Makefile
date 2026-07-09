@@ -1,9 +1,9 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-dmg release eval-synthesis signal-report
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester eval-synthesis signal-report magic-digest recall-eval
 
 help:
-	@echo "Malinche - Development Commands"
+	@echo "Timshel - Development Commands"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install        - Install dependencies"
@@ -63,6 +63,18 @@ eval-synthesis:
 	@echo "Comparing synthesis models on gold cases (needs a Claude key in settings)..."
 	python scripts/eval_synthesis.py
 
+import-text:
+	@echo "Importing already-transcribed text (txt/md/vtt) — set SRC=<path>..."
+	./venv312/bin/python scripts/import_text.py $(SRC)
+
+magic-digest:
+	@echo "Magic-insights tester digest (Opus 4.8 + verdict + metrics)..."
+	./venv312/bin/python scripts/magic_digest.py
+
+recall-eval:
+	@echo "H3 recall harness over confirmed planted pairs (local, no API)..."
+	./venv312/bin/python scripts/recall_eval.py
+
 signal-report:
 	@echo "Computing action-rate over the Insights signal log (ADR-004)..."
 	python -m src.connections.signal_report
@@ -86,7 +98,7 @@ format:
 	@echo "Code formatted!"
 
 run:
-	@echo "Starting Olympus Transcriber..."
+	@echo "Starting Timshel..."
 	python src/main.py
 
 setup-daemon:
@@ -105,7 +117,7 @@ reload-daemon:
 
 logs:
 	@echo "Watching logs (Ctrl+C to stop)..."
-	tail -f ~/Library/Logs/olympus_transcriber.log
+	tail -f ~/Library/Application\ Support/Timshel/logs/timshel.log
 
 daemon-logs:
 	@echo "Watching LaunchAgent logs (Ctrl+C to stop)..."
@@ -129,8 +141,8 @@ clean:
 
 dev-setup:
 	@echo "Setting up development environment..."
-	python3 -m venv venv
-	@echo "Virtual environment created!"
+	python3.12 -m venv venv
+	@echo "Virtual environment created (Python 3.12 — required by src/, e.g. X | None syntax)!"
 	@echo "Now run: source venv/bin/activate && make install"
 
 icon:
@@ -141,6 +153,10 @@ build-app:
 	@echo "Building macOS application bundle..."
 	bash scripts/build_app.sh
 
+build-app-tester:
+	@echo "Building TESTER macOS application bundle (H1 instrumentation on)..."
+	TESTER_BUILD=1 bash scripts/build_app.sh
+
 build-dmg:
 	@echo "Creating DMG installer..."
 	bash scripts/create_dmg.sh
@@ -149,6 +165,18 @@ release:
 	@echo "Running full release pipeline..."
 	bash scripts/build_release.sh
 
+release-tester:
+	@echo "Running TESTER release pipeline (H1 instrumentation on)..."
+	TESTER_BUILD=1 bash scripts/build_release.sh
+
+verify-tester:
+	@echo "Running the autonomous tester-build acceptance harness (A1-A8)..."
+	./venv312/bin/python scripts/verify_tester.py
 
 
 
+
+
+resummarize:
+	@echo "Re-summarize transcript notes to v2 format (plan mode; add ARGS='--preview'/'--apply')..."
+	./venv312/bin/python scripts/resummarize_vault.py $(ARGS)

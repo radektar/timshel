@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from src.menu_app import MalincheMenuApp
+from src.menu_app import TimshelMenuApp
 
 
 def test_download_dependencies_starts_async_manager(monkeypatch):
@@ -30,7 +30,7 @@ def test_download_dependencies_starts_async_manager(monkeypatch):
         def close(self):
             return None
 
-    app = MalincheMenuApp.__new__(MalincheMenuApp)
+    app = TimshelMenuApp.__new__(TimshelMenuApp)
     app._download_active = False
     app._download_manager = FakeManager()
     app.status_item = SimpleNamespace(title="")
@@ -39,7 +39,7 @@ def test_download_dependencies_starts_async_manager(monkeypatch):
 
     monkeypatch.setattr("src.menu_app.DownloadWindow", FakeWindow)
 
-    MalincheMenuApp._download_dependencies(app)
+    TimshelMenuApp._download_dependencies(app)
 
     assert started["value"] is True
     assert "Downloading" in app.status_item.title

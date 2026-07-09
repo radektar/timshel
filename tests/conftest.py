@@ -39,9 +39,9 @@ import pytest
 _REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 # Fake HOME used for the whole session.
-_FAKE_HOME = Path(tempfile.mkdtemp(prefix="malinche-test-home-"))
+_FAKE_HOME = Path(tempfile.mkdtemp(prefix="timshel-test-home-"))
 (_FAKE_HOME / "Library" / "Logs").mkdir(parents=True, exist_ok=True)
-(_FAKE_HOME / "Library" / "Application Support" / "Malinche").mkdir(
+(_FAKE_HOME / "Library" / "Application Support" / "Timshel").mkdir(
     parents=True, exist_ok=True
 )
 (_FAKE_HOME / ".olympus_transcriber").mkdir(parents=True, exist_ok=True)
@@ -134,6 +134,21 @@ def _no_onboarding_modal(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _recall_index_off_by_default(monkeypatch):
+    """Recall ships enabled (Faza 5), but that would make the transcription seam try to
+    index — and load the embedding model — inside unrelated tests. Isolate the suite:
+    default the flag off. Recall's own tests drive the engine directly and never read it,
+    so they are unaffected; a test that wants the seam can re-enable it explicitly.
+    """
+    try:
+        from src.config.config import config as cfg
+
+        monkeypatch.setattr(cfg, "ENABLE_RECALL_INDEX", False, raising=False)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _clear_volume_session():
     """Reset the process-wide 'Once' registry around every test.
 
@@ -146,6 +161,20 @@ def _clear_volume_session():
     volume_session.clear()
     yield
     volume_session.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_prompts_in_flight():
+    """Reset the per-UUID prompt guard around every test.
+
+    ``file_monitor._PROMPTS_IN_FLIGHT`` is module-global; a test that leaves a
+    UUID in flight would silently suppress prompts in later tests.
+    """
+    from src import file_monitor
+
+    file_monitor._PROMPTS_IN_FLIGHT.clear()
+    yield
+    file_monitor._PROMPTS_IN_FLIGHT.clear()
 
 
 # --------------------------------------------------------------------------- #

@@ -49,8 +49,8 @@ class TestSetupAppConfig:
         content = setup_path.read_text()
         
         # Check for bundle identifier in content
-        assert "com.malinche.app" in content, \
-            "Bundle identifier should be 'com.malinche.app'"
+        assert "com.timshel.app" in content, \
+            "Bundle identifier should be 'com.timshel.app'"
         assert "CFBundleIdentifier" in content, \
             "CFBundleIdentifier should be set in plist"
 

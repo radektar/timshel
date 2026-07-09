@@ -1,7 +1,7 @@
 """Pure data model for the Insights dashboard (Direction B).
 
 The "Konstelacja" window is a thin AppKit renderer over this data: a queue of
-connections Malinche found across notes (contradictions over time, shared
+connections Timshel found across notes (contradictions over time, shared
 threads, emergent ideas), each carrying the full rationale / source notes /
 directions that the digest produces. Keeping it pure (no AppKit) makes
 navigation and keep/dismiss fully unit-testable — the view-model / renderer
@@ -181,7 +181,11 @@ class InsightDeck:
         connections: Optional[List[InsightConnection]] = None,
         *,
         triage: Optional[Dict[str, str]] = None,
+        digest_label: Optional[str] = None,
     ) -> None:
+        #: Right-side eyebrow marker, e.g. "digest 09.07 · z chmury" (redesign
+        #: A6). None → the window falls back to a generic cloud marker.
+        self.digest_label = digest_label
         self._items: List[InsightConnection] = list(connections or [])
         self._state: List[str] = []
         for conn in self._items:

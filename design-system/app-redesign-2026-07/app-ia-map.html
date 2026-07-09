@@ -1,0 +1,299 @@
+<!-- @dsCard group="Aplikacja" viewport="1280x900" name="Mapa IA — redesign 2026-07" subtitle="Krok 1 do review: powierzchnie, tryby okna, pierwsze uruchomienie, model feedbacku. Spec kierunkowy, nie ekran." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — Mapa IA (redesign 2026-07, krok 1)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: var(--text-body);
+    line-height: var(--leading-normal);
+    padding: 64px 40px 96px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; }
+
+  .eyebrow {
+    font-size: var(--text-xs); font-weight: var(--weight-medium);
+    letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+    color: var(--terracotta);
+  }
+  h1 {
+    font-family: var(--font-display); font-weight: var(--weight-medium);
+    font-size: clamp(2.2rem, 4vw, 3.2rem); line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight); margin: 14px 0 18px;
+  }
+  .lede { font-size: var(--text-lead); color: var(--ink); max-width: 62ch; }
+  .lede strong { font-weight: var(--weight-medium); }
+  .meta { margin-top: 14px; font-size: var(--text-sm); color: var(--ink-soft); max-width: 70ch; }
+
+  section { margin-top: 72px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; border-top: 1px solid var(--border-strong); padding-top: 18px; margin-bottom: 22px; }
+  .sec-num { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-soft); }
+  h2 {
+    font-family: var(--font-display); font-weight: var(--weight-medium);
+    font-size: 1.6rem; letter-spacing: var(--tracking-snug); line-height: var(--leading-snug);
+  }
+  h3 { font-family: var(--font-body); font-weight: var(--weight-bold); font-size: var(--text-base); margin-bottom: 8px; }
+  p.body { max-width: 68ch; margin-bottom: 12px; }
+  .rec {
+    background: var(--panel); border-radius: var(--radius-lg);
+    padding: 18px 22px; margin: 18px 0 22px; max-width: 76ch;
+    font-size: var(--text-lg); font-family: var(--font-display); line-height: var(--leading-snug);
+  }
+  .rec .tag { display: inline-block; font-family: var(--font-body); font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--terracotta); margin-right: 10px; }
+
+  /* chips: local / cloud */
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: var(--weight-medium); border-radius: var(--radius-chip); padding: 2px 8px; white-space: nowrap; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 999px; }
+  .chip-local { background: rgba(70,177,126,.14); color: #1E7A52; }
+  .chip-local .dot { background: var(--grad-jade); }
+  .chip-cloud { background: rgba(231,180,92,.18); color: #8A6416; }
+  .chip-cloud .dot { background: var(--grad-gold); }
+
+  /* ── surface map diagram ── */
+  .map { display: grid; gap: 12px; margin: 20px 0 8px; }
+  .map-row { display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: stretch; }
+  .map-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--ink-soft); padding-top: 14px; }
+  .surfaces { display: flex; gap: 12px; flex-wrap: wrap; }
+  .surf {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+    padding: 12px 16px; background: var(--paper); min-width: 200px; flex: 1;
+  }
+  .surf .t { font-weight: var(--weight-bold); font-size: var(--text-sm); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .surf .d { font-size: var(--text-xs); color: var(--ink-soft); margin-top: 4px; line-height: 1.5; }
+  .surf-dark { background: #16141C; border-color: #16141C; color: #FAF3E2; }
+  .surf-dark .d { color: rgba(250,243,226,.62); }
+  .surf-dashed { border-style: dashed; background: transparent; }
+  .surf-dashed .t { color: var(--ink-soft); }
+  .flow { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-soft); }
+
+  /* ── two-mode comparison ── */
+  .modes { display: grid; grid-template-columns: 170px 1fr 1fr; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); overflow: hidden; margin-top: 20px; font-size: var(--text-sm); }
+  .modes > div { padding: 12px 16px; border-top: 1px solid var(--border-base); }
+  .modes > .mh { border-top: none; padding: 14px 16px; }
+  .mh { background: #16141C; color: #FAF3E2; }
+  .mh .t { font-weight: var(--weight-bold); font-size: var(--text-base); }
+  .mh .s { font-size: var(--text-xs); color: rgba(250,243,226,.62); margin-top: 2px; }
+  .mrow-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--ink-soft); padding-top: 15px; }
+  .modes .none { color: var(--ink-soft); }
+  .modes b { font-weight: var(--weight-bold); }
+
+  /* ── plain table ── */
+  table { border-collapse: collapse; width: 100%; margin-top: 18px; font-size: var(--text-sm); }
+  th { text-align: left; font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--ink-soft); padding: 0 18px 10px 0; border-bottom: 1px solid var(--border-strong); }
+  td { padding: 12px 18px 12px 0; border-bottom: 1px solid var(--border-base); vertical-align: top; }
+  td:last-child, th:last-child { padding-right: 0; }
+  td b { font-weight: var(--weight-bold); }
+  .cut { color: var(--terracotta); font-weight: var(--weight-bold); }
+  .keep { color: #1E7A52; font-weight: var(--weight-bold); }
+
+  /* timeline */
+  .tl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+  .tl .step { border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 14px 16px; }
+  .tl .min { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--terracotta); margin-bottom: 6px; }
+  .tl .step .t { font-weight: var(--weight-bold); font-size: var(--text-sm); margin-bottom: 6px; }
+  .tl .step .d { font-size: var(--text-xs); color: var(--ink-soft); line-height: 1.55; }
+
+  ul.tight { max-width: 70ch; margin: 10px 0 0 18px; }
+  ul.tight li { margin-bottom: 8px; font-size: var(--text-sm); }
+  ul.tight li b { font-weight: var(--weight-bold); }
+
+  .footnote { margin-top: 64px; border-top: 1px solid var(--border-strong); padding-top: 16px; font-size: var(--text-sm); color: var(--ink-soft); max-width: 76ch; }
+  .footnote b { color: var(--ink); font-weight: var(--weight-bold); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header data-screen-label="Nagłówek">
+    <div class="eyebrow">Timshel · redesign aplikacji · krok 1 — do review</div>
+    <h1>Mapa architektury informacji</h1>
+    <p class="lede">Diagnoza: aplikacja pokazuje wszystko naraz — ask-bar, triage, kierunki, handoff i stopkę w jednym kadrze. Odpowiedź tej mapy: <strong>jedno okno, dwa jawne tryby, chrome należy do trybu</strong>. Każdy widok ma jedną główną akcję; reszta ujawnia się progresywnie. Miarą sukcesu jest sekcja 6 — lista tego, co zniknęło z domyślnego kadru.</p>
+    <p class="meta">Rekomendacje, nie menu opcji. Ekranów tu nie ma — powstaną po akceptacji kierunku. Faza 6 (reader) ma zarezerwowane miejsce w §7 i nic więcej.</p>
+  </header>
+
+  <section data-screen-label="1 · Mapa powierzchni">
+    <div class="sec-head"><span class="sec-num">§1</span><h2>Mapa powierzchni — co istnieje i jak się między tym chodzi</h2></div>
+
+    <div class="map">
+      <div class="map-row">
+        <div class="map-label">Korzeń · zawsze</div>
+        <div class="surfaces">
+          <div class="surf" style="flex:2">
+            <div class="t">Pasek menu <span class="chip chip-local"><span class="dot"></span>lokalnie</span></div>
+            <div class="d">Jedyny trwały punkt aplikacji. Menu: status (Spoczynek / Indeksuję 240∕1800 / Nagrywam) · Otwórz Konstelację · Zapytaj (⌥Space) · Nowy digest · Ustawienia. Status indeksowania żyje <b>tylko tutaj</b>.</div>
+          </div>
+        </div>
+      </div>
+      <div class="map-row">
+        <div class="map-label">Przelotne</div>
+        <div class="surfaces">
+          <div class="surf surf-dark" style="flex:2">
+            <div class="t">Ask-bar — overlay ⌥Space</div>
+            <div class="d">Spotlight z dowolnego miejsca; <b>nie jest</b> stałym paskiem okna. Enter → ląduje w oknie Konstelacji w trybie Pytanie. Esc → znika bez śladu. Mikrofon żyje tylko tu.</div>
+          </div>
+          <div class="surf">
+            <div class="t">Notyfikacje systemowe</div>
+            <div class="d">Tylko zdarzenia asynchroniczne: digest gotowy, indeksowanie zakończone. Klik → otwiera właściwe miejsce okna.</div>
+          </div>
+        </div>
+      </div>
+      <div class="map-row">
+        <div class="map-label">Główne okno</div>
+        <div class="surfaces">
+          <div class="surf surf-dark" style="flex:2">
+            <div class="t">Konstelacja — jedno okno, dwa tryby</div>
+            <div class="d"><b>Przegląd</b> (Podsunięte — push, domyślny) ⇄ <b>Pytanie</b> (Zapytałeś — pull). Jedna szyna, jeden czytnik, jedna gramatyka — ale stopka, nagłówek i akcje należą do trybu, nigdy do obu naraz. Szczegół w §2.</div>
+          </div>
+          <div class="surf surf-dashed">
+            <div class="t">Reader notatek — Faza 6</div>
+            <div class="d">Poza zakresem. Zarezerwowane miejsce: §7.</div>
+          </div>
+        </div>
+      </div>
+      <div class="map-row">
+        <div class="map-label">Natywne</div>
+        <div class="surfaces">
+          <div class="surf">
+            <div class="t">Wizard pierwszego biegu</div>
+            <div class="d">Dwa kroki: folder vaulta + appka do otwierania źródeł. Kończy się w tle — nie blokuje (§3).</div>
+          </div>
+          <div class="surf">
+            <div class="t">Ustawienia</div>
+            <div class="d">Natywny AppKit z tokenami (tint terakota, SF Pro, 6 px). Nie przechodzi na ciemny język Konstelacji (§5).</div>
+          </div>
+          <div class="surf">
+            <div class="t">Dialogi / alerty</div>
+            <div class="d">NSAlert, bez customowego chrome. Jedyny custom w aplikacji to Konstelacja i ask-bar.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="body" style="margin-top:16px"><span class="flow">pasek menu → okno · ⌥Space → ask-bar → okno (Pytanie) · notyfikacja → okno · karta „Zapytaj o to” → ask-bar (prefill)</span></p>
+  </section>
+
+  <section data-screen-label="2 · Push vs pull">
+    <div class="sec-head"><span class="sec-num">§2</span><h2>Push i pull — jedno okno, dwa jawne tryby</h2></div>
+    <div class="rec"><span class="tag">Rekomendacja</span>Zostaje jedno okno (decyzja „jeden dom” z briefu recall jest słuszna) — ale tryby stają się <b>jawne i wzajemnie wykluczające</b>. Blend upadł nie dlatego, że powierzchnia jest wspólna, tylko dlatego, że <b>chrome obu trybów renderował się jednocześnie</b>. Zasada: każdy piksel stopki, nagłówka i akcji należy do dokładnie jednego trybu.</div>
+
+    <div class="modes">
+      <div class="mrow-label"></div>
+      <div class="mh"><div class="t">Przegląd — „Podsunięte”</div><div class="s">push · tryb domyślny · kolejka triażu</div></div>
+      <div class="mh"><div class="t">Pytanie — „Zapytałeś”</div><div class="s">pull · wchodzi się gestem, wychodzi Esc</div></div>
+
+      <div class="mrow-label">Wejście</div>
+      <div>Otwarcie okna (pasek menu, notyfikacja o digeście). To jest stan spoczynkowy okna.</div>
+      <div>⌥Space z dowolnego miejsca · ikona ⌕ w title-barze · „Zapytaj o to” na karcie insightu (prefill zawężony do źródeł).</div>
+
+      <div class="mrow-label">Szyna</div>
+      <div>Sekcja <b>Podsunięte</b> rozwinięta: wiersze insightów. Nagłówek „Nowe 3 ⌄” z cichym filtrem (Zachowane / Odrzucone — §6). Sekcja Zapytałeś zwinięta do nagłówka z licznikiem.</div>
+      <div>Sekcja <b>Zapytałeś</b> rozwinięta: historia zapytań (pytanie + liczba fragmentów, lokalna, kasowalna). Podsunięte zwinięte do nagłówka „Podsunięte · 3 nowe”.</div>
+
+      <div class="mrow-label">Przełącznik</div>
+      <div style="grid-column: span 2;">Nagłówki sekcji szyny <b>są</b> przełącznikiem trybu. Klik zwinięty nagłówek → tryb się zmienia, chrome się wymienia. Zero osobnych zakładek, zero segmentu u góry okna. Oba nagłówki zawsze widoczne — jeden produkt, jedna szyna.</div>
+
+      <div class="mrow-label">Czytnik</div>
+      <div>Karta insightu: eyebrow typu (złoto) → teza → chipy źródeł → Dowód (zwinięty) → Kierunki.</div>
+      <div>Nagłówek = pytanie jako tytuł (nieedytowalne pole zniknęło; „ponów/edytuj” pod ⌕). Pod nim lista cytowanych fragmentów <span class="chip chip-local"><span class="dot"></span>lokalnie</span>. Abstynencja: uczciwy komunikat + poszerz / przekaż.</div>
+
+      <div class="mrow-label">Stopka</div>
+      <div><b>Zachowaj</b> (jadeit) · Odrzuć (ghost). Istnieje tylko tutaj.</div>
+      <div><b>Brak stopki triażu.</b> Jedyny przycisk pod wynikami: „✦ Zsyntetyzuj te wyniki” <span class="chip chip-cloud"><span class="dot"></span>do chmury</span> — świadoma eskalacja, jedyny LLM w przepływie.</div>
+
+      <div class="mrow-label">Wyjście</div>
+      <div>—</div>
+      <div>Esc lub klik „Podsunięte” → powrót do Przeglądu. Wynik zostaje w historii Zapytałeś.</div>
+    </div>
+
+    <p class="body" style="margin-top:18px">Historia zapytań żyje w szynie pod „Zapytałeś” — trwała między sesjami, w pełni lokalna, z cichym „wyczyść”. Synteza zapisana do vaulta zostawia trwały ślad przy wpisie historii (§4).</p>
+  </section>
+
+  <section data-screen-label="3 · Pierwsze uruchomienie">
+    <div class="sec-head"><span class="sec-num">§3</span><h2>Podróż pierwszego uruchomienia</h2></div>
+    <div class="rec"><span class="tag">Rekomendacja</span>Indeksowanie ma <b>jeden dom: menu paska menu</b>. Okno pokazuje je tylko wtedy, gdy jest otwarte i tylko jako jedną cichą linię zakresu. Żadnego okna postępu, żadnego dock-a, żadnej blokady — pytać można od minuty 0.</div>
+    <div class="tl">
+      <div class="step">
+        <div class="min">MINUTA 0</div>
+        <div class="t">Wizard → tło</div>
+        <div class="d">Dwa kroki (vault, opener) i koniec: „Indeksuję w tle — możesz już pytać: ⌥Space”. Ikona w pasku menu dostaje subtelny stan aktywności; menu pokazuje „Indeksuję 40 z 1800 · ~5 min”. Okno się nie otwiera samo.</div>
+      </div>
+      <div class="step">
+        <div class="min">MINUTA 2</div>
+        <div class="t">Częściowa gotowość</div>
+        <div class="d">⌥Space działa. Wyniki nad częściowym indeksem niosą jedną linię: „Przeszukuję 240 z 1800 notatek” <span class="chip chip-local"><span class="dot"></span>lokalnie</span>. W Przeglądzie zamiast pustki: „Pierwszy digest przygotuję po zaindeksowaniu vaulta”.</div>
+      </div>
+      <div class="step">
+        <div class="min">MINUTA 10</div>
+        <div class="t">Gotowe — jedna notyfikacja</div>
+        <div class="d">Systemowa: „Zaindeksowano 1800 notatek. Zapytaj: ⌥Space”. Klik → ask-bar. Status w menu wraca do „Spoczynek”. To jedyna notyfikacja pierwszego dnia — digest przychodzi swoim rytmem.</div>
+      </div>
+    </div>
+  </section>
+
+  <section data-screen-label="4 · Model feedbacku">
+    <div class="sec-head"><span class="sec-num">§4</span><h2>Jeden system feedbacku</h2></div>
+    <div class="rec"><span class="tag">Zasada</span>Kto zainicjował × jak trwały skutek. Użytkownik + odwracalne → <b>toast</b>. Użytkownik + trwałe → <b>klikalny ślad w miejscu skutku</b>. Aplikacja + asynchroniczne → <b>notyfikacja systemowa</b>. Nigdy dwa kanały dla jednego zdarzenia.</div>
+    <table>
+      <thead><tr><th style="width:18%">Kanał</th><th style="width:40%">Kiedy</th><th>Przykłady</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Toast</b><br><span style="color:var(--ink-soft);font-size:var(--text-xs)">w oknie · 2 s · z Cofnij</span></td>
+          <td>Skutek lokalny i odwracalny, w zasięgu wzroku.</td>
+          <td>„Zachowano — Cofnij” · „Odrzucono — Cofnij” · „Skopiowano do schowka”.</td>
+        </tr>
+        <tr>
+          <td><b>Trwały ślad</b><br><span style="color:var(--ink-soft);font-size:var(--text-xs)">klikalny · w miejscu skutku</span></td>
+          <td>Skutek trwały albo poza aplikacją. Ślad musi dać się kliknąć i musi przetrwać zamknięcie okna.</td>
+          <td>Zapis syntezy → wiersz „Zapisano: okna-waskie-gardlo.md ↗ otwórz” pod kartą <b>i</b> przy wpisie historii · handoff → „Przekazano do Claude · 14:32” na karcie insightu.</td>
+        </tr>
+        <tr>
+          <td><b>Notyfikacja</b><br><span style="color:var(--ink-soft);font-size:var(--text-xs)">systemowa · rzadka</span></td>
+          <td>Zdarzenie asynchroniczne poza uwagą użytkownika. Nigdy echo akcji, którą właśnie wykonał.</td>
+          <td>„Digest gotowy — 3 nowe połączenia” · „Zaindeksowano vault”. Klik prowadzi do właściwego miejsca.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="body" style="margin-top:16px">Granica lokalne/chmura jest częścią feedbacku: wszystko w pełni lokalne nosi cichy znacznik jadeitu <span class="chip chip-local"><span class="dot"></span>lokalnie</span>; każdy stan, w którym tekst opuszcza Maca (synteza, digest, handoff), nosi złote ✦ i jawną etykietę <span class="chip chip-cloud"><span class="dot"></span>do chmury</span> — a eskalacja „Zsyntetyzuj” jest jedynym miejscem zgody w przepływie pull.</p>
+  </section>
+
+  <section data-screen-label="5 · Język wizualny">
+    <div class="sec-head"><span class="sec-num">§5</span><h2>Jeden język wizualny</h2></div>
+    <div class="rec"><span class="tag">Rekomendacja</span><b>Jedna powierzchnia customowa, reszta natywna.</b> Konstelacja i ask-bar zostają ciemnym, editorialnym sercem produktu. Settings, wizard i dialogi <b>nie</b> przechodzą na język Konstelacji — dostają natywny AppKit z tokenami: tint terakota, promień 6 px, SF Pro, ton copy z Konstelacji. Copy: <b>całość PL</b>, wszędzie, z pełnymi diakrytykami — miks PL/EN jest gorszy niż każda z opcji osobno.</div>
+    <p class="body">Uzasadnienie: powierzchnie narzędziowe wygrywają natywnością (dostępność, klawiatura, dark/light za systemem), a ciemny custom w oknie preferencji to koszt bez zysku. Spójność niesie akcent, typografia, promienie i głos — nie kolor tła.</p>
+  </section>
+
+  <section data-screen-label="6 · Lista cięć">
+    <div class="sec-head"><span class="sec-num">§6</span><h2>Co znika z domyślnego kadru — miara sukcesu</h2></div>
+    <table>
+      <thead><tr><th style="width:28%">Element (dziś)</th><th style="width:16%">Decyzja</th><th>Dlaczego się nie bronił</th></tr></thead>
+      <tbody>
+        <tr><td>Stały ask-bar u góry okna (56 px, zawsze)</td><td class="cut">wycięty</td><td>Konkurował z czytnikiem o „co tu się robi”. Zastępuje go overlay ⌥Space + ikona ⌕ w title-barze; w trybie Pytanie zapytanie jest tytułem, nie polem.</td></tr>
+        <tr><td>Segment triażu Nowe / Zachowane / Odrzucone</td><td class="cut">schowany</td><td>Nawigacja rangi „raz na tydzień” zajmowała najwyższą półkę szyny i nie mieściła się w 236 px. Zostaje cichy filtr w nagłówku sekcji: „Nowe 3 ⌄”.</td></tr>
+        <tr><td>Stopka Zachowaj/Odrzuć pod wynikami wyszukiwania</td><td class="cut">niemożliwa</td><td>Chrome należy do trybu — stopka triażu istnieje wyłącznie w Przeglądzie. Błąd znika z definicji, nie przez if-a.</td></tr>
+        <tr><td>Pasek handoffu widoczny domyślnie</td><td class="keep">progresywny</td><td>Pojawia się dopiero, gdy ≥1 kierunek zaznaczony (intencja wyrażona). Akcje wtórne (zadanie · kalendarz · schowek) schodzą do menu przy CTA — zostaje jeden przycisk z marką.</td></tr>
+        <tr><td>„✦ Nowy insight” w title-barze</td><td class="cut">przeniesiony</td><td>Ręczny digest to akcja rzadka — żyje w menu paska menu, nie w chrome okna.</td></tr>
+        <tr><td>Mikrofon przy stałym pasku</td><td class="cut">przeniesiony</td><td>Głos to gest „myślę na głos” — żyje w overlayu ask-bara, jedynym miejscu wpisywania.</td></tr>
+        <tr><td>Licznik „połączenie 3 z 3” w title-barze</td><td class="cut">przeniesiony</td><td>To metadana kolejki, nie okna — schodzi do nagłówka sekcji Podsunięte.</td></tr>
+      </tbody>
+    </table>
+    <p class="body" style="margin-top:16px">Po cięciach każdy widok ma jedną główną akcję: Przegląd → <b>Zachowaj</b> (jadeit) · Pytanie → <b>otwórz źródło ↗</b> (obietnica soczewki), z jedyną eskalacją „✦ Zsyntetyzuj” · Synteza → <b>Zapisz do vaulta</b> (terakota, zostawia ślad).</p>
+  </section>
+
+  <section data-screen-label="7 · Rezerwa Faza 6">
+    <div class="sec-head"><span class="sec-num">§7</span><h2>Zarezerwowane miejsce: reader (Faza 6)</h2></div>
+    <p class="body">Dziś każdy cytat i chip otwiera się na zewnątrz („↗ otwórz” — granica soczewki). Mapa rezerwuje dla Fazy 6 <b>trzeci poziom czytnika</b>: podgląd fragmentu rozwijany w miejscu (wiersz wyniku → pełniejszy kontekst), bez zmiany szyny, trybów ani nawigacji. Nic w tej mapie nie zależy od tej rezerwy i nic jej nie blokuje.</p>
+  </section>
+
+  <div class="footnote">
+    <b>Status:</b> krok 1 — czekam na review kierunku. Po akceptacji: ekrany A–I w pełnych siatkach stanów (@dsCard, ../tokens.css, reuse silnika sygili), potem changelog decyzji względem implementacji. <b>Uwaga źródłowa:</b> pliki <span style="font-family:var(--font-mono)">app-redesign-brief.md</span> i <span style="font-family:var(--font-mono)">audit-2026-07-02/</span> nie dotarły do tego projektu — mapa powstała na ramie z wiadomości, briefach recall + komponenty okna i zrzutach z dogfoodu w <span style="font-family:var(--font-mono)">screenshots/</span>. Po ich dograniu zrewiduję §2–§6 względem §2 briefu i listy A–I.
+  </div>
+
+</div>
+</body>
+</html>

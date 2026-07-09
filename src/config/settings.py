@@ -1,12 +1,18 @@
 """User settings management."""
 
 import json
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from src.config.defaults import defaults
+
+# Serializes load→modify→save cycles across threads (FSEvents monitor,
+# periodic checker, UI) — without it two concurrent writers are
+# last-save-wins and silently clobber each other's changes.
+_SETTINGS_WRITE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -71,14 +77,16 @@ class UserSettings:
 
     # How clicking a note/transcript opens it: "obsidian" (deep link, default),
     # "finder" (reveal in Finder), "default" (system .md handler), or
-    # "app:<Name>" (e.g. "app:Pile"). Decouples Malinche from assuming Obsidian.
+    # "app:<Name>" (e.g. "app:Pile"). Decouples Timshel from assuming Obsidian.
     note_opener: str = "obsidian"
 
     # Local recall engine — embeddings for "ask your corpus". Local, no API key;
-    # provider/model swappable. Indexing at transcription time is opt-in for now.
+    # provider/model swappable. Recall (local search) is on by default (Faza 5).
     embed_provider: str = "fastembed"
     embed_model: str = ""  # empty -> Config default
-    enable_recall_index: bool = False
+    enable_recall_index: bool = True
+    # ONNX thread cap for embeddings; 0 = auto (half the cores, floor 1).
+    embed_threads: int = 0
 
     # UI
     show_notifications: bool = defaults.DEFAULT_SHOW_NOTIFICATIONS
@@ -90,6 +98,14 @@ class UserSettings:
     setup_stage: str = "welcome"
     index_migrated: bool = False
     legacy_migrated: bool = defaults.DEFAULT_LEGACY_MIGRATED
+
+    # Tester build: turns on the H1 instrumentation (verdict pass, metrics log,
+    # entity/dense/graph/stance synthesis channels, Opus synthesis+verdict) for
+    # BOTH the scheduled daemon digest and the "Generate digest now" menu action.
+    # Baked into a tester DMG (see setup_app.py TESTER_BUILD + bootstrap
+    # adoption). Persisted so it survives reload_config(); Config.__post_init__
+    # maps it to the runtime knobs.
+    tester_mode: bool = False
 
     def __post_init__(self) -> None:
         """Normalize types after init (e.g., JSON-loaded values)."""
@@ -123,6 +139,12 @@ class UserSettings:
                     data["legacy_migrated"] = data.pop("transrec_migrated")
                 else:
                     data.pop("transrec_migrated", None)
+                # Tolerate unknown keys: a config written by a NEWER build (an
+                # added field) must not blow up cls(**data) on a downgrade and
+                # silently reset every setting (API key, trusted volumes, paths)
+                # to defaults. Drop keys this version doesn't know.
+                known = {f.name for f in fields(cls)}
+                data = {k: v for k, v in data.items() if k in known}
                 return cls(**data)
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -134,6 +156,21 @@ class UserSettings:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def mutate(cls, fn: Callable[["UserSettings"], object]) -> "UserSettings":
+        """Atomic load → ``fn(settings)`` → save under the write lock.
+
+        The safe way to persist a change from any thread: a bare
+        load-modify-save loses concurrent writes (last save wins). Existing
+        load/modify/save call sites elsewhere should migrate to this as they
+        are touched. Returns the saved instance.
+        """
+        with _SETTINGS_WRITE_LOCK:
+            settings = cls.load()
+            fn(settings)
+            settings.save()
+            return settings
 
     def to_dict(self) -> dict:
         """Serialize settings to JSON-friendly dict."""
@@ -152,6 +189,7 @@ class UserSettings:
             "embed_provider": self.embed_provider,
             "embed_model": self.embed_model,
             "enable_recall_index": self.enable_recall_index,
+            "embed_threads": self.embed_threads,
             "show_notifications": self.show_notifications,
             "start_at_login": self.start_at_login,
             "setup_completed": self.setup_completed,
@@ -159,6 +197,7 @@ class UserSettings:
             "setup_stage": self.setup_stage,
             "index_migrated": self.index_migrated,
             "legacy_migrated": self.legacy_migrated,
+            "tester_mode": self.tester_mode,
         }
 
     def find_trusted_volume(self, uuid: str) -> Optional[TrustedVolume]:
@@ -192,7 +231,7 @@ class UserSettings:
             Path.home()
             / "Library"
             / "Application Support"
-            / "Malinche"
+            / defaults.APP_SUPPORT_DIR_NAME
             / "config.json"
         )
 

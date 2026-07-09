@@ -170,7 +170,7 @@ class SetupWizard:
         percent = int(progress * 100)
         if percent in {25, 50, 75, 100}:
             rumps.notification(
-                title="Malinche — Downloading",
+                title="Timshel — Downloading",
                 subtitle=f"{name}",
                 message=f"Progress: {percent}%",
             )
@@ -180,9 +180,9 @@ class SetupWizard:
         from src.setup.onboarding_window import show_onboarding_screen
 
         result = show_onboarding_screen(
-            title="Welcome to Malinche",
+            title="Welcome to Timshel",
             body=(
-                "Malinche automatically transcribes recordings from your voice "
+                "Timshel automatically transcribes recordings from your voice "
                 "recorder or SD card.\n\nWe'll walk you through a quick setup — "
                 "about 3–5 minutes."
             ),
@@ -193,9 +193,9 @@ class SetupWizard:
         )
         if result is None:
             result = rumps.alert(
-                title="🎙️ Welcome to Malinche!",
+                title="🎙️ Welcome to Timshel!",
                 message=(
-                    "Malinche automatically transcribes recordings from your "
+                    "Timshel automatically transcribes recordings from your "
                     "voice recorder or SD card.\n\n"
                     "We'll walk you through a quick setup.\n\n"
                     "It takes about 3-5 minutes."
@@ -262,7 +262,7 @@ class SetupWizard:
                 self._download_window.close_after(1.2)
             try:
                 rumps.notification(
-                    title="Malinche",
+                    title="Timshel",
                     subtitle="Download complete",
                     message="The transcription engine is ready.",
                 )
@@ -277,7 +277,7 @@ class SetupWizard:
                 self._download_window.update(detail=f"❌ Error: {exc}")
             try:
                 rumps.notification(
-                    title="Malinche",
+                    title="Timshel",
                     subtitle="Download failed",
                     message=str(exc),
                 )
@@ -302,12 +302,12 @@ class SetupWizard:
         response = rumps.alert(
             title="🔐 Disk access permissions",
             message=(
-                "To detect a recorder automatically, Malinche needs "
+                "To detect a recorder automatically, Timshel needs "
                 "'Full Disk Access' permission.\n\n"
                 "Steps:\n"
                 "1. Click 'Open Settings'\n"
                 "2. Unlock the lock 🔒 (admin password)\n"
-                "3. Find 'Malinche' and check ☑\n"
+                "3. Find 'Timshel' and check ☑\n"
                 "4. Return to this app\n\n"
                 "You can also skip this step and pick files manually."
             ),
@@ -342,7 +342,7 @@ class SetupWizard:
         response = show_onboarding_screen(
             title="Recording sources",
             body=(
-                "Malinche can ask you the first time each new disk is "
+                "Timshel can ask you the first time each new disk is "
                 "connected — recommended — or watch only specific disk "
                 "names you provide (e.g. LS-P1, ZOOM-H6)."
             ),
@@ -370,8 +370,8 @@ class SetupWizard:
         return int(rumps.alert(
             title="📁 Recording sources",
             message=(
-                "Where should Malinche pull recordings from?\n\n"
-                "• Ask for every new disk (recommended) — Malinche asks "
+                "Where should Timshel pull recordings from?\n\n"
+                "• Ask for every new disk (recommended) — Timshel asks "
                 "the first time a new disk is connected whether it's a "
                 "recorder. The decision is remembered.\n\n"
                 "• Specific disk names (advanced) — only volumes with the "
@@ -809,7 +809,7 @@ class SetupWizard:
         choice = show_onboarding_screen(
             title="AI summaries (optional)",
             body=(
-                "Malinche can generate titles and summaries with Claude. This "
+                "Timshel can generate titles and summaries with Claude. This "
                 "needs an Anthropic API key (~$0.01–0.05 per recording). You "
                 "can also add it later in Settings."
             ),
@@ -861,7 +861,7 @@ class SetupWizard:
         response = rumps.alert(
             title="🤖 AI summaries (optional)",
             message=(
-                "Malinche can generate intelligent summaries and titles "
+                "Timshel can generate intelligent summaries and titles "
                 "using Claude AI.\n\n"
                 "This requires an API key from anthropic.com\n"
                 "(cost ~$0.01-0.05 per transcription)\n\n"
@@ -902,10 +902,10 @@ class SetupWizard:
         from src.setup.onboarding_window import show_onboarding_screen
 
         result = show_onboarding_screen(
-            title="Malinche is ready",
+            title="Timshel is ready",
             body=(
                 "Setup complete. Connect your voice recorder or SD card and "
-                "Malinche transcribes automatically.\n\nThe icon lives in the "
+                "Timshel transcribes automatically.\n\nThe icon lives in the "
                 "menu bar at the top of the screen. Happy transcribing!"
             ),
             primary="Get started",
@@ -914,10 +914,10 @@ class SetupWizard:
         )
         if result is None:
             rumps.alert(
-                title="✅ Malinche is ready!",
+                title="✅ Timshel is ready!",
                 message=(
                     "Setup complete.\n\n"
-                    "Connect your voice recorder or SD card and Malinche "
+                    "Connect your voice recorder or SD card and Timshel "
                     "will process your recordings automatically.\n\n"
                     "The 🎙️ icon appears in the menu bar (top of the screen).\n\n"
                     "Happy transcribing!"

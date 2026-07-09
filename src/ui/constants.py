@@ -5,14 +5,14 @@ from src import __version__
 # Application metadata. Single source of truth is ``src.__version__``; the bundle
 # literal in ``setup_app.py`` is kept in lock-step by ``tests/test_versions_sync``.
 APP_VERSION = __version__
-APP_NAME = "Malinche"
-APP_AUTHOR = "Malinche Team"
-APP_WEBSITE = "https://malinche.app"
-APP_GITHUB = "https://github.com/radektar/malinche"
+APP_NAME = "Timshel"
+APP_AUTHOR = "Timshel Team"
+APP_WEBSITE = "https://timshel.app"
+APP_GITHUB = "https://github.com/radektar/timshel"
 
 # UI texts dictionary
 TEXTS = {
-    "settings_title": "Malinche Settings",
+    "settings_title": "Timshel Settings",
     "settings_message": "Configure output folder, language, and transcription model.",
     "wizard_basic_title": "Basic configuration",
     "wizard_basic_message": "Configure output folder, language, and transcription model.",

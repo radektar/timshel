@@ -48,7 +48,7 @@ class DependencyDownloader:
         """
         self.progress_callback = progress_callback
         self.support_dir = (
-            Path.home() / "Library" / "Application Support" / "Malinche"
+            Path.home() / "Library" / "Application Support" / "Timshel"
         )
         self.bin_dir = self.support_dir / "bin"
         self.models_dir = self.support_dir / "models"
@@ -479,7 +479,7 @@ class DependencyDownloader:
                 )
 
                 # Przygotuj headers
-                headers = {"User-Agent": "Malinche/2.0.0 (macOS; ARM64)"}
+                headers = {"User-Agent": "Timshel/2.0.0 (macOS; ARM64)"}
                 if resume_from > 0:
                     headers["Range"] = f"bytes={resume_from}-"
                     logger.info(f"Wznawianie pobierania od bajtu {resume_from}")

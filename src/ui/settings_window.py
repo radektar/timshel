@@ -2,7 +2,7 @@
 
 External API kept stable: ``show_settings_window(callbacks=None) -> bool``.
 The optional ``callbacks`` dict allows the Disks and Maintenance tabs to
-trigger actions that live on ``MalincheMenuApp`` (reset memory, repair
+trigger actions that live on ``TimshelMenuApp`` (reset memory, repair
 whisper-cli, open log viewer, review mounted volumes, etc.). When called
 without callbacks, those buttons are disabled.
 """
@@ -153,7 +153,7 @@ try:
     class _SettingsWindow(NSWindow):
         """NSWindow that routes ⌘X/⌘C/⌘V/⌘A to the first responder.
 
-        Malinche runs as a menu-bar (LSUIElement) app with no application Edit
+        Timshel runs as a menu-bar (LSUIElement) app with no application Edit
         menu, so the standard editing key-equivalents are never translated into
         ``cut:``/``copy:``/``paste:``/``selectAll:`` — pressing ⌘V in the API-key
         field did nothing. Forwarding them down the responder chain here (where
@@ -233,7 +233,7 @@ try:
                 ),
                 is_icloud_check=lambda p: is_icloud_synced(Path(p)),
                 title="Choose output folder",
-                message="Pick a folder where Malinche should save transcripts.",
+                message="Pick a folder where Timshel should save transcripts.",
             )
             if picked:
                 self.state["selected_folder"] = picked
@@ -467,7 +467,7 @@ def _build_transcription_section(state):
     )
     note = _note(
         "Get a key at console.anthropic.com → Settings → API keys. Without a "
-        "key, Malinche uses filename-based titles and skips AI summaries.",
+        "key, Timshel uses filename-based titles and skips AI summaries.",
         height=44,
     )
     return _section([(card, ch), note])
@@ -511,6 +511,73 @@ def _build_disks_section(settings, state, callbacks, delegate):
     return _section([(list_card, lh), (action_card, ah), note])
 
 
+def _tinted_block(title, body, hex_accent, hex_title, height):
+    """A rounded, tinted block (redesign H3 — the privacy contract cards)."""
+    from AppKit import NSColor, NSFont, NSTextField
+    from Foundation import NSMakeRect
+
+    from src.ui import theme
+
+    def _col(hexc, a=1.0):
+        r, g, b = theme._hex_to_rgb(hexc)
+        return NSColor.colorWithRed_green_blue_alpha_(r, g, b, a)
+
+    width = _content_width()
+    block = _SettingsFlippedView.alloc().initWithFrame_(
+        NSMakeRect(0, 0, width, height)
+    )
+    block.setWantsLayer_(True)
+    if block.layer() is not None:
+        block.layer().setCornerRadius_(10.0)
+        block.layer().setBackgroundColor_(_col(hex_accent, 0.10).CGColor())
+        block.layer().setBorderWidth_(1.0)
+        block.layer().setBorderColor_(_col(hex_accent, 0.35).CGColor())
+
+    t = NSTextField.labelWithString_(title)
+    t.setTextColor_(_col(hex_title))
+    t.setFont_(NSFont.systemFontOfSize_weight_(11.5, 0.23))  # ~medium
+    t.setFrame_(NSMakeRect(14, 12, width - 28, 15))
+    block.addSubview_(t)
+
+    b = NSTextField.alloc().initWithFrame_(
+        NSMakeRect(14, 33, width - 28, height - 43)
+    )
+    b.setStringValue_(body)
+    b.setBezeled_(False)
+    b.setDrawsBackground_(False)
+    b.setEditable_(False)
+    b.setSelectable_(False)
+    b.setTextColor_(NSColor.labelColor())
+    b.cell().setWraps_(True)
+    b.setFont_(NSFont.systemFontOfSize_(12.0))
+    block.addSubview_(b)
+    return block, height
+
+
+def _build_privacy_section(state):
+    """Prywatność (redesign H3) — the product contract as a standing element.
+
+    Jade = what always stays local; gold = what leaves for the cloud, and only
+    on the user's explicit gesture. Copy per the handoff (PL).
+    """
+    jade = _tinted_block(
+        "ZAWSZE LOKALNIE",
+        "Nagrania, transkrypcje, indeks wyszukiwania, wyszukiwanie i historia "
+        "zapytań nigdy nie opuszczają tego Maca.",
+        "#46B17E", "#1E7A52", 78,
+    )
+    gold = _tinted_block(
+        "✦ DO CHMURY — TYLKO NA TWÓJ GEST",
+        "Digest połączeń, synteza wyników i handoff do Claude/ChatGPT wysyłają "
+        "wyłącznie dopasowane fragmenty — i tylko gdy sam to uruchomisz.",
+        "#D6B033", "#8A6D1C", 78,
+    )
+    note = _note(
+        "Klucz API, model i rytm digestu ustawisz w zakładce Transcription."
+    )
+    return _section([jade, gold, note])
+
+
 def _build_maintenance_section(state, callbacks, delegate):
     from AppKit import NSButton
     from Foundation import NSMakeRect
@@ -530,7 +597,7 @@ def _build_maintenance_section(state, callbacks, delegate):
         ),
         ("Open logs", "open_logs", "openLogsClicked:", "Open the in-app log viewer."),
         (
-            "About Malinche",
+            "About Timshel",
             "show_about",
             "showAboutClicked:",
             "Version, credits, links.",
@@ -613,7 +680,7 @@ def _show_native_settings_window(
         NSBackingStoreBuffered,
         False,
     )
-    window.setTitle_("Malinche Settings")
+    window.setTitle_("Timshel Settings")
     window.center()
     # Python owns the window's lifetime; without this AppKit also releases it on
     # close, and the double-release segfaults in the autorelease-pool drain
@@ -663,6 +730,11 @@ def _show_native_settings_window(
             "Disks",
             "externaldrive",
             lambda: _build_disks_section(settings, state, callbacks, delegate),
+        ),
+        (
+            "Privacy",
+            "lock.shield",
+            lambda: _build_privacy_section(state),
         ),
         (
             "Maintenance",
@@ -750,8 +822,8 @@ def _show_native_settings_window(
                 rumps.alert(
                     title="Launch at login unavailable",
                     message=(
-                        "Autostart requires Malinche to be installed as an "
-                        "app bundle (drag Malinche.app to /Applications)."
+                        "Autostart requires Timshel to be installed as an "
+                        "app bundle (drag Timshel.app to /Applications)."
                     ),
                     ok="OK",
                 )

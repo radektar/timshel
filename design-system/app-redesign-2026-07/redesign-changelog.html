@@ -1,0 +1,117 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1100" name="Changelog decyzji — spec dla developmentu" subtitle="Każda różnica między beta.17 a redesignem, z odesłaniem do ekranu-specu A–I. To jest lista zmian do portu AppKit." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — Changelog redesignu 2026-07</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<style>
+  .st { display: inline-block; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .04em; border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+  .st-cut { background: rgba(194,64,16,.12); color: #9A3009; }
+  .st-move { background: var(--panel-2); color: var(--ink-soft); }
+  .st-new { background: rgba(70,177,126,.14); color: #1E7A52; }
+  .st-keep { background: transparent; color: var(--ink-soft); border: 1px solid var(--border-base); }
+  .ref { font-family: var(--font-mono); font-size: 11.5px; color: var(--terracotta); white-space: nowrap; }
+  table.redline td:first-child { font-weight: 400; }
+  table.redline td b { font-weight: 700; }
+</style>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign 2026-07 · krok 3 — spec dla developmentu</div>
+    <h1>Changelog decyzji względem beta.17</h1>
+    <p class="lede">Każda różnica między implementacją z dogfoodu a redesignem. Odesłania <span class="ref">A1–I4</span> wskazują sekcję ekranu-specu (<span style="font-family:var(--font-mono);font-size:.85em">redesign-[a–i]-*.html</span>). Zasada nadrzędna: hierarchia zamiast kompletności — jedna główna rzecz na ekran, chrome należy do trybu.</p>
+  </header>
+
+  <section class="sec" data-screen-label="Okno i tryby">
+    <div class="sec-bar"><span class="sec-id">1</span><h2>Okno i tryby</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th style="width:24%">beta.17</th><th style="width:38%">Redesign</th><th style="width:12%">Zmiana</th><th>Spec</th></tr></thead>
+      <tbody>
+        <tr><td>Push i pull zmieszane w jednym kadrze; oba konteksty rozwinięte naraz</td><td><b>Dwa jawne, wykluczające się tryby</b> (Przegląd ⇄ Pytanie); chrome renderuje się wyłącznie per tryb</td><td><span class="st st-new">nowe</span></td><td><span class="ref">A1 · B1 · B5</span></td></tr>
+        <tr><td>Sekcje ZAPYTAŁEŚ + PODSUNIĘTE stale rozwinięte w szynie</td><td>Aktywna sekcja rozwinięta, druga zwinięta do nagłówka-przełącznika z licznikiem</td><td><span class="st st-new">nowe</span></td><td><span class="ref">B5</span></td></tr>
+        <tr><td>Stały ask-bar u góry okna (56 px)</td><td><b>Usunięty z chrome.</b> Overlay ⌥Space / ⌕ w title-barze; pytanie = tytuł czytnika</td><td><span class="st st-cut">wycięte</span></td><td><span class="ref">C1 · B3</span></td></tr>
+        <tr><td>„✦ Nowy insight” w title-barze</td><td>Do menu paska menu („Nowy digest”, ze znacznikiem ✦)</td><td><span class="st st-move">przeniesione</span></td><td><span class="ref">F2</span></td></tr>
+        <tr><td>Licznik „połączenie 3 z 3” w title-barze</td><td>Do środka stopki triażu („1 z 3”, mono, wyciszony)</td><td><span class="st st-move">przeniesione</span></td><td><span class="ref">A1</span></td></tr>
+        <tr><td>Wymiary: szyna 236 px, stopka 46, handoff 48, przyciski 30–32, okno ~62%</td><td>Bez zmian — stałe zostają</td><td><span class="st st-keep">bez zmian</span></td><td><span class="ref">A6</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sec" data-screen-label="Triage i stopka">
+    <div class="sec-bar"><span class="sec-id">2</span><h2>Triage i stopka</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th style="width:24%">beta.17</th><th style="width:38%">Redesign</th><th style="width:12%">Zmiana</th><th>Spec</th></tr></thead>
+      <tbody>
+        <tr><td>Segment Nowe/Zachowane/Odrzucone jako 3 przyciski nad szyną</td><td><b>Filtr w nagłówku sekcji</b> („Nowe 3 ⌄” → NSMenu). Model 3 widoków bez zmian, Odrzuć odwracalny</td><td><span class="st st-cut">schowane</span></td><td><span class="ref">A3</span></td></tr>
+        <tr><td>Stopka Zachowaj/Odrzuć renderowana zawsze — także pod wynikami wyszukiwania</td><td>Stopka istnieje <b>tylko w Przeglądzie</b> — błąd znika z architektury, nie przez warunek</td><td><span class="st st-cut">per tryb</span></td><td><span class="ref">A4 · B1</span></td></tr>
+        <tr><td>Zachowaj jadeitowy (dobrze), stany niespójne z językiem</td><td>Pełna siatka default/hover/pressed + flash 180 ms; etykiety stałe we wszystkich widokach</td><td><span class="st st-new">spec</span></td><td><span class="ref">A4</span></td></tr>
+        <tr><td>Stany puste — brak projektu</td><td>Trzy stany puste (sygil + tytuł + zdanie), bez przycisków</td><td><span class="st st-new">nowe</span></td><td><span class="ref">A5</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sec" data-screen-label="Recall">
+    <div class="sec-bar"><span class="sec-id">3</span><h2>Recall (pull)</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th style="width:24%">beta.17</th><th style="width:38%">Redesign</th><th style="width:12%">Zmiana</th><th>Spec</th></tr></thead>
+      <tbody>
+        <tr><td>Zapytanie w stałym polu edycyjnym nad oknem</td><td>Pytanie jako tytuł (display 24 px); „ponów · edytuj” w hoverze nagłówka</td><td><span class="st st-new">nowe</span></td><td><span class="ref">B3</span></td></tr>
+        <tr><td>Trzy równorzędne akcje pod wynikami (Zsyntetyzuj · poszerz · → Claude)</td><td><b>Jedna akcja:</b> „Zsyntetyzuj” ze znacznikiem „do chmury”; poszerz/przekaż istnieją tylko w abstynencji</td><td><span class="st st-cut">wycięte 2</span></td><td><span class="ref">B1 · B4</span></td></tr>
+        <tr><td>Brak oznaczenia lokalności wyników</td><td>Znacznik jadeitowy „lokalnie” w eyebrow; granica lokalne/chmura jawna wszędzie</td><td><span class="st st-new">nowe</span></td><td><span class="ref">B1 · H3</span></td></tr>
+        <tr><td>Zgoda na syntezę — brak (przycisk bez informacji)</td><td>Hover odsłania zakres: „4 fragmenty opuszczą Maca”; w toku: status + Zatrzymaj</td><td><span class="st st-new">nowe</span></td><td><span class="ref">D1</span></td></tr>
+        <tr><td>Synteza bez zapisu / ślad nieprojektowany</td><td>Zapisz do vaulta (primary) → trwały ślad podwójny (karta + historia); błąd w miejscu, nie NSAlert</td><td><span class="st st-new">nowe</span></td><td><span class="ref">D3 · D4</span></td></tr>
+        <tr><td>Historia zapytań — tylko sesja bieżąca w szynie</td><td>Historia trwała między sesjami, lokalna, z „wyczyść”; wpisy niosą ślady syntez</td><td><span class="st st-new">nowe</span></td><td><span class="ref">B3</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sec" data-screen-label="Handoff">
+    <div class="sec-bar"><span class="sec-id">4</span><h2>Kierunki i handoff</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th style="width:24%">beta.17</th><th style="width:38%">Redesign</th><th style="width:12%">Zmiana</th><th>Spec</th></tr></thead>
+      <tbody>
+        <tr><td>Checkbox wyśrodkowany względem wiersza, pusty „znika”</td><td>16 px, border 1,5 <b>do pierwszej linii tekstu</b> (top + 2 px); pełna siatka stanów</td><td><span class="st st-new">spec</span></td><td><span class="ref">E1</span></td></tr>
+        <tr><td>Pasek handoffu z CTA + caret + 3 ikony naraz</td><td>Pasek pojawia się przy ≥1 zaznaczonym; <b>ikony wtórne → menu ⋯</b>; jeden split-CTA z marką</td><td><span class="st st-cut">schowane</span></td><td><span class="ref">E2 · E3</span></td></tr>
+        <tr><td>Handoff bez oznaczenia wyjścia do chmury</td><td>Znacznik ✦ na pasku; po handoffie złoty trwały ślad „Przekazano do… ↗”</td><td><span class="st st-new">nowe</span></td><td><span class="ref">E2 · E4</span></td></tr>
+        <tr><td>Gemini w switcherze</td><td>Tylko Claude + ChatGPT (decyzja z briefu komponentów — bez prefill-URL)</td><td><span class="st st-keep">bez zmian</span></td><td><span class="ref">E3</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sec" data-screen-label="Powierzchnie systemowe">
+    <div class="sec-bar"><span class="sec-id">5</span><h2>Pasek menu, onboarding, ustawienia, feedback</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th style="width:24%">beta.17</th><th style="width:38%">Redesign</th><th style="width:12%">Zmiana</th><th>Spec</th></tr></thead>
+      <tbody>
+        <tr><td>Brak sygnału indeksowania przy pierwszym starcie</td><td>Status ma jeden dom: menu paska menu (postęp + szacunek); okno — jedna linia zakresu; koniec = jedna notyfikacja</td><td><span class="st st-new">nowe</span></td><td><span class="ref">F2 · G2 · B4</span></td></tr>
+        <tr><td>Wizard/Settings wizualnie oderwane od Konstelacji</td><td><b>Jedna powierzchnia customowa</b> (Konstelacja + ask-bar); wizard/ustawienia/dialogi natywne z tokenami (tint terakota, radius 6)</td><td><span class="st st-new">zasada</span></td><td><span class="ref">G1 · H1–H4</span></td></tr>
+        <tr><td>Feedback ad hoc (flash w kodzie, brak zasad)</td><td>Jedna zasada: toast / trwały ślad / notyfikacja; mapa wszystkich zdarzeń z kanałami</td><td><span class="st st-new">nowe</span></td><td><span class="ref">I1–I4</span></td></tr>
+        <tr><td>Copy miks PL/EN w powierzchniach natywnych</td><td>Całość PL, pełne diakrytyki w każdym foncie i wadze</td><td><span class="st st-new">zasada</span></td><td><span class="ref">mapa IA §5</span></td></tr>
+        <tr><td>Reader notatek (Faza 6)</td><td>Poza zakresem; zarezerwowany trzeci poziom czytnika (podgląd w miejscu), nawigacja bez zmian</td><td><span class="st st-keep">rezerwa</span></td><td><span class="ref">mapa IA §7</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sec" data-screen-label="Role akcentów">
+    <div class="sec-bar"><span class="sec-id">6</span><h2>Role akcentów — egzekwowane twardo</h2></div>
+    <table class="redline" style="max-width:1250px">
+      <thead><tr><th>Kolor</th><th>Rola</th><th>Wystąpienia</th></tr></thead>
+      <tbody>
+        <tr><td><b>Terakota</b> <code>#C24010 / #D9542A</code></td><td>akcja użytkownika</td><td>CTA, split-button, checkbox zaznaczony, aktywny wpis pull, fokus ask-bara, „↗ otwórz” w hoverze, Zapisz do vaulta</td></tr>
+        <tr><td><b>Jadeit</b> <code>#46B17E / #8BE0B5</code></td><td>lokalne / prywatne / wraca do Ciebie</td><td>Zachowaj, znacznik „lokalnie”, banner indeksu, ślad zapisu, blok „Zawsze lokalnie”</td></tr>
+        <tr><td><b>Złoto</b> <code>#D6B033 / #F4DD8E</code></td><td>insight / synteza / tekst wychodzi do chmury</td><td>sygile, pasek aktywnego insightu, eyebrow typu, daty wyników, „✦ do chmury”, ślad handoffu, licznik nowych</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b>Test:</b> jeśli element jest akcją — terakota; jeśli mówi „to zostaje u Ciebie” — jadeit; jeśli dotyczy insightu albo wyjścia tekstu do chmury — złoto. Element, który nie pasuje do żadnej roli, zostaje neutralny.</div>
+  </section>
+
+  <div class="foot"><b>Zakres portu:</b> ekrany <span style="font-family:var(--font-mono)">redesign-a…i</span> zastępują <span style="font-family:var(--font-mono)">insights-window-components-redesign.html</span> i <span style="font-family:var(--font-mono)">recall-window-extension.html</span> jako spec (tamte → Zarchiwizowane po review). Logika triażu, silnik sygili (<span style="font-family:var(--font-mono)">_SigilView</span>), transkrypcja i opener — bez zmian. Fonty → SF Pro / SF Pro Text.</div>
+
+</div>
+</body>
+</html>

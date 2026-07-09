@@ -210,7 +210,7 @@ def show_onboarding_screen(
         NSBackingStoreBuffered,
         False,
     )
-    win.setTitle_("Malinche Setup")
+    win.setTitle_("Timshel Setup")
     win.center()
     win.setReleasedWhenClosed_(False)
     delegate.window = win

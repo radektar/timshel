@@ -1,4 +1,4 @@
-"""Malinche design system — tokens and AppKit factory helpers.
+"""Timshel design system — tokens and AppKit factory helpers.
 
 Phase 1 of the L4 UI redesign (see ``Docs/UI-REDESIGN-L4-PLAN.md``). One place
 for spacing, type scale, accent, SF Symbols and vibrancy, so every window reads

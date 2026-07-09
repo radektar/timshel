@@ -155,6 +155,35 @@ def _set_digest_ready(transcriber: object, path: Path) -> None:
             logger.debug("could not set digest_ready: %s", exc)
 
 
+def _record_digest_metrics(
+    synthesizer, candidates, connections, path, verifier=None, verdict_dropped=0
+) -> None:
+    """Append the per-digest cost + coverage record. Best-effort, never raises.
+
+    ``path`` may be ``None`` (paid run that wrote no digest — synthesis found
+    nothing, or verdict dropped everything). ``verifier`` is passed only when a
+    verdict actually completed; ``verdict_dropped`` is the real number removed
+    by :func:`~src.connections.verdict.apply_verdicts` (threaded in, not
+    re-derived, so the ledger can never disagree with the digest).
+    """
+    from src.connections.insight_metrics import record_digest_metrics
+
+    record_digest_metrics(
+        model=getattr(synthesizer, "model", ""),
+        usage=getattr(synthesizer, "last_usage", None),
+        candidates=len(candidates.notes),
+        connections=len(connections),
+        connection_types=[c.type for c in connections],
+        digest=path.name if path is not None else "",
+        tester_mode=bool(getattr(config, "PROTOTYPE_TESTER_MODE", False)),
+        verdict_model=getattr(verifier, "model", "") if verifier is not None else "",
+        verdict_usage=(
+            getattr(verifier, "last_usage", None) if verifier is not None else None
+        ),
+        verdict_dropped=verdict_dropped,
+    )
+
+
 def run_digest_if_due(
     transcriber: object = None, force: bool = False
 ) -> Optional[Path]:
@@ -195,6 +224,10 @@ def run_digest_if_due(
             scheduler.last_digest_at,
             dismissals,
             inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
+            inject_entities=config.SYNTHESIS_ENTITY_COUNT,
+            inject_dense=config.SYNTHESIS_DENSE_COUNT,
+            inject_graph=config.SYNTHESIS_GRAPH_COUNT,
+            inject_stance=config.SYNTHESIS_STANCE_COUNT,
         )
         if len(candidates.notes) < 2:
             logger.info("synthesis: fewer than 2 candidate notes, skipping")
@@ -222,14 +255,87 @@ def run_digest_if_due(
             if len(c.notes) >= 2 and all(b in known for b in c.notes)
         ]
         if not connections:
+            # Synthesis ran and was PAID for but produced nothing — a real
+            # H1/H4 data point (a paid run that yielded zero connections), so
+            # record it, exactly like the verdict-all-dropped branch below.
             logger.info("synthesis: no genuine connections this run")
-            scheduler.mark_ran(now)  # reset weekly clock; write nothing
+            scheduler.mark_ran(now)  # reset weekly clock; write no digest
+            _record_digest_metrics(synthesizer, candidates, [], None)
+            return None
+
+        # Verdict pass (prototype): verify the proposed connections against
+        # fuller note text BEFORE anything is written, so the digest, the
+        # sidecar and the action instrument only ever see survivors. Fail
+        # OPEN on any recoverable problem — verification must never lose a
+        # digest to an API hiccup.
+        verdict_verifier = None  # set only when a verdict actually completed
+        verdict_dropped = 0
+        if getattr(config, "VERDICT_ENABLED", False):
+            from src.connections.verdict import apply_verdicts, get_verifier
+
+            verifier = get_verifier()
+            if verifier is not None:
+                try:
+                    verdicts = verifier.verify(
+                        connections,
+                        {n.basename: n for n in candidates.notes},
+                        language,
+                    )
+                except APIBillingError as exc:
+                    disable_ai = getattr(transcriber, "_disable_ai", None)
+                    if callable(disable_ai):
+                        disable_ai("billing", exc)
+                    return None
+                # verify() returns None on a recoverable error (fail open): keep
+                # all, and do NOT stamp a verdict model/cost onto the ledger — a
+                # verdict that never completed must not read as one that ran clean.
+                if verdicts is not None:
+                    kept = apply_verdicts(connections, verdicts)
+                    verdict_dropped = len(connections) - len(kept)
+                    if verdict_dropped:
+                        logger.info(
+                            "verdict: dropped %d/%d connections",
+                            verdict_dropped,
+                            len(connections),
+                        )
+                    connections = kept
+                    verdict_verifier = verifier
+
+        if not connections:
+            # Every proposal died in verification — a legitimate, PAID outcome:
+            # record the metrics (H1/H4 data point), reset the clock, write nothing.
+            logger.info("verdict: no connections survived verification")
+            scheduler.mark_ran(now)
+            _record_digest_metrics(
+                synthesizer,
+                candidates,
+                [],
+                None,
+                verifier=verdict_verifier,
+                verdict_dropped=verdict_dropped,
+            )
             return None
 
         path, conn_meta = write_digest_note(connections, len(candidates.notes))
         dismissals.record_digest(path, conn_meta)
         scheduler.mark_ran(now, path)
+        _record_digest_metrics(
+            synthesizer,
+            candidates,
+            connections,
+            path,
+            verifier=verdict_verifier,
+            verdict_dropped=verdict_dropped,
+        )
         _set_digest_ready(transcriber, path)
         return path
     finally:
+        # Bound the _tokenize LRU's lifetime to one digest pass — otherwise it
+        # pins up to 8192 note texts in the resident daemon until it cycles.
+        try:
+            from src.connections.candidate_assembly import clear_tokenize_cache
+
+            clear_tokenize_cache()
+        except Exception:  # noqa: BLE001 - best effort, never disturb the tick
+            pass
         _release_digest_lock(lock_fd)

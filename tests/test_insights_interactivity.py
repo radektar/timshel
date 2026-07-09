@@ -45,7 +45,10 @@ def test_note_chip_click_opens_that_note(monkeypatch):
     assert opened["name"] == names[0]
 
 
-def test_transcript_row_click_opens_that_transcript():
+def test_recent_transcripts_section_is_cut():
+    """The 'Ostatnie transkrypty' rail section was cut in the redesign — no rows
+    are built regardless of the callback, so _recent_paths stays empty and the
+    (kept, no-op) handler never opens anything."""
     opened = {}
     recents = [
         {"label": "A", "path": Path("/vault/A.md")},
@@ -57,9 +60,9 @@ def test_transcript_row_click_opens_that_transcript():
             "open_transcript": lambda p: opened.setdefault("path", p),
         }
     )
-    assert ctrl._recent_paths == [Path("/vault/A.md"), Path("/vault/B.md")]
-    ctrl.transcriptClicked_(_Sender(1))
-    assert opened["path"] == Path("/vault/B.md")
+    assert ctrl._recent_paths == []
+    ctrl.transcriptClicked_(_Sender(1))  # no rows → no-op
+    assert "path" not in opened
 
 
 def test_unwired_callback_click_is_silent():

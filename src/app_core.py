@@ -1,4 +1,4 @@
-"""Core application orchestrator for Malinche."""
+"""Core application orchestrator for Timshel."""
 
 import time
 import signal
@@ -12,7 +12,7 @@ from src.file_monitor import FileMonitor
 from src.app_status import AppStatus, AppState
 
 
-class MalincheTranscriber:
+class TimshelTranscriber:
     """Main application orchestrator.
 
     Manages the lifecycle of the transcriber daemon, coordinating
@@ -73,6 +73,16 @@ class MalincheTranscriber:
         if self.transcriber is None:
             raise RuntimeError("Transcriber not started yet")
         return self.transcriber.import_audio_file(source)
+
+    def import_text_file(self, source) -> bool:
+        """Import an already-transcribed text file (txt/md/vtt) as a note.
+
+        Forwards to the underlying :class:`Transcriber`. Raises if the daemon
+        has not finished starting (no transcriber yet).
+        """
+        if self.transcriber is None:
+            raise RuntimeError("Transcriber not started yet")
+        return self.transcriber.import_text_file(source)
 
     def reload_ai_config(self) -> None:
         """Re-read AI config live after a settings change.
@@ -164,7 +174,7 @@ class MalincheTranscriber:
     def start(self):
         """Start the transcriber daemon."""
         logger.info("=" * 60)
-        logger.info("🚀 Malinche starting...")
+        logger.info("🚀 Timshel starting...")
         logger.info("=" * 60)
 
         # Log configuration
@@ -175,7 +185,7 @@ class MalincheTranscriber:
         # Log TRANSCRIBE_DIR source (from config, which was migrated from ENV if needed)
         logger.info(
             f"ℹ️  TRANSCRIBE_DIR: {config.TRANSCRIBE_DIR} "
-            f"(set MALINCHE_TRANSCRIBE_DIR env var and restart to change)"
+            f"(set TIMSHEL_TRANSCRIBE_DIR env var and restart to change)"
         )
         
         # Ensure transcription directory exists
@@ -194,7 +204,7 @@ class MalincheTranscriber:
                 exc_info=True
             )
             logger.error(
-                "Please ensure MALINCHE_TRANSCRIBE_DIR points to a valid, "
+                "Please ensure TIMSHEL_TRANSCRIBE_DIR points to a valid, "
                 "accessible directory (same vault path on all computers to avoid duplicates)"
             )
             raise
@@ -279,6 +289,15 @@ class MalincheTranscriber:
         # Stop running flag
         self.running = False
         self.state.status = AppStatus.IDLE
+
+        # Kill an in-flight whisper before anything else: its process group
+        # would otherwise outlive us (timeout enforcement dies with this
+        # process, flock is kernel-released on exit → orphan + double run).
+        if self.transcriber:
+            try:
+                self.transcriber.stop()
+            except Exception as e:  # noqa: BLE001 — shutdown must proceed
+                logger.error(f"Error stopping transcriber: {e}")
 
         # Stop file monitor
         if self.monitor:

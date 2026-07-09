@@ -1,5 +1,6 @@
-"""Configuration module for Malinche (backward compatible wrapper)."""
+"""Configuration module for Timshel (backward compatible wrapper)."""
 
+import os
 import shutil
 from pathlib import Path
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from src.config.defaults import defaults
 
 @dataclass
 class Config:
-    """Backward-compatible configuration wrapper for Malinche.
+    """Backward-compatible configuration wrapper for Timshel.
 
     This class maintains the old Config interface while using UserSettings
     internally. This allows existing code to continue working while we
@@ -94,6 +95,22 @@ class Config:
     MAX_TAGGER_SUMMARY_CHARS: int = 3000
     MAX_TAGGER_TRANSCRIPT_CHARS: int = 1500
 
+    # Personal vocabulary (canonical terms harvested from the vault; grows
+    # with use — see src/vocabulary.py). Feeds whisper-cli --prompt and the
+    # summarizer's KNOWN TERMS block so proper names survive transcription.
+    VOCABULARY_ENABLED: bool = True
+    # Feed the glossary to whisper-cli as an initial prompt (separately
+    # switchable: it biases *decoding*, the riskier of the two levels).
+    WHISPER_GLOSSARY_ENABLED: bool = True
+    # Caps: prompt-block terms for the summarizer / chars for whisper's
+    # initial prompt (whisper reads ~224 tokens of prompt; ~600 chars of
+    # Polish names stays safely under).
+    VOCABULARY_MAX_PROMPT_TERMS: int = 60
+    VOCABULARY_WHISPER_MAX_CHARS: int = 600
+    # A bare capitalised-run entity must appear in at least this many notes
+    # before it counts as "confirmed" (wikilinked/curated terms skip this).
+    VOCABULARY_MIN_ENTITY_NOTES: int = 2
+
     # Connection synthesis ("Zestawianie") configuration
     ENABLE_CONNECTION_SYNTHESIS: bool = True
     # Connected LLM for the Insights action handoff (claude | chatgpt).
@@ -104,6 +121,13 @@ class Config:
     LLM_MODEL_TAGS: Optional[str] = None
     LLM_MODEL_SYNTHESIS: Optional[str] = None
     LLM_MODEL_JUDGE: Optional[str] = None
+    # Results-synthesis: the one LLM in the recall (pull) path — the explicit
+    # "synthesize these results" escalation. Independently swappable per the plan.
+    LLM_MODEL_RESULTS_SYNTHESIS: Optional[str] = None
+    # Verdict pass (magic-insights prototype): verifies proposed connections
+    # against fuller note text before the digest is written. Independently
+    # swappable so the cascade can run synthesis and verdict on different models.
+    LLM_MODEL_VERDICT: Optional[str] = None
     # Candidate-assembly + synthesis budgets (bound the prompt regardless of corpus size).
     MAX_SYNTHESIS_NOTE_CHARS: int = 1200
     MAX_SYNTHESIS_NOTES: int = 25
@@ -111,18 +135,59 @@ class Config:
     # 4096 (was 2048): the verbose legacy prompt truncated mid tool-call at 2048
     # and returned zero connections. The production prompt is terse and fits, but
     # the headroom keeps a multi-connection digest from ever being cut off.
-    SYNTHESIS_MAX_TOKENS: int = 8192  # headroom for evidence + fuller directions (ADR-004)
+    SYNTHESIS_MAX_TOKENS: int = (
+        8192  # headroom for evidence + fuller directions (ADR-004)
+    )
     SYNTHESIS_TIMEOUT: float = 60.0
     # Cross-topic "bridge" notes injected per digest (distance channel): notes far
     # from the recent window in topic but joined by a shared rare token. 0 = pure
     # similarity (legacy). Validated at 4 in the distance experiment.
     SYNTHESIS_BRIDGE_COUNT: int = 4
+    # Entity distance-channel (Challenge #3): notes joined to the recent window
+    # by a shared named entity (person/project/org) even after topic vocabulary
+    # drifts — the channel that catches contradictions BM25/tags miss. 0 = OFF,
+    # the production baseline: this channel is UNVALIDATED (that is what H3
+    # measures), so it must not silently change every user's digest. The
+    # magic-insights prototype turns it on explicitly (magic_digest.py,
+    # blind_cascade_test.py); recall_eval.py sweeps it as a variable.
+    SYNTHESIS_ENTITY_COUNT: int = 0
+    # Dense semantic channel: KNN over the vault's local embedding index (the
+    # recall engine — zero API cost). 0 = OFF, production baseline, same rule
+    # as the entity channel: unvalidated until H3 passes. Prototype tools turn
+    # it on explicitly.
+    SYNTHESIS_DENSE_COUNT: int = 0
+    # Graph channel: Personalized PageRank over the note-term bridge graph
+    # (Swanson ABC / HippoRAG-lite — the LBD mechanism for anti-similar pairs).
+    # 0 = OFF (unvalidated until H3). Prototype tools turn it on.
+    SYNTHESIS_GRAPH_COUNT: int = 0
+    # Stance-flip channel: older notes sharing an anchor with the window but of
+    # opposite polarity — contradiction candidates. 0 = OFF (unvalidated).
+    SYNTHESIS_STANCE_COUNT: int = 0
     # Digest scheduling: weekly calm container + pattern-triggered escalation.
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6
     CONNECTIONS_MIN_GAP_DAYS: int = 2
     # Sub-folder (inside TRANSCRIBE_DIR) where digest notes are written.
-    DIGEST_DIR_NAME: str = "Malinche Digests"
+    DIGEST_DIR_NAME: str = "Timshel Digests"
+    # Hidden per-vault sidecar dir name (metrics/signal/vocabulary/dismissals).
+    SIDECAR_DIR_NAME: str = ".timshel"
+    # Magic-insights prototype instrumentation. Each digest appends a cost +
+    # coverage record to {vault}/.timshel/metrics.jsonl (H1/H4 evidence base).
+    # OFF by default: a normal user's daemon should not write a telemetry file
+    # (with private note basenames) into their vault. The prototype dogfood
+    # (magic_digest.py) turns it on for the measured runs.
+    INSIGHT_METRICS_ENABLED: bool = False
+    # Verdict pass: verify proposed connections against fuller note text and
+    # drop the ones that do not survive. Off = baseline digest, byte-identical.
+    VERDICT_ENABLED: bool = False
+    # Fuller-text budget per linked note in the verdict prompt.
+    VERDICT_MAX_NOTE_CHARS: int = 4000
+    # Prototype tester mode: a LABEL only, written into each metrics row so a
+    # dogfood run can be told apart from a normal one. It does NOT itself route
+    # models, force runs, or toggle metrics — magic_digest.py sets those knobs
+    # (LLM_MODEL_*, force=True, VERDICT_ENABLED, INSIGHT_METRICS_ENABLED)
+    # explicitly alongside it. Off in normal operation.
+    PROTOTYPE_TESTER_MODE: bool = False
 
     # Markdown template
     MD_TEMPLATE: str = """---
@@ -135,7 +200,7 @@ source_volume: {source_volume}
 version: {version}
 transcribed_on: {hostname}
 model: {model}
-language: {language}{previous_version_line}
+language: {language}{previous_version_line}{provenance_line}
 duration: {duration}
 tags: [{tags}]
 ---
@@ -187,7 +252,12 @@ tags: [{tags}]
             else:
                 self.TRANSCRIBE_DIR = Path(str(out_dir)).expanduser()
 
-        support_dir = Path.home() / "Library" / "Application Support" / "Malinche"
+        support_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / defaults.APP_SUPPORT_DIR_NAME
+        )
 
         if self.LOG_DIR is None:
             self.LOG_DIR = support_dir / "logs"
@@ -196,7 +266,7 @@ tags: [{tags}]
             self.STATE_FILE = support_dir / "state.json"
 
         if self.LOG_FILE is None:
-            self.LOG_FILE = self.LOG_DIR / "malinche.log"
+            self.LOG_FILE = self.LOG_DIR / "timshel.log"
 
         if self.LOCAL_RECORDINGS_DIR is None:
             self.LOCAL_RECORDINGS_DIR = support_dir / "recordings"
@@ -219,8 +289,13 @@ tags: [{tags}]
         self.WHISPER_LANGUAGE = self._user_settings.language or "pl"
 
         if self.WHISPER_CPP_PATH is None:
-            # Nowa lokalizacja: ~/Library/Application Support/Malinche/bin/
-            support_dir = Path.home() / "Library" / "Application Support" / "Malinche"
+            # Nowa lokalizacja: ~/Library/Application Support/Timshel/bin/
+            support_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / defaults.APP_SUPPORT_DIR_NAME
+        )
             new_whisper_path = support_dir / "bin" / "whisper-cli"
 
             # Sprawdź nową lokalizację (Faza 2)
@@ -245,14 +320,14 @@ tags: [{tags}]
             self.WHISPER_CPP_MODELS_DIR = support_dir / "models"
 
         if self.FFMPEG_PATH is None:
-            malinche_ffmpeg_path = support_dir / "bin" / "ffmpeg"
+            timshel_ffmpeg_path = support_dir / "bin" / "ffmpeg"
             # Fallback do systemowego ffmpeg (dev environment).
             system_ffmpeg = shutil.which("ffmpeg")
             if system_ffmpeg:
                 self.FFMPEG_PATH = Path(system_ffmpeg)
             else:
                 # Default - new location (downloaded by DependencyDownloader)
-                self.FFMPEG_PATH = malinche_ffmpeg_path
+                self.FFMPEG_PATH = timshel_ffmpeg_path
 
         # Load LLM API key from UserSettings only
         # Environment variables should be migrated to UserSettings via perform_migration_if_needed()
@@ -266,29 +341,48 @@ tags: [{tags}]
                 self.LLM_API_KEY = "http://localhost:11434"
 
         # Connected LLM for the Insights action handoff (ADR-004).
-        self.LLM_HANDOFF_TOOL = getattr(
-            self._user_settings, "ai_handoff_tool", "claude"
-        ) or "claude"
+        self.LLM_HANDOFF_TOOL = (
+            getattr(self._user_settings, "ai_handoff_tool", "claude") or "claude"
+        )
 
         # How note/transcript clicks open files: Obsidian deep link by default,
-        # but configurable so Malinche doesn't assume Obsidian (see
+        # but configurable so Timshel doesn't assume Obsidian (see
         # ui/obsidian_link.file_open_argv). "obsidian" | "finder" | "default" |
         # "app:<Name>".
-        self.NOTE_OPENER = getattr(
-            self._user_settings, "note_opener", "obsidian"
-        ) or "obsidian"
+        self.NOTE_OPENER = (
+            getattr(self._user_settings, "note_opener", "obsidian") or "obsidian"
+        )
 
         # Local recall engine ("ask your corpus"). Embeddings are local + no API key;
         # provider/model are swappable (no hardcoded provider). Indexing at
         # transcription time is opt-in until the feature ships.
-        self.EMBED_PROVIDER = getattr(
-            self._user_settings, "embed_provider", ""
-        ) or "fastembed"
-        self.EMBED_MODEL = getattr(
-            self._user_settings, "embed_model", ""
-        ) or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        self.EMBED_PROVIDER = (
+            getattr(self._user_settings, "embed_provider", "") or "fastembed"
+        )
+        self.EMBED_MODEL = (
+            getattr(self._user_settings, "embed_model", "")
+            or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
+        # Recall is on by default (Faza 5): search is 100% local, so indexing the vault
+        # in the background is safe and makes the lens "just work". A user who saved the
+        # setting keeps their choice; only an absent setting falls back to enabled.
         self.ENABLE_RECALL_INDEX = bool(
-            getattr(self._user_settings, "enable_recall_index", False)
+            getattr(self._user_settings, "enable_recall_index", True)
+        )
+        # ONNX thread cap for embeddings. Without it onnxruntime takes ALL
+        # cores and oversubscribes against whisper-cli (cores-2): a launch-time
+        # backfill coinciding with a recorder batch pegged ~2× the CPU. 0/absent
+        # = auto: half the cores, floor 1.
+        try:
+            raw_embed_threads = int(
+                getattr(self._user_settings, "embed_threads", 0) or 0
+            )
+        except (TypeError, ValueError):
+            raw_embed_threads = 0
+        self.EMBED_THREADS = (
+            raw_embed_threads
+            if raw_embed_threads > 0
+            else max(1, (os.cpu_count() or 4) // 2)
         )
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama
@@ -308,6 +402,25 @@ tags: [{tags}]
         # Tagging requires summarization to be enabled (shared LLM availability).
         if self.ENABLE_LLM_TAGGING and not self.ENABLE_SUMMARIZATION:
             self.ENABLE_LLM_TAGGING = False
+
+        # Tester build: map the persisted tester_mode flag to the H1
+        # instrumentation knobs. Doing it HERE (not via an in-process proxy
+        # assignment like magic_digest.py) means the knobs survive
+        # reload_config() — which reconstructs Config() and re-runs this — so a
+        # settings save from the UI can't silently turn instrumentation back
+        # off. Covers both the scheduled daemon digest and the menu action,
+        # which both read config at call time. Same knob set as
+        # scripts/magic_digest.py.
+        if getattr(self._user_settings, "tester_mode", False):
+            self.PROTOTYPE_TESTER_MODE = True
+            self.INSIGHT_METRICS_ENABLED = True
+            self.VERDICT_ENABLED = True
+            self.SYNTHESIS_ENTITY_COUNT = 4
+            self.SYNTHESIS_DENSE_COUNT = 6
+            self.SYNTHESIS_GRAPH_COUNT = 6
+            self.SYNTHESIS_STANCE_COUNT = 4
+            self.LLM_MODEL_SYNTHESIS = "claude-opus-4-8"
+            self.LLM_MODEL_VERDICT = "claude-opus-4-8"
 
     def ensure_directories(self) -> None:
         """Create necessary directories if they don't exist."""
@@ -353,6 +466,15 @@ def reload_config() -> Config:
     """
     global _config_instance
     _config_instance = Config()
+    # Drop the cached recall engine — it captured the old TRANSCRIBE_DIR and embedder
+    # at first use, so a changed vault dir or embedding model would otherwise keep
+    # querying the previous index. Lazy import avoids a config↔recall import cycle.
+    try:
+        from src.connections.recall.seam import reset_engine
+
+        reset_engine()
+    except Exception:  # pragma: no cover - recall is optional
+        pass
     return _config_instance
 
 

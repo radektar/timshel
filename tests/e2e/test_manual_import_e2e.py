@@ -32,7 +32,7 @@ def factory() -> AudioFactory:
 @pytest.mark.e2e
 @pytest.mark.slow
 @requires_runtime
-@pytest.mark.parametrize("ext", [".mp3", ".flac", ".wav"])
+@pytest.mark.parametrize("ext", [".mp3", ".flac", ".wav", ".m4a", ".ogg"])
 def test_manual_import_full_pipeline(factory, ext, tmp_path):
     """Importing a real audio file stages it and produces a Markdown note."""
     from src.transcriber import Transcriber

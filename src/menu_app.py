@@ -1,4 +1,4 @@
-"""macOS menu bar application for Malinche."""
+"""macOS menu bar application for Timshel."""
 
 import sys
 import threading
@@ -56,15 +56,35 @@ def _run_on_main_thread(func):
         func()
 
 
+# Device-independent NSEvent modifier bits (avoid importing AppKit for a pure check).
+_MOD_SHIFT, _MOD_CONTROL, _MOD_OPTION, _MOD_COMMAND = 1 << 17, 1 << 18, 1 << 19, 1 << 20
+_RECALL_KEYCODE_SPACE = 49
+
+
+def _is_recall_chord(keycode, flags) -> bool:
+    """True iff the event is exactly ⌃⌥Space (Control+Option+Space).
+
+    Exclusive of Command/Shift so it never fires on supersets, and deliberately NOT
+    plain ⌥Space — that is the macOS non-breaking-space key, so binding it would
+    hijack a normal keystroke system-wide. Pure function → unit-testable.
+    """
+    if int(keycode) != _RECALL_KEYCODE_SPACE:
+        return False
+    active = int(flags) & (_MOD_SHIFT | _MOD_CONTROL | _MOD_OPTION | _MOD_COMMAND)
+    return active == (_MOD_CONTROL | _MOD_OPTION)
+
+
 from src.config import config
 from src.config.settings import UserSettings
 from src.file_monitor import (
     DECISION_BLOCKED,
+    DECISION_NONE,
     DECISION_ONCE,
     DECISION_TRUSTED,
 )
+from src import volume_session
 from src.logger import logger
-from src.app_core import MalincheTranscriber
+from src.app_core import TimshelTranscriber
 from src.app_status import AppStatus
 from src.state_manager import reset_state
 from src.transcriber import RetranscribeLockBusyError, send_notification
@@ -78,8 +98,47 @@ from src.ui.pro_activation import show_pro_status
 from src.ui.download_window import DownloadWindow
 
 
-class MalincheMenuApp(rumps.App):
-    """macOS menu bar application wrapper for Malinche."""
+def _render_sigil_menu_png(pixel, *, alpha=1.0, dot_hex=None, sigil_rgb=(0.0, 0.0, 0.0)):
+    """Render the menu-bar wave sigil (redesign F) to PNG bytes.
+
+    Geometry from ``theme.SIGIL_BARS``. Base/dim variants are black at ``alpha``
+    (used as a macOS template image → system-tinted); the badged variant passes
+    ``dot_hex`` (gold, non-template so the colour survives) over a cream sigil.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    from src.ui.theme import SIGIL_BARS, SIGIL_VIEWBOX, _hex_to_rgb
+
+    ss = 4
+    s = pixel * ss
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    pad = s * 0.06
+    scale = (s - 2 * pad) / SIGIL_VIEWBOX
+    col = tuple(int(c * 255) for c in sigil_rgb) + (int(255 * alpha),)
+    for x, y, w, h, rx in SIGIL_BARS:
+        x0, y0 = pad + x * scale, pad + y * scale
+        d.rounded_rectangle(
+            (x0, y0, x0 + w * scale, y0 + h * scale), radius=rx * scale, fill=col
+        )
+    if dot_hex:
+        dr, dg, db = _hex_to_rgb(dot_hex)
+        r = s * 0.11
+        cx, cy = s - pad - r * 0.6, pad + r * 0.6
+        d.ellipse(
+            (cx - r, cy - r, cx + r, cy + r),
+            fill=(int(dr * 255), int(dg * 255), int(db * 255), 255),
+        )
+    img = img.resize((pixel, pixel), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+class TimshelMenuApp(rumps.App):
+    """macOS menu bar application wrapper for Timshel."""
 
     def __init__(self):
         """Initialize menu bar application."""
@@ -88,8 +147,8 @@ class MalincheMenuApp(rumps.App):
                 "rumps not available. Install with: pip install rumps"
             )
 
-        super(MalincheMenuApp, self).__init__(
-            "Malinche",
+        super(TimshelMenuApp, self).__init__(
+            "Timshel",
             title=None,
             icon=None,
             template=True,
@@ -98,7 +157,7 @@ class MalincheMenuApp(rumps.App):
         self._icon_paths = self._resolve_icon_paths()
         self._update_icon(AppStatus.IDLE)
 
-        self.transcriber: Optional[MalincheTranscriber] = None
+        self.transcriber: Optional[TimshelTranscriber] = None
         self.daemon_thread: Optional[threading.Thread] = None
         self._running = False
         self._retranscription_in_progress = False
@@ -113,7 +172,7 @@ class MalincheMenuApp(rumps.App):
         self.menu.add(rumps.separator)
 
         # Insights — open the "Konstelacja" window (the designed home where the
-        # connections Malinche found are read). Entered from here, not by
+        # connections Timshel found are read). Entered from here, not by
         # hijacking the menu-bar click (that opens this native menu, Docker-style).
         # Trailing "…" per macOS HIG = the command needs more input in a
         # dialog/picker before it completes. So only "Import audio…" (file
@@ -138,6 +197,13 @@ class MalincheMenuApp(rumps.App):
             callback=self._import_audio_clicked,
         )
         self.menu.add(self.import_item)
+        # Seed the vault from already-transcribed text (txt/md/vtt) — the
+        # cold-start fix for a new tester's empty vault.
+        self.import_text_item = rumps.MenuItem(
+            "Import transcripts…",
+            callback=self._import_transcripts_clicked,
+        )
+        self.menu.add(self.import_text_item)
 
         # Synthesis — open the latest connection digest note in the vault.
         self.digest_item = rumps.MenuItem(
@@ -150,6 +216,13 @@ class MalincheMenuApp(rumps.App):
             callback=self._generate_digest_now,
         )
         self.menu.add(self.gen_digest_item)
+        # Package the H1 feedback (signal/metrics + digests) into a zip on the
+        # Desktop for the tester to email back.
+        self.export_feedback_item = rumps.MenuItem(
+            "Export feedback",
+            callback=self._export_feedback_clicked,
+        )
+        self.menu.add(self.export_feedback_item)
 
         # Retranscribe submenu (lazy populated by refresh timer)
         self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
@@ -166,7 +239,7 @@ class MalincheMenuApp(rumps.App):
         self.menu.add(rumps.separator)
 
         self.quit_item = rumps.MenuItem(
-            "Quit Malinche",
+            "Quit Timshel",
             callback=self._quit_app,
         )
         self.menu.add(self.quit_item)
@@ -184,6 +257,22 @@ class MalincheMenuApp(rumps.App):
 
         self._dashboard = build_dashboard_window(callbacks=self._dashboard_callbacks())
         self._refresh_insights_badge()
+
+        # Global hotkey (⌃⌥Space) → recall ask-bar. Best-effort; never blocks launch.
+        try:
+            self._register_recall_hotkey()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall hotkey unavailable: %s", exc)
+
+        # Recall "just works": catch the index up to the vault in the background so a
+        # fresh install is searchable without a manual backfill. Non-blocking, gated.
+        try:
+            if config.ENABLE_RECALL_INDEX:
+                from src.connections.recall import seam
+
+                seam.start_background_index()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall background index unavailable: %s", exc)
 
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
@@ -212,37 +301,37 @@ class MalincheMenuApp(rumps.App):
         """
         import tempfile
 
-        from src.ui import style
-
         resolved: dict[AppStatus, Optional[str]] = {
             status: None for status in AppStatus
         }
-        if not getattr(style, "_APPKIT_AVAILABLE", False):
-            return resolved
-
         # Parallel set of badged (gold-dot) icons for the "unseen insight" signal.
         dot_resolved: dict[AppStatus, Optional[str]] = {
             status: None for status in AppStatus
         }
 
-        icon_dir = Path(tempfile.mkdtemp(prefix="malinche-menubar-icons-"))
+        # Redesign F: the menu-bar mark is the wave sigil, with two state
+        # modifiers — indexing = dimmed to 55%, everything else = full. The
+        # gold-dot badge (unseen insight) survives as a non-template overlay.
+        active = {
+            AppStatus.SCANNING,
+            AppStatus.TRANSCRIBING,
+            AppStatus.DOWNLOADING,
+            AppStatus.MIGRATING,
+        }
+        icon_dir = Path(tempfile.mkdtemp(prefix="timshel-menubar-icons-"))
         for status in AppStatus:
             try:
-                name = style.symbol_name_for_status(status)
-                png = style.render_symbol_png(
-                    name, point=15.0, weight="regular", pixel_size=36
+                alpha = 0.55 if status in active else 1.0
+                png = _render_sigil_menu_png(36, alpha=alpha)  # black → template
+                out = icon_dir / f"{status.value}.png"
+                out.write_bytes(png)
+                resolved[status] = str(out)
+                dot_png = _render_sigil_menu_png(
+                    36, alpha=alpha, dot_hex="#D6B033", sigil_rgb=(0.98, 0.95, 0.89)
                 )
-                if png:
-                    out = icon_dir / f"{status.value}.png"
-                    out.write_bytes(png)
-                    resolved[status] = str(out)
-                dot_png = style.render_symbol_png(
-                    name, point=15.0, weight="regular", pixel_size=36, dot=True
-                )
-                if dot_png:
-                    dot_out = icon_dir / f"{status.value}-dot.png"
-                    dot_out.write_bytes(dot_png)
-                    dot_resolved[status] = str(dot_out)
+                dot_out = icon_dir / f"{status.value}-dot.png"
+                dot_out.write_bytes(dot_png)
+                dot_resolved[status] = str(dot_out)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         self._icon_paths_dot = dot_resolved
@@ -267,6 +356,16 @@ class MalincheMenuApp(rumps.App):
                 )
             except Exception:  # pragma: no cover - cosmetic, never fatal
                 pass
+
+        # The menu-bar icon setter re-reads the PNG from disk and allocates a
+        # fresh NSImage every call. _update_status fires every 2 s, so guard on
+        # the only inputs that change the icon — status + whether a badge is
+        # due — and skip the assignment when nothing changed (~43k needless
+        # disk reads/day otherwise).
+        icon_key = (status, getattr(self, "_unseen_insights", 0) > 0)
+        if icon_key == getattr(self, "_last_icon_key", None):
+            return
+        self._last_icon_key = icon_key
 
         # When an unseen insight is waiting, show the badged (gold-dot) icon —
         # a non-template image, so the gold survives macOS's menu-bar tinting.
@@ -313,7 +412,7 @@ class MalincheMenuApp(rumps.App):
             rumps.alert(
                 title="Configuration incomplete",
                 message=(
-                    "Malinche requires configuration to operate.\n\n"
+                    "Timshel requires configuration to operate.\n\n"
                     "Restart the app to finish configuring it."
                 ),
                 ok="OK",
@@ -350,7 +449,7 @@ class MalincheMenuApp(rumps.App):
             title="🛡 Security mode updated",
             message=(
                 "Every new disk connected to the computer must now be approved "
-                "before Malinche transcribes from it. This prevents accidental "
+                "before Timshel transcribes from it. This prevents accidental "
                 "scanning of disks like external music drives.\n\n"
                 "Would you like to review the disks currently mounted and "
                 "decide which ones are recorders?"
@@ -377,7 +476,7 @@ class MalincheMenuApp(rumps.App):
         if self.transcriber is None:
             rumps.alert(
                 title="Not ready",
-                message="Malinche is still starting up. Try again in a moment.",
+                message="Timshel is still starting up. Try again in a moment.",
                 ok="OK",
             )
             return
@@ -431,12 +530,27 @@ class MalincheMenuApp(rumps.App):
         """Stage + transcribe a manually imported file (background thread)."""
         name = audio_path.name
         try:
-            send_notification("Malinche", "Importing", f"Transcribing {name}…")
+            send_notification("Timshel", "Importing", f"Transcribing {name}…")
         except Exception:  # noqa: BLE001
             pass
 
         try:
             ok = self.transcriber.import_audio_file(audio_path)
+        except RetranscribeLockBusyError:
+            logger.info("Manual import busy for %s — transcription in progress", name)
+
+            def _on_main() -> None:
+                rumps.alert(
+                    title="⏳ Transcription in progress",
+                    message=(
+                        "Another transcription is running. "
+                        "Try importing again in a moment."
+                    ),
+                    ok="OK",
+                )
+
+            _run_on_main_thread(_on_main)
+            return
         except (FileNotFoundError, ValueError) as exc:
             logger.warning("Manual import rejected %s: %s", audio_path, exc)
             # Bind the message now: the ``exc`` name is cleared when the except
@@ -463,7 +577,7 @@ class MalincheMenuApp(rumps.App):
         if ok:
             logger.info("✓ Manual import complete: %s", name)
             try:
-                send_notification("Malinche", "Done", f"Transcribed {name}")
+                send_notification("Timshel", "Done", f"Transcribed {name}")
             except Exception:  # noqa: BLE001
                 pass
         else:
@@ -475,6 +589,152 @@ class MalincheMenuApp(rumps.App):
                 )
 
             _run_on_main_thread(_on_main)
+
+    def _import_transcripts_clicked(self, _) -> None:
+        """Menu: pick already-transcribed text files (txt/md/vtt) to seed the
+        vault. Multi-select — the whole value is bulk-seeding a cold vault.
+
+        Picker runs on the main thread; the batch import runs in the background
+        so the menu stays responsive over many files.
+        """
+        if self.transcriber is None:
+            rumps.alert(
+                title="Not ready",
+                message="Timshel is still starting up. Try again in a moment.",
+                ok="OK",
+            )
+            return
+
+        paths = self._choose_transcript_files()
+        if not paths:
+            return
+
+        threading.Thread(
+            target=self._run_text_import,
+            args=([Path(p) for p in paths],),
+            daemon=True,
+            name="ManualTextImport",
+        ).start()
+
+    def _choose_transcript_files(self) -> List[str]:
+        """NSOpenPanel filtered to txt/md/vtt, multi-select. [] if cancelled."""
+        try:
+            from AppKit import NSOpenPanel
+        except ImportError:
+            rumps.alert(
+                title="Unavailable",
+                message="The file picker is not available in this environment.",
+                ok="OK",
+            )
+            return []
+
+        result: dict = {"paths": []}
+
+        def _panel() -> None:
+            panel = NSOpenPanel.openPanel()
+            panel.setCanChooseFiles_(True)
+            panel.setCanChooseDirectories_(False)
+            panel.setAllowsMultipleSelection_(True)
+            panel.setMessage_("Choose transcript files to import (txt, md, vtt)")
+            panel.setAllowedFileTypes_(["txt", "md", "vtt"])
+            if panel.runModal() == 1:  # NSModalResponseOK
+                result["paths"] = [str(u.path()) for u in (panel.URLs() or [])]
+
+        _run_on_main_thread(_panel)
+        return result["paths"]
+
+    def _run_text_import(self, paths: List[Path]) -> None:
+        """Import a batch of transcript files (background thread).
+
+        Per-file failures never abort the batch; a busy lock stops the whole
+        run (a transcription is in progress). Reports ok/duplicate/failed.
+        """
+        total = len(paths)
+        try:
+            send_notification("Timshel", "Importing", f"Importing {total} file(s)…")
+        except Exception:  # noqa: BLE001
+            pass
+
+        imported = 0
+        failed = 0
+        for path in paths:
+            try:
+                # import_text_file returns True on success OR an already-imported
+                # duplicate; either way the file is accounted for.
+                if self.transcriber.import_text_file(path):
+                    imported += 1
+                else:
+                    failed += 1
+            except RetranscribeLockBusyError:
+                logger.info("Text import busy — transcription in progress")
+
+                done_so_far = imported
+
+                def _on_main() -> None:
+                    rumps.alert(
+                        title="⏳ Transcription in progress",
+                        message=(
+                            f"Imported {done_so_far} of {total} before another "
+                            "transcription started. Re-run to import the rest "
+                            "(duplicates are skipped)."
+                        ),
+                        ok="OK",
+                    )
+
+                _run_on_main_thread(_on_main)
+                return
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning("Text import rejected %s: %s", path, exc)
+                failed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Text import failed for %s: %s", path, exc, exc_info=True)
+                failed += 1
+
+        logger.info("✓ Text import complete: %d ok, %d failed of %d", imported, failed, total)
+        summary = f"Imported {imported} of {total}"
+        if failed:
+            summary += f" — {failed} skipped"
+        try:
+            send_notification("Timshel", "Import done", summary)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _export_feedback_clicked(self, _) -> None:
+        """Menu: zip the H1 feedback (signal/metrics + digests) onto the Desktop
+        and reveal it in Finder for the tester to email back.
+        """
+        import subprocess
+
+        from src.feedback_export import NothingToExportError, build_feedback_zip
+
+        vault = Path(config.TRANSCRIBE_DIR)
+        desktop = Path.home() / "Desktop"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        try:
+            zip_path = build_feedback_zip(vault, desktop, timestamp=timestamp)
+        except NothingToExportError:
+            rumps.alert(
+                title="Nothing to export yet",
+                message="Generate a digest and rate a few connections first.",
+                ok="OK",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Feedback export failed: %s", exc, exc_info=True)
+            rumps.alert(title="Export failed", message=str(exc), ok="OK")
+            return
+
+        logger.info("✓ Feedback exported: %s", zip_path)
+        try:
+            subprocess.Popen(["open", "-R", str(zip_path)])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            send_notification(
+                "Timshel", "Feedback exported", f"Saved {zip_path.name} to Desktop"
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _manage_volumes_clicked(self, _) -> None:
         """Menu item: manage trusted/blocked disk list."""
@@ -680,7 +940,7 @@ class MalincheMenuApp(rumps.App):
                 logger.info("✓ All dependencies downloaded")
                 rumps.alert(
                     title="✅ Ready",
-                    message="All dependencies were downloaded.\n\nMalinche is ready to use.",
+                    message="All dependencies were downloaded.\n\nTimshel is ready to use.",
                     ok="OK",
                 )
                 self.status_item.title = "Status: Ready"
@@ -698,7 +958,7 @@ class MalincheMenuApp(rumps.App):
                         title="⚠️ No internet connection",
                         message=(
                             "No internet connection.\n\n"
-                            "Malinche needs a one-time download of the transcription engine (~500 MB).\n"
+                            "Timshel needs a one-time download of the transcription engine (~500 MB).\n"
                             "Connect to the internet and try again."
                         ),
                         ok="OK",
@@ -842,20 +1102,30 @@ class MalincheMenuApp(rumps.App):
             self._download_active = False
             logger.warning("whisper-cli repair did not start (download already in progress)")
 
-    def _prompt_unknown_volume(self, volume_path, uuid: str) -> str:
+    def _prompt_unknown_volume(
+        self, volume_path, uuid: str, timeout: float = 600
+    ) -> str:
         """Synchronicznie zapytaj usera o nieznany dysk: Tak/Nie/Raz.
 
         Wywoływane z wątku FileMonitora. Dialog rumps musi działać na main
         thread, więc używamy AppHelper + threading.Event do synchronizacji.
 
+        Timeout NIE oznacza "No": zwracamy ``DECISION_NONE`` (nic nie jest
+        persystowane; periodic scan zapyta ponownie), a późniejsza odpowiedź
+        w wiszącym wciąż dialogu zostaje zapisana przez
+        ``_record_late_decision`` — modalu rumps nie da się programowo
+        zamknąć, więc rejestrujemy spóźniony klik zamiast go gubić.
+
         Returns:
-            Jedną z DECISION_TRUSTED / DECISION_BLOCKED / DECISION_ONCE.
+            DECISION_TRUSTED / DECISION_BLOCKED / DECISION_ONCE / DECISION_NONE.
         """
-        result = {"decision": DECISION_BLOCKED}
+        state = {"decision": DECISION_NONE, "timed_out": False}
+        state_lock = threading.Lock()
         done = threading.Event()
         volume_name = volume_path.name if hasattr(volume_path, "name") else str(volume_path)
 
         def _ask_on_main() -> None:
+            decision = DECISION_NONE
             try:
                 response = rumps.alert(
                     title="🛡 New disk detected",
@@ -870,28 +1140,77 @@ class MalincheMenuApp(rumps.App):
                     other="Once",
                 )
                 if response == 1:
-                    result["decision"] = DECISION_TRUSTED
+                    decision = DECISION_TRUSTED
                 elif response == -1:
-                    result["decision"] = DECISION_ONCE
+                    decision = DECISION_ONCE
                 else:
-                    result["decision"] = DECISION_BLOCKED
+                    decision = DECISION_BLOCKED
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     f"Dialog _prompt_unknown_volume failed: {exc}",
                     exc_info=True,
                 )
-                result["decision"] = DECISION_BLOCKED
+                decision = DECISION_NONE  # błąd UI nie może trwale blokować
             finally:
+                with state_lock:
+                    if state["timed_out"]:
+                        # Wątek monitora dawno wrócił z DECISION_NONE — zapisz
+                        # spóźnioną odpowiedź zamiast mutować martwy słownik.
+                        self._record_late_decision(uuid, volume_name, decision)
+                    else:
+                        state["decision"] = decision
                 done.set()
 
         _run_on_main_thread(_ask_on_main)
         # Czekaj na decyzję; UI się nie zawiesi (rumps.alert na main jest modalny).
-        done.wait(timeout=600)
-        decision = result["decision"]
+        if not done.wait(timeout=timeout):
+            with state_lock:
+                state["timed_out"] = True
+            logger.info(
+                f"Volume '{volume_name}' (uuid={uuid}) prompt timed out — "
+                "no decision persisted, will re-ask"
+            )
+            return DECISION_NONE
+        decision = state["decision"]
         logger.info(
             f"Volume '{volume_name}' (uuid={uuid}) decision={decision}"
         )
         return decision
+
+    @staticmethod
+    def _record_late_decision(uuid: str, volume_name: str, decision: str) -> None:
+        """Persist an answer given AFTER the prompt timed out.
+
+        The monitor thread already returned DECISION_NONE, so this is the only
+        place the user's actual click can still be honored.
+        """
+        if decision == DECISION_TRUSTED or decision == DECISION_BLOCKED:
+            try:
+                UserSettings.mutate(
+                    lambda s: s.add_trusted_volume(
+                        uuid=uuid, name=volume_name, decision=decision
+                    )
+                )
+                logger.info(
+                    "Late volume decision recorded: name=%r decision=%s uuid=%s",
+                    volume_name,
+                    decision,
+                    uuid,
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.error(
+                    "Failed to record late volume decision for %s: %s",
+                    volume_name,
+                    error,
+                    exc_info=True,
+                )
+        elif decision == DECISION_ONCE:
+            volume_session.approve_once(uuid)
+            logger.info(
+                "Late 'Once' approval recorded for %s (uuid=%s)",
+                volume_name,
+                uuid,
+            )
 
     def _update_status(self, _):
         """Update status menu item based on current state."""
@@ -939,35 +1258,85 @@ class MalincheMenuApp(rumps.App):
             logger.error("Failed to open log viewer: %s", exc)
             rumps.alert("Error", f"Could not open log viewer: {exc}", "OK")
 
+    def _ensure_dashboard(self):
+        """Build the Insights window if needed and refresh it to the latest persisted
+        digest. The window is built once eagerly at launch (with a placeholder deck),
+        so without this refresh it would render the placeholder for the whole session
+        even after a real digest lands. Returns the controller (or None without AppKit).
+        """
+        if getattr(self, "_dashboard", None) is None:
+            from src.ui.dashboard_window import build_dashboard_window
+
+            self._dashboard = build_dashboard_window(
+                callbacks=self._dashboard_callbacks()
+            )
+        if self._dashboard is not None:
+            try:
+                from src.ui.insight_pipeline import latest_deck
+
+                fresh = latest_deck()
+                if fresh is not None:
+                    self._dashboard.updateDeck_(fresh)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("could not refresh insights deck on open: %s", exc)
+        return self._dashboard
+
     def _open_insights(self, _):
         """Open the Insights 'Konstelacja' window — the designed home surface."""
         try:
-            if getattr(self, "_dashboard", None) is None:
-                from src.ui.dashboard_window import build_dashboard_window
-
-                self._dashboard = build_dashboard_window(
-                    callbacks=self._dashboard_callbacks()
-                )
-            if self._dashboard is not None:
-                # Refresh to the latest persisted digest before showing. The
-                # window is built once (eagerly, at launch) when no digest
-                # exists yet, so without this it would render the placeholder
-                # deck for the whole session even after a real digest lands.
-                try:
-                    from src.ui.insight_pipeline import latest_deck
-
-                    fresh = latest_deck()
-                    if fresh is not None:
-                        self._dashboard.updateDeck_(fresh)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("could not refresh insights deck on open: %s", exc)
+            if self._ensure_dashboard() is not None:
                 self._dashboard.showWindow()
                 self._refresh_insights_badge()
             else:
                 logger.warning("Insights window unavailable (AppKit missing)")
-                rumps.alert("Malinche", "Insights view needs macOS AppKit.", ok="OK")
+                rumps.alert("Timshel", "Insights view needs macOS AppKit.", ok="OK")
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Could not open Insights window: %s", exc)
+
+    def _open_recall(self, _=None):
+        """Bring the Insights window forward with the ask-bar focused — recall entry.
+
+        Refreshes to the latest digest first (via _ensure_dashboard), so entering by
+        hotkey doesn't operate on the stale launch-time placeholder deck.
+        """
+        try:
+            dash = self._ensure_dashboard()
+            if dash is not None:
+                dash.focusRecall()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Could not open recall ask-bar: %s", exc)
+
+    def _register_recall_hotkey(self):
+        """Best-effort global hotkey (⌃⌥Space) → focus the recall ask-bar.
+
+        A global NSEvent monitor needs Accessibility permission (silent no-op without
+        it); a local monitor covers the app-active case (a global monitor never fires
+        for the app's own events, so there is no double-trigger). Both return the event
+        so the chord is never swallowed. All failures are swallowed — the ask-bar stays
+        reachable from the Insights window regardless.
+        """
+        try:
+            from AppKit import NSEvent
+        except Exception:  # pragma: no cover - non-mac
+            return
+        mask = 1 << 10  # NSEventMaskKeyDown
+
+        def _handler(event):
+            try:
+                if _is_recall_chord(event.keyCode(), event.modifierFlags()):
+                    _run_on_main_thread(self._open_recall)
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return event
+
+        try:
+            # Retain the monitor tokens so they can be removed and never double-register.
+            self._recall_hotkey_monitors = [
+                NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, _handler),
+                NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, _handler),
+            ]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("recall hotkey registration failed: %s", exc)
 
     def _dashboard_callbacks(self):
         """Wiring the Insights window needs from the app (vault + Obsidian).
@@ -980,7 +1349,67 @@ class MalincheMenuApp(rumps.App):
             "recent_transcripts": self._recent_transcripts_for_insights,
             "open_note": self._open_note_in_obsidian,
             "open_transcript": self._open_transcript_in_obsidian,
+            "recall_search": self._recall_search,
+            "recall_synthesize": self._recall_synthesize,
+            "recall_save_answer": self._recall_save_answer,
+            "recall_index_status": self._recall_index_status,
         }
+
+    def _recall_index_status(self):
+        """Snapshot of the background index (Standby/Indexing/Ready/Error + progress)
+        for the window's honest partial banner. ``None`` if recall isn't wired."""
+        try:
+            from src.connections.recall import seam
+
+            return seam.index_state().snapshot()
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def _recall_search(self, query):
+        """Query the local recall index for the window's pull surface (no LLM).
+
+        Best-effort and fully local: returns ``(results, confidence, status)`` where
+        status distinguishes a genuine no-match ("ok") from an unindexed vault
+        ("empty") or a not-ready engine ("unavailable"), so the window can be honest
+        instead of claiming "nothing in your notes" when it never actually searched.
+        """
+        from src.connections.recall import seam
+
+        return seam.search_detailed(query)
+
+    def _recall_synthesize(self, query, results):
+        """The one LLM in the pull path: synthesize a grounded answer from the
+        retrieved passages on the user's explicit escalation. Best-effort → None
+        (window shows a soft failure). Only these matched excerpts leave the Mac.
+
+        A permanent billing/credit error trips the shared AI circuit breaker (same as
+        the push digest path) so we don't re-issue a doomed request on every click.
+        """
+        from src.connections.recall.synthesis import synthesize_answer_safe
+        from src.summarizer import APIBillingError
+
+        try:
+            return synthesize_answer_safe(query, results)
+        except APIBillingError as exc:
+            disable = getattr(self.transcriber, "_disable_ai", None)
+            if disable is not None:
+                disable("billing", exc)
+            return None
+
+    def _recall_save_answer(self, query, answer):
+        """Save a synthesized answer to the vault as a linkable markdown note.
+
+        Returns ``None`` (→ a soft "couldn't save" toast) rather than raising if the
+        vault dir isn't configured yet.
+        """
+        from datetime import datetime
+
+        from src.connections.recall.answer_writer import save_answer
+
+        if not config.TRANSCRIBE_DIR:
+            return None
+        date_str = datetime.now().strftime("%Y-%m-%d")  # match digest_writer's 4-digit year
+        return save_answer(query, answer, config.TRANSCRIBE_DIR, date_str=date_str)
 
     def _recent_transcripts_for_insights(self):
         """Real recent transcripts for the Insights rail (replaces atrapy).
@@ -1017,13 +1446,28 @@ class MalincheMenuApp(rumps.App):
         # there rather than showing "—".
         return self._recent_transcripts_from_disk()
 
+    # A whole-vault rglob is expensive on a large iCloud-synced vault; this
+    # fallback fires on every rail rebuild when the index is empty (fresh
+    # install / older build). The recent list need not be real-time, so serve
+    # a short-TTL cache to bound the scan to ~once per window regardless of how
+    # many UI interactions happen.
+    _RECENT_DISK_TTL_S = 30.0
+
     def _recent_transcripts_from_disk(self, limit: int = 5):
         """Most-recent ``*.md`` transcripts straight from the vault on disk.
 
         Excludes the digest sub-folder and the ``.malinche`` sidecar dir so the
-        rail only lists actual transcripts, newest first by mtime.
+        rail only lists actual transcripts, newest first by mtime. Result is
+        cached for ``_RECENT_DISK_TTL_S`` seconds.
         """
+        import time as _time
         from pathlib import Path
+
+        cached = getattr(self, "_recent_disk_cache", None)
+        if cached is not None:
+            ts, limit_c, result = cached
+            if limit_c == limit and (_time.monotonic() - ts) < self._RECENT_DISK_TTL_S:
+                return result
 
         try:
             root = Path(config.TRANSCRIBE_DIR)
@@ -1031,7 +1475,9 @@ class MalincheMenuApp(rumps.App):
             hits = []
             for p in root.rglob("*.md"):
                 rp = p.resolve()
-                if ".malinche" in rp.parts:
+                # Exclude both the current sidecar dir and the pre-rename one
+                # (a vault migrated from Timshel may still carry a stray copy).
+                if config.SIDECAR_DIR_NAME in rp.parts or ".malinche" in rp.parts:
                     continue
                 if rp == digest_dir or digest_dir in rp.parents:
                     continue
@@ -1040,7 +1486,9 @@ class MalincheMenuApp(rumps.App):
         except OSError as exc:  # pragma: no cover - defensive
             logger.debug("disk scan for recent transcripts failed: %s", exc)
             return []
-        return [{"label": p.stem, "path": p} for _, p in hits[:limit]]
+        result = [{"label": p.stem, "path": p} for _, p in hits[:limit]]
+        self._recent_disk_cache = (_time.monotonic(), limit, result)
+        return result
 
     def _open_note_in_obsidian(self, basename):
         """Resolve a source-note basename in the vault and open it in the
@@ -1075,9 +1523,9 @@ class MalincheMenuApp(rumps.App):
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("could not load insights for notification: %s", exc)
         if top is not None:
-            send_notification("Malinche", top.resolved_label(), top.rationale)
+            send_notification("Timshel", top.resolved_label(), top.rationale)
         else:
-            send_notification("Malinche", "New synthesis digest ready", digest_name)
+            send_notification("Timshel", "New synthesis digest ready", digest_name)
 
     def _refresh_insights_badge(self) -> None:
         """Show the count of connections in the latest digest on the menu item."""
@@ -1200,7 +1648,7 @@ class MalincheMenuApp(rumps.App):
             digests = sorted(folder.glob("*.md")) if folder.exists() else []
             path = digests[-1] if digests else None
         if path is None or not path.exists():
-            rumps.alert("Malinche", "No synthesis digest yet.", ok="OK")
+            rumps.alert("Timshel", "No synthesis digest yet.", ok="OK")
             return
         try:
             subprocess.Popen(["open", str(path)])
@@ -1222,17 +1670,17 @@ class MalincheMenuApp(rumps.App):
                 path = run_digest_if_due(self.transcriber, force=True)
                 if path is None:
                     send_notification(
-                        "Malinche",
+                        "Timshel",
                         "No new connections",
                         "Nothing connected this time (or AI key not set).",
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Manual digest failed: %s", exc)
-                send_notification("Malinche", "Digest failed", str(exc))
+                send_notification("Timshel", "Digest failed", str(exc))
 
         threading.Thread(target=_run, name="ManualDigest", daemon=True).start()
         send_notification(
-            "Malinche", "Generating synthesis digest…", "Reading your notes…"
+            "Timshel", "Generating synthesis digest…", "Reading your notes…"
         )
 
     def _reset_memory(self, _):
@@ -1249,7 +1697,7 @@ class MalincheMenuApp(rumps.App):
         if success:
             logger.info(f"Memory reset successful, sending notification for date: {target_date.strftime('%Y-%m-%d')}")
             send_notification(
-                title="Malinche",
+                title="Timshel",
                 message=f"From: {target_date.strftime('%Y-%m-%d')}",
                 subtitle=TEXTS["reset_memory_success"],
             )
@@ -1331,6 +1779,26 @@ class MalincheMenuApp(rumps.App):
 
     def _refresh_retranscribe_menu(self, _):
         """Refresh the retranscribe submenu with current staged files."""
+        # This fires every 10 s and tears down + rebuilds the whole submenu
+        # (fresh NSMenuItem allocation/teardown through the ObjC bridge each
+        # time). The staging dir changes only when a recorder is plugged in,
+        # so skip the rebuild when the inputs are byte-for-byte identical.
+        staged_files = [] if self._retranscription_in_progress else self._get_staged_files()
+        try:
+            staged_sig = tuple(
+                (f.name, f.stat().st_mtime) for f in staged_files
+            )
+        except OSError:
+            staged_sig = None  # stat raced; force a rebuild
+        snapshot = (
+            self._retranscription_in_progress,
+            self._retranscription_file,
+            staged_sig,
+        )
+        if snapshot == getattr(self, "_retranscribe_menu_snapshot", None):
+            return
+        self._retranscribe_menu_snapshot = snapshot
+
         self.retranscribe_menu.title = "Retranscribe file…"
         # Clear existing submenu items (handle case when _menu is not yet initialized)
         try:
@@ -1347,9 +1815,8 @@ class MalincheMenuApp(rumps.App):
             busy_item.set_callback(None)
             self.retranscribe_menu.add(busy_item)
             return
-        
-        staged_files = self._get_staged_files()
-        
+
+        # staged_files already computed above for the snapshot.
         if not staged_files:
             empty_item = rumps.MenuItem("(no staged files)")
             empty_item.set_callback(None)
@@ -1426,7 +1893,7 @@ class MalincheMenuApp(rumps.App):
         
         # Send start notification
         send_notification(
-            title="Malinche",
+            title="Timshel",
             subtitle="Retranscription started",
             message=f"File: {audio_path.name}",
         )
@@ -1439,13 +1906,13 @@ class MalincheMenuApp(rumps.App):
 
                     if success:
                         send_notification(
-                            title="Malinche",
+                            title="Timshel",
                             subtitle="Retranscription complete",
                             message=f"File: {audio_path.name}",
                         )
                     else:
                         send_notification(
-                            title="Malinche",
+                            title="Timshel",
                             subtitle="Retranscription failed",
                             message=f"Check logs: {audio_path.name}",
                         )
@@ -1458,7 +1925,7 @@ class MalincheMenuApp(rumps.App):
                     rumps.alert(
                         title="⏳ Automatic transcription in progress",
                         message=(
-                            "Malinche is currently processing another file from the recorder.\n\n"
+                            "Timshel is currently processing another file from the recorder.\n\n"
                             "Try again in a few minutes, after the automatic "
                             "transcription has finished."
                         ),
@@ -1468,7 +1935,7 @@ class MalincheMenuApp(rumps.App):
             except Exception as e:
                 logger.error(f"Retranscribe error: {e}", exc_info=True)
                 send_notification(
-                    title="Malinche",
+                    title="Timshel",
                     subtitle="Error",
                     message=str(e)[:50],
                 )
@@ -1483,7 +1950,7 @@ class MalincheMenuApp(rumps.App):
     def _quit_app(self, _):
         """Quit application gracefully."""
         response = rumps.alert(
-            "Quit Malinche",
+            "Quit Timshel",
             "Are you sure you want to quit?",
             ok="Quit",
             cancel="Cancel",
@@ -1522,7 +1989,7 @@ class MalincheMenuApp(rumps.App):
             message = (
                 "Your Anthropic (BYOK) account has run out of credits.\n\n"
                 "Top up at: https://console.anthropic.com/account/billing\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
         elif "not_found" in exc_str or "model" in exc_str:
@@ -1531,14 +1998,14 @@ class MalincheMenuApp(rumps.App):
                 "The Claude model configured in settings does not exist "
                 "or has been retired.\n\n"
                 "Change the model under Settings → Transcription.\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
         else:
             title = "⚠️ Claude API: permanent error"
             message = (
                 f"Claude API returned a permanent error:\n{exc}\n\n"
-                "For the rest of this session, Malinche will transcribe "
+                "For the rest of this session, Timshel will transcribe "
                 "without AI summaries or tags (Whisper still works normally)."
             )
 
@@ -1555,14 +2022,14 @@ class MalincheMenuApp(rumps.App):
         try:
             logger.info("Starting transcriber daemon from menu app...")
             # Don't setup signal handlers in background thread
-            self.transcriber = MalincheTranscriber(setup_signals=False)
+            self.transcriber = TimshelTranscriber(setup_signals=False)
             self.transcriber.set_ai_billing_callback(self._notify_billing_error)
             self.transcriber.set_unknown_volume_callback(self._prompt_unknown_volume)
             self.transcriber.start()
         except Exception as e:
             logger.error(f"Error in daemon thread: {e}", exc_info=True)
             rumps.notification(
-                title="Malinche",
+                title="Timshel",
                 subtitle="Error",
                 message=f"Startup error: {e}",
             )
@@ -1584,7 +2051,7 @@ class MalincheMenuApp(rumps.App):
     def run(self):
         """Start the menu bar application."""
         logger.info("=" * 60)
-        logger.info("🚀 Malinche Menu App starting...")
+        logger.info("🚀 Timshel Menu App starting...")
         logger.info("=" * 60)
 
         # If wizard is not needed, start daemon immediately
@@ -1592,7 +2059,7 @@ class MalincheMenuApp(rumps.App):
             self._start_daemon()
 
         # Run menu app (blocks until quit)
-        super(MalincheMenuApp, self).run()
+        super(TimshelMenuApp, self).run()
 
 
 def main():
@@ -1627,7 +2094,7 @@ def main():
         except Exception as policy_err:  # noqa: BLE001
             logger.debug("Could not set accessory activation policy: %s", policy_err)
 
-        app = MalincheMenuApp()
+        app = TimshelMenuApp()
         app.run()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

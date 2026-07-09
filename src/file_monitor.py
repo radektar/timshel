@@ -1,5 +1,6 @@
-"""File system monitoring for Malinche using FSEvents."""
+"""File system monitoring for Timshel using FSEvents."""
 
+import threading
 import time
 from typing import Callable, Optional
 from pathlib import Path
@@ -27,9 +28,20 @@ from src import volume_session
 DECISION_TRUSTED = "trusted"
 DECISION_BLOCKED = "blocked"
 DECISION_ONCE = "once"
+# Brak decyzji (timeout dialogu, błąd UI): NIE persystuj niczego — periodic
+# scan zapyta ponownie. Trwałe "blocked" wolno zapisać wyłącznie po realnym
+# kliknięciu użytkownika.
+DECISION_NONE = "none"
 # ``UnknownVolumeCallback`` przyjmuje (volume_path, uuid) i zwraca jedną
-# z trzech wartości powyżej.
+# z wartości powyżej.
 UnknownVolumeCallback = Callable[[Path, str], str]
+
+# Per-UUID guard: FSEvents (on_change) i periodic checker (scan_unknown_volumes)
+# działają na osobnych wątkach — bez tego ten sam nieznany dysk potrafił
+# dostać DWA dialogi naraz (drugi wątek mijał stale'owy snapshot ustawień,
+# zanim pierwszy dialog został rozstrzygnięty).
+_PROMPTS_IN_FLIGHT: set = set()
+_PROMPTS_LOCK = threading.Lock()
 
 
 class FileMonitor:
@@ -177,7 +189,7 @@ class FileMonitor:
         FSEvents fires only on mount/change events — bez tego skanu dyktafon
         podłączony przed startem nie byłby wykryty aż do unmount/remount.
         Skan respektuje istniejącą whitelist UUID. Decyzje o nieznanych dyskach
-        leżą po stronie ``MalincheMenuApp._maybe_run_volume_onboarding`` (po
+        leżą po stronie ``TimshelMenuApp._maybe_run_volume_onboarding`` (po
         starcie pokazuje banner) oraz ``on_change`` (przy późniejszym mount).
 
         Callback wywoływany jest co najwyżej raz, bo ``Transcriber.process_recorder``
@@ -239,34 +251,56 @@ class FileMonitor:
         if existing is not None:
             return existing.decision == "trusted"
 
-        try:
-            decision = self.on_unknown_volume(volume_path, uuid)
-        except Exception as error:  # noqa: BLE001
-            logger.error(
-                f"on_unknown_volume failed for {volume_path}: {error}",
-                exc_info=True,
-            )
-            return False
+        # Jeden dialog per UUID: drugi wątek (FSEvents vs periodic) odbija się
+        # tutaj, dopóki pierwszy dialog nie zostanie rozstrzygnięty.
+        with _PROMPTS_LOCK:
+            if uuid in _PROMPTS_IN_FLIGHT:
+                logger.debug(
+                    "Prompt for volume %s already in flight — skipping", uuid
+                )
+                return False
+            _PROMPTS_IN_FLIGHT.add(uuid)
 
-        if decision == DECISION_TRUSTED:
-            self._persist_decision(uuid, volume_path.name, "trusted")
-            return True
-        if decision == DECISION_BLOCKED:
-            self._persist_decision(uuid, volume_path.name, "blocked")
+        try:
+            try:
+                decision = self.on_unknown_volume(volume_path, uuid)
+            except Exception as error:  # noqa: BLE001
+                logger.error(
+                    f"on_unknown_volume failed for {volume_path}: {error}",
+                    exc_info=True,
+                )
+                return False
+
+            if decision == DECISION_TRUSTED:
+                self._persist_decision(uuid, volume_path.name, "trusted")
+                return True
+            if decision == DECISION_BLOCKED:
+                self._persist_decision(uuid, volume_path.name, "blocked")
+                return False
+            if decision == DECISION_ONCE:
+                # Mount-session trust: not persisted. Both the gate and
+                # find_recorders read this via should_process_volume, so the disk
+                # is actually transcribed; prune_to forgets it once ejected.
+                volume_session.approve_once(uuid)
+                logger.info(
+                    "Volume '%s' approved for this session only (uuid=%s)",
+                    volume_path.name,
+                    uuid,
+                )
+                return True
+            if decision == DECISION_NONE:
+                # Timeout / błąd UI: nic nie zapisuj, periodic scan zapyta znowu.
+                logger.info(
+                    "No decision for volume '%s' (uuid=%s) — will re-ask later",
+                    volume_path.name,
+                    uuid,
+                )
+                return False
+            logger.warning(f"Unknown decision from on_unknown_volume: {decision!r}")
             return False
-        if decision == DECISION_ONCE:
-            # Mount-session trust: not persisted. Both the gate and
-            # find_recorders read this via should_process_volume, so the disk
-            # is actually transcribed; prune_to forgets it once ejected.
-            volume_session.approve_once(uuid)
-            logger.info(
-                "Volume '%s' approved for this session only (uuid=%s)",
-                volume_path.name,
-                uuid,
-            )
-            return True
-        logger.warning(f"Unknown decision from on_unknown_volume: {decision!r}")
-        return False
+        finally:
+            with _PROMPTS_LOCK:
+                _PROMPTS_IN_FLIGHT.discard(uuid)
 
     def scan_unknown_volumes(self, volumes_root: Path = Path("/Volumes")) -> None:
         """Polling fallback for unknown disks + "Once" eject lifecycle.
@@ -344,11 +378,11 @@ class FileMonitor:
 
     @staticmethod
     def _persist_decision(uuid: str, name: str, decision: str) -> None:
-        """Zapisz decyzję user-a do UserSettings."""
+        """Zapisz decyzję user-a do UserSettings (atomowo, pod lockiem)."""
         try:
-            settings = UserSettings.load()
-            settings.add_trusted_volume(uuid=uuid, name=name, decision=decision)
-            settings.save()
+            UserSettings.mutate(
+                lambda s: s.add_trusted_volume(uuid=uuid, name=name, decision=decision)
+            )
             logger.info(
                 f"Volume decision saved: name={name!r} decision={decision} uuid={uuid}"
             )

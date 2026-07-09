@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for Malinche.app using py2app
+# Build script for Timshel.app using py2app
 # This script builds a macOS application bundle ready for distribution
 
 set -e  # Exit on error
@@ -9,7 +9,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${PROJECT_ROOT}"
 
-echo "🔨 Building Malinche.app..."
+echo "🔨 Building Timshel.app..."
 echo "Project root: ${PROJECT_ROOT}"
 
 # Check if we're on macOS
@@ -71,8 +71,8 @@ BUILD_EXIT_CODE=$?
 set -e  # Re-enable exit on error
 
 # Verify build - bundle should exist even if build ended with segfault
-if [ ! -d "dist/Malinche.app" ]; then
-    echo "❌ Error: Build failed - Malinche.app not found"
+if [ ! -d "dist/Timshel.app" ]; then
+    echo "❌ Error: Build failed - Timshel.app not found"
     exit 1
 fi
 
@@ -83,12 +83,12 @@ if [ $BUILD_EXIT_CODE -ne 0 ]; then
 fi
 
 # Check bundle size
-BUNDLE_SIZE=$(du -sh dist/Malinche.app | cut -f1)
-BUNDLE_SIZE_BYTES=$(du -sk dist/Malinche.app | cut -f1)
+BUNDLE_SIZE=$(du -sh dist/Timshel.app | cut -f1)
+BUNDLE_SIZE_BYTES=$(du -sk dist/Timshel.app | cut -f1)
 BUNDLE_SIZE_MB=$((BUNDLE_SIZE_BYTES / 1024))
 
 echo "✅ Build complete!"
-echo "📦 Bundle location: dist/Malinche.app"
+echo "📦 Bundle location: dist/Timshel.app"
 echo "📏 Bundle size: ${BUNDLE_SIZE} (${BUNDLE_SIZE_MB} MB)"
 
 # Check if size is reasonable (<20MB without models)
@@ -101,19 +101,19 @@ fi
 
 # Verify bundle structure
 echo "🔍 Verifying bundle structure..."
-if [ ! -f "dist/Malinche.app/Contents/Info.plist" ]; then
+if [ ! -f "dist/Timshel.app/Contents/Info.plist" ]; then
     echo "❌ Error: Info.plist not found"
     exit 1
 fi
 
-if [ ! -f "dist/Malinche.app/Contents/MacOS/Malinche" ]; then
+if [ ! -f "dist/Timshel.app/Contents/MacOS/Timshel" ]; then
     echo "❌ Error: Main executable not found"
     exit 1
 fi
 
 # Verify critical Python packages are bundled
 REQUIRED_PKGS=("anthropic" "rumps" "mutagen" "httpx" "click" "dotenv")
-BUNDLE_SITE="dist/Malinche.app/Contents/Resources/lib/python3.12"
+BUNDLE_SITE="dist/Timshel.app/Contents/Resources/lib/python3.12"
 for pkg in "${REQUIRED_PKGS[@]}"; do
     if [ ! -d "${BUNDLE_SITE}/${pkg}" ]; then
         echo "❌ Error: required package '${pkg}' not found in bundle"
@@ -123,30 +123,30 @@ done
 echo "✅ All required Python packages verified in bundle"
 
 # Make executable
-chmod +x dist/Malinche.app/Contents/MacOS/Malinche
+chmod +x dist/Timshel.app/Contents/MacOS/Timshel
 
 # Remove dangling symlinks before signing. py2app leaves a vestigial
 # Resources/lib/python3.12/site.pyo -> ../../site.pyo (Python 3.12 dropped .pyo),
 # which breaks `codesign --verify --strict` ("No such file or directory") and
 # would make the installed bundle fail Gatekeeper.
 echo "🧹 Pruning dangling symlinks..."
-find dist/Malinche.app -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+find dist/Timshel.app -type l ! -exec test -e {} \; -delete 2>/dev/null || true
 
 # Sign bundle (Developer ID if available, otherwise ad-hoc for local installs)
 if [ -n "${APPLE_DEVELOPER_ID:-}" ]; then
     echo "🔏 Signing app with Developer ID: ${APPLE_DEVELOPER_ID}"
-    codesign --force --deep --sign "${APPLE_DEVELOPER_ID}" dist/Malinche.app
+    codesign --force --deep --sign "${APPLE_DEVELOPER_ID}" dist/Timshel.app
 else
     echo "🔏 Signing app with ad-hoc certificate (local install mode)"
-    codesign --force --deep --sign - dist/Malinche.app
+    codesign --force --deep --sign - dist/Timshel.app
 fi
 
 echo ""
 echo "✅ Build verification complete!"
 echo ""
 echo "To test the app:"
-echo "  open dist/Malinche.app"
+echo "  open dist/Timshel.app"
 echo ""
 echo "To check bundle info:"
-echo "  plutil -p dist/Malinche.app/Contents/Info.plist"
+echo "  plutil -p dist/Timshel.app/Contents/Info.plist"
 

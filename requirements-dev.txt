@@ -13,6 +13,10 @@ isort>=5.12.0
 fastembed>=0.3.0
 sqlite-vec>=0.1.6
 
+# OpenAI — dev-only, used by scripts/resummarize_vault.py --provider openai
+# (one-off v2 corpus migration). Never imported by the shipped app.
+openai>=1.40
+
 
 
 

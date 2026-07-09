@@ -1,7 +1,7 @@
 """The Insights window (Direction B) — native AppKit, action-engine redesign.
 
 A standalone, resizable ``NSWindow`` that is the *home* for the connections
-Malinche finds: a left rail listing the queue, and a scrolling reader that lays
+Timshel finds: a left rail listing the queue, and a scrolling reader that lays
 out one connection as **spark → ground → act** (ADR-004 / the dashboard
 redesign):
 
@@ -23,7 +23,7 @@ returns ``None`` without AppKit.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 from src.config import config
 from src.connections import handoff as ho
@@ -85,9 +85,13 @@ _HEADER_H = 40.0
 _RAIL_W = 236.0
 _PAD = 16.0
 _READER_PAD_X = 24.0
-_ROW_H = 58.0
+# Thesis reading measure — handoff ".thesis max 30em" (em = the 24pt font-size).
+# Tunable pending the Claude Design redline; caps the line length on wide windows.
+_THESIS_MEASURE = 30.0 * 24.0
+_ROW_H = 78.0  # rail row step: 72pt row (9+16+2 + snippet 2 lines + 9) + 6 gap
 _FOOTER_H = 46.0
 _BAR_H = 48.0
+_ASKBAR_H = 56.0  # pull entry strip under the header (recall — Faza 3)
 # Radius family (design: one decision, held everywhere — native macOS feel).
 _R_CONTROL = 6.0  # buttons, segment track, CTA, icons
 _R_CHECK = 5.0    # checkbox
@@ -206,6 +210,56 @@ if _APPKIT_AVAILABLE:
                     center, 0.0, center, b.size.height * 1.25, 0
                 )
 
+    class _FilterItemView(NSView):
+        """View-based NSMenuItem for the rail filter (redesign A3).
+
+        Native NSMenu highlight is the system accent (blue); the redesign wants
+        terracotta (§02 gotcha). A view-based item paints its own terracotta bg
+        when its enclosing item is highlighted, plus a checkmark on the current
+        view and a right-aligned count (gold for 'Nowe').
+        """
+
+        def isFlipped(self):
+            return True
+
+        def drawRect_(self, _rect):
+            from AppKit import (
+                NSAttributedString,
+                NSFontAttributeName,
+                NSForegroundColorAttributeName,
+            )
+
+            b = self.bounds()
+            spec = getattr(self, "_spec", {})
+            item = self.enclosingMenuItem()
+            hot = item is not None and item.isHighlighted()
+
+            if hot:
+                _c(194, 64, 16).setFill()  # terracotta #C24010
+                NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    NSMakeRect(4, 3, b.size.width - 8, b.size.height - 6), 5.0, 5.0
+                ).fill()
+
+            def _draw(s, x, color, font, right=None):
+                a = NSAttributedString.alloc().initWithString_attributes_(
+                    s, {NSFontAttributeName: font, NSForegroundColorAttributeName: color}
+                )
+                px = x if right is None else right - a.size().width
+                a.drawAtPoint_(NSMakePoint(px, (b.size.height - a.size().height) / 2.0))
+
+            body = _c(255, 255, 255) if hot else _c(201, 187, 166)
+            if spec.get("checked"):
+                _draw("✓", 12.0, body, NSFont.systemFontOfSize_weight_(11.0, 0.0))
+            _draw(spec.get("label", ""), 28.0, body,
+                  NSFont.systemFontOfSize_weight_(12.5, 0.0))
+            n = spec.get("count", 0)
+            cnt_color = _c(255, 255, 255) if hot else (
+                _gold() if spec.get("is_new") else _c(140, 130, 115)
+            )
+            _draw(str(n), 0.0, cnt_color,
+                  NSFont.monospacedDigitSystemFontOfSize_weight_(11.0, 0.0),
+                  right=b.size.width - 14.0)
+
     class _SigilView(NSView):
         """The demoted constellation: a small static mark whose *shape* encodes
         the connection type (axis = contradiction, convergence = shared thread,
@@ -215,32 +269,46 @@ if _APPKIT_AVAILABLE:
             return True
 
         def drawRect_(self, _rect):
+            # Ported 1:1 from the geometry spec (port-appkit/06): viewBox 32×32.
+            # A node = radial glow (TYPE colour) + fixed #C24010 core r2.5 +
+            # #FAF3E2 centre r1; the bloom = gold radial r0×2.6 → #F4DD8E disc
+            # r0 → #FFFBF0 spark r0×0.4. Only strokes + node glow take the type
+            # colour; core and bloom are constant across types.
             b = self.bounds()
-            w, h = b.size.width, b.size.height
+            s = b.size.width / 32.0
 
             def pt(x, y):
-                return NSMakePoint(x / 32.0 * w, y / 32.0 * h)
+                return NSMakePoint(x * s, y * s)
 
             stroke = _hex(getattr(self, "stroke_hex", "#D9542A"))
-            node = _c(194, 64, 16)
-            bloom = _gold()
-            sw = max(1.0, 1.5 * w / 32.0)
             layout = getattr(self, "layout_key", "thread")
 
-            def line(a, z):
+            def _alpha(color, a):
+                return color.colorWithAlphaComponent_(a)
+
+            def line(a, z, alpha, w, dash=None):
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_(a)
                 p.lineToPoint_(z)
-                p.setLineWidth_(sw)
-                stroke.setStroke()
+                p.setLineWidth_(w * s)
+                p.setLineCapStyle_(1)  # round
+                if dash:
+                    p.setLineDash_count_phase_([d * s for d in dash], len(dash), 0.0)
+                _alpha(stroke, alpha).setStroke()
                 p.stroke()
 
-            def arc(a, z, ctrl):
+            def quad(a, q, z, alpha, w):
+                # Quadratic → cubic: c1 = a + 2/3(q−a), c2 = z + 2/3(q−z).
+                c1 = NSMakePoint(a.x + 2.0 / 3.0 * (q.x - a.x),
+                                 a.y + 2.0 / 3.0 * (q.y - a.y))
+                c2 = NSMakePoint(z.x + 2.0 / 3.0 * (q.x - z.x),
+                                 z.y + 2.0 / 3.0 * (q.y - z.y))
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_(a)
-                p.curveToPoint_controlPoint1_controlPoint2_(z, ctrl, ctrl)
-                p.setLineWidth_(sw)
-                stroke.setStroke()
+                p.curveToPoint_controlPoint1_controlPoint2_(z, c1, c2)
+                p.setLineWidth_(w * s)
+                p.setLineCapStyle_(1)
+                _alpha(stroke, alpha).setStroke()
                 p.stroke()
 
             def disc(center, r, color):
@@ -249,27 +317,53 @@ if _APPKIT_AVAILABLE:
                     NSMakeRect(center.x - r, center.y - r, 2 * r, 2 * r)
                 ).fill()
 
-            nr = max(1.6, 2.5 * w / 32.0)
-            br = max(2.0, 3.0 * w / 32.0)
+            def radial(center, radius, colors, locs):
+                grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
+                    colors, locs, NSColorSpace.sRGBColorSpace()
+                )
+                if grad is not None:
+                    grad.drawFromCenter_radius_toCenter_radius_options_(
+                        center, 0.0, center, radius, 0
+                    )
+
+            def node(x, y):
+                c = pt(x, y)
+                radial(c, 7.0 * s,
+                       [_alpha(stroke, 0.50), _alpha(stroke, 0.08), _alpha(stroke, 0.0)],
+                       [0.0, 0.6, 1.0])
+                disc(c, 2.5 * s, _c(194, 64, 16))    # core #C24010 (fixed)
+                disc(c, 1.0 * s, _c(250, 243, 226))  # centre #FAF3E2 (fixed)
+
+            def bloom(x, y, r0):
+                c = pt(x, y)
+                radial(c, r0 * 2.6 * s,
+                       [_c(244, 221, 142, 0.90), _c(214, 176, 51, 0.30),
+                        _c(214, 176, 51, 0.0)],
+                       [0.0, 0.55, 1.0])
+                disc(c, r0 * s, _c(244, 221, 142))        # #F4DD8E
+                disc(c, r0 * 0.4 * s, _c(255, 251, 240))  # spark #FFFBF0
 
             if layout == "contradiction":
-                arc(pt(8, 16), pt(24, 16), pt(16, 6))
-                arc(pt(8, 16), pt(24, 16), pt(16, 26))
-                disc(pt(16, 16), br, bloom)
-                disc(pt(8, 16), nr, node)
-                disc(pt(24, 16), nr, node)
+                # z-order: dashed baseline → arcs → bloom → nodes on top
+                line(pt(5, 16), pt(27, 16), 0.28, 1.0, dash=(2.0, 4.0))
+                quad(pt(8, 16), pt(16, 7), pt(24, 16), 0.85, 1.5)
+                quad(pt(8, 16), pt(16, 25), pt(24, 16), 0.85, 1.5)
+                bloom(16, 16, 2.4)
+                node(8, 16)
+                node(24, 16)
             elif layout == "triad":
+                # z-order: lines → nodes → bloom on top (centre)
                 for x, y in ((8, 9), (25, 12), (15, 26)):
-                    line(pt(16, 16), pt(x, y))
+                    line(pt(16, 16), pt(x, y), 0.55, 1.3)
                 for x, y in ((8, 9), (25, 12), (15, 26)):
-                    disc(pt(x, y), nr, node)
-                disc(pt(16, 16), br, bloom)
-            else:  # thread (shared) — convergence to an apex bloom
-                line(pt(9, 24), pt(16, 9))
-                line(pt(23, 24), pt(16, 9))
-                disc(pt(9, 24), nr, node)
-                disc(pt(23, 24), nr, node)
-                disc(pt(16, 9), br, bloom)
+                    node(x, y)
+                bloom(16, 16, 3.0)
+            else:  # thread (shared) — z-order: lines → nodes → bloom (apex)
+                line(pt(9, 24), pt(16, 9), 0.7, 1.4)
+                line(pt(23, 24), pt(16, 9), 0.7, 1.4)
+                node(9, 24)
+                node(23, 24)
+                bloom(16, 9, 3.0)
 
     class _FlashOverlay(NSView):
         """Micro-bloom + wash, shown briefly on keep/dismiss."""
@@ -328,6 +422,108 @@ if _APPKIT_AVAILABLE:
 
     def _eyebrow(text, color):
         return _label((text or "").upper(), 10.5, color)
+
+    def _typo_label(text, style, frame, wrapping=True):
+        """Wrapping/label NSTextField styled from the typography ramp (attrs)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        field = (
+            NSTextField.wrappingLabelWithString_(s)
+            if wrapping
+            else NSTextField.labelWithString_(s)
+        )
+        attrs = _T.attributes(style)
+        if attrs is not None:
+            field.setAttributedStringValue_(
+                NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+            )
+        field.setSelectable_(False)
+        field.setFrame_(frame)
+        return field
+
+    def _hairline():
+        """1 physical device pixel (spec §05): 0.5pt on Retina, 1pt @1x."""
+        try:
+            from AppKit import NSScreen
+
+            scr = NSScreen.mainScreen()
+            return 1.0 / (scr.backingScaleFactor() if scr else 2.0)
+        except Exception:  # pragma: no cover - defensive
+            return 0.5
+
+    def _reduce_motion():
+        """prefers-reduced-motion (spec §04): cuts instead of slides."""
+        try:
+            from AppKit import NSWorkspace
+
+            return bool(
+                NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+            )
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    def _slide_in(view, dy, dur, ease_pts=(0.4, 0.0, 0.2, 1.0)):
+        """opacity 0→1 + translation.y dy→0 (spec §04). Reduce-motion → cut."""
+        layer = view.layer() if view.wantsLayer() else None
+        if layer is None or _reduce_motion():
+            return  # state is already final — the cut
+        try:
+            from Quartz import (
+                CAAnimationGroup,
+                CABasicAnimation,
+                CAMediaTimingFunction,
+            )
+
+            o = CABasicAnimation.animationWithKeyPath_("opacity")
+            o.setFromValue_(0.0)
+            o.setToValue_(1.0)
+            t = CABasicAnimation.animationWithKeyPath_("transform.translation.y")
+            t.setFromValue_(dy)
+            t.setToValue_(0.0)
+            g = CAAnimationGroup.animation()
+            g.setAnimations_([o, t])
+            g.setDuration_(dur)
+            g.setTimingFunction_(
+                CAMediaTimingFunction.functionWithControlPoints____(*ease_pts)
+            )
+            layer.addAnimation_forKey_(g, "slideIn")
+        except Exception:  # pragma: no cover - animation is decoration
+            pass
+
+    def _typo_width(text, style):
+        """Rendered width of ``text`` in ``style`` (kern-aware)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        attrs = _T.attributes(style)
+        if attrs is None:
+            return 7.0 * len(s)
+        a = NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+        return float(a.size().width)
+
+    def _typo_measure(text, style, width):
+        """Wrap height for ``text`` in ``style`` at ``width`` (kern+leading aware)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        f = NSTextField.wrappingLabelWithString_(s)
+        attrs = _T.attributes(style)
+        if attrs is not None:
+            f.setAttributedStringValue_(
+                NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+            )
+        sz = f.cell().cellSizeForBounds_(NSMakeRect(0, 0, width, 100000.0))
+        return float(sz.height)
 
     def _sigil(frame, layout, hexcol):
         v = _SigilView.alloc().initWithFrame_(frame)
@@ -602,6 +798,25 @@ if _APPKIT_AVAILABLE:
             self._grounded = False
             self._scroll = None
             self._scroll_y = 0.0
+            # pull (recall) surface — Faza 3
+            self._mode = "insight"          # "insight" (push) | "recall" (pull)
+            self._recall = None             # RecallResults view-model when in recall mode
+            self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
+            self._query = ""                # last query text (persists across rebuilds)
+            self._recall_loading = False    # search in flight (off the main thread)
+            self._recall_status = "ok"      # "ok" | "empty" | "unavailable" (honest states)
+            self._pending_recall = None     # worker→main-thread handoff payload
+            self._recall_raw: List = []     # raw hits kept for the synthesis escalation
+            self._answer = None             # RecallAnswer once synthesized (the LLM door)
+            self._answer_loading = False    # synthesis in flight
+            self._pending_answer = None     # synth worker→main-thread handoff
+            self._synth_note_ids: List[str] = []  # tag -> note_id for answer-card ↗ open
+            self._answer_failed = False     # last synthesis attempt returned nothing
+            # Monotonic generation token: every new search/navigation bumps it, and
+            # an off-thread search OR synthesis result is applied only if its captured
+            # epoch still matches — text equality alone can't tell a stale answer
+            # (built from old passages) from a fresh one for the same query text.
+            self._epoch = 0
             return self
 
         # -- window lifecycle ------------------------------------------------ #
@@ -621,7 +836,7 @@ if _APPKIT_AVAILABLE:
             win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, win_w, win_h), mask, NSBackingStoreBuffered, False
             )
-            win.setTitle_("Malinche — Konstelacja")
+            win.setTitle_("Timshel — Konstelacja")
             win.setReleasedWhenClosed_(False)
             win.setTitlebarAppearsTransparent_(True)
             win.setMovableByWindowBackground_(True)
@@ -635,6 +850,39 @@ if _APPKIT_AVAILABLE:
                 )
             except Exception:  # pragma: no cover - cosmetic
                 pass
+            # Title-bar keeps ONLY ⌕ on the right (redesign): a native accessory
+            # button that opens the ask-bar overlay (screen C).
+            try:
+                from AppKit import (
+                    NSTitlebarAccessoryViewController,
+                    NSLayoutAttributeRight,
+                )
+                from src.ui import style as _style
+
+                acc_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 36, 28))
+                btn = NSButton.alloc().initWithFrame_(NSMakeRect(4, 4, 26, 20))
+                btn.setBordered_(False)
+                btn.setTitle_("")
+                img = _style.sf_symbol("magnifyingglass", point=13.0, weight="regular")
+                if img is not None:
+                    btn.setImage_(img)
+                    try:
+                        btn.setContentTintColor_(_c(250, 243, 226, 0.55))
+                    except Exception:  # pragma: no cover
+                        pass
+                else:  # pragma: no cover - symbol fallback
+                    btn.setTitle_("⌕")
+                btn.setTarget_(self)
+                btn.setAction_("titlebarAskClicked:")
+                btn.setToolTip_("Zapytaj swój korpus (⌃⌥Space)")
+                acc_view.addSubview_(btn)
+                acc = NSTitlebarAccessoryViewController.alloc().init()
+                acc.setView_(acc_view)
+                acc.setLayoutAttribute_(NSLayoutAttributeRight)
+                win.addTitlebarAccessoryViewController_(acc)
+            except Exception as exc:  # pragma: no cover - cosmetic
+                logger.debug("titlebar ⌕ accessory skipped: %s", exc)
+
             win.center()
             self._window = win
             self._render()
@@ -695,22 +943,8 @@ if _APPKIT_AVAILABLE:
             backdrop = _DarkBackground.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             bg.addSubview_(backdrop)
 
-            vis = self._deck.visible()
-            if self._deck.is_empty:
-                nav = "0 połączeń"
-            elif not vis:
-                nav = "—"
-            else:
-                pos = next(
-                    (k for k, (i, _conn) in enumerate(vis) if i == self._deck.active_index),
-                    -1,
-                )
-                nav = f"{pos + 1} z {len(vis)}" if pos >= 0 else f"{len(vis)} w widoku"
-            nav_label = _label(nav, 11.5, _muted())
-            nav_label.setFrame_(NSMakeRect(w - 200, 11, 180, 18))
-            nav_label.setAlignment_(2)
-            bg.addSubview_(nav_label)
-
+            # Position counter moved to the footer; the title-bar keeps only ⌕
+            # (redesign). ⌕ accessory is the next increment (title-bar rebuild).
             rail_h = h - _HEADER_H
             rail = self._build_rail(NSMakeRect(0, 0, _RAIL_W, rail_h))
             rail.setFrameOrigin_(NSMakePoint(0, _HEADER_H))
@@ -736,177 +970,187 @@ if _APPKIT_AVAILABLE:
 
             pad = 12.0
             cy = 13.0
-            head = _eyebrow("Połączenia", _muted())
-            head.setFrame_(NSMakeRect(pad, cy, 120, 14))
-            view.addSubview_(head)
-            cy += 22
+            in_recall = self._mode == "recall"
 
-            # Triage segmented control: Nowe / Zachowane / Odrzucone (+ counts).
-            cy = self._build_rail_segments(view, frame, cy) + 10
-
-            vis = self._deck.visible()
-            if not vis:
-                empty = _label("—", 11, _c(111, 102, 90))
-                empty.setFrame_(NSMakeRect(pad + 2, cy + 2, frame.size.width - 2 * pad, 14))
-                view.addSubview_(empty)
-                cy += _ROW_H
-            for i, conn in vis:
-                self._add_rail_row(
-                    view, conn, i, NSMakeRect(8, cy, frame.size.width - 16, _ROW_H - 6)
+            if not in_recall:
+                # Przegląd: "Podsunięte" lit + "Nowe N ⌄" filter; rows; the
+                # collapsed "Zapytałeś ›" switcher at the bottom (B5 — section
+                # headers ARE the mode switch).
+                head = _typo_label(
+                    "Podsunięte", "rail_header", NSMakeRect(pad, cy, 120, 14),
+                    wrapping=False,
                 )
-                cy += _ROW_H
+                view.addSubview_(head)
+                self._build_rail_filter(view, frame, cy)
+                cy += 30
 
-            foot_y = frame.size.height - 96
-            fdiv = NSView.alloc().initWithFrame_(
-                NSMakeRect(pad, foot_y - 10, frame.size.width - 2 * pad, 1)
-            )
-            fdiv.setWantsLayer_(True)
-            if fdiv.layer() is not None:
-                fdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
-            view.addSubview_(fdiv)
-            fhead = _eyebrow("Ostatnie transkrypty", _c(126, 117, 101))
-            fhead.setFrame_(NSMakeRect(pad, foot_y, 200, 13))
-            view.addSubview_(fhead)
-            ry = foot_y + 20
-            recents = self._recent_transcripts()
-            self._recent_paths = [r.get("path") for r in recents]
-            if not recents:
-                empty = _label("—", 11, _c(111, 102, 90))
-                empty.setFrame_(NSMakeRect(pad, ry, frame.size.width - 2 * pad, 14))
-                view.addSubview_(empty)
-            for i, r in enumerate(recents):
-                btn = NSButton.alloc().initWithFrame_(
-                    NSMakeRect(pad - 4, ry - 3, frame.size.width - 2 * pad + 8, 18)
+                vis = self._deck.visible()
+                if not vis:
+                    empty = _label("—", 11, _c(111, 102, 90))
+                    empty.setFrame_(
+                        NSMakeRect(pad + 2, cy + 2, frame.size.width - 2 * pad, 14)
+                    )
+                    view.addSubview_(empty)
+                    cy += _ROW_H
+                for i, conn in vis:
+                    self._add_rail_row(
+                        view, conn, i,
+                        NSMakeRect(8, cy, frame.size.width - 16, _ROW_H - 6),
+                    )
+                    cy += _ROW_H
+
+                self._add_collapsed_header(
+                    view, frame, frame.size.height - 40, "Zapytałeś",
+                    "collapsedAskClicked:",
                 )
-                btn.setBordered_(False)
-                btn.setTransparent_(True)
-                btn.setTitle_("")
-                btn.setTarget_(self)
-                btn.setAction_("transcriptClicked:")
-                btn.setTag_(i)
-                btn.setToolTip_("Otwórz w Obsidian")
-                lab = _label(r.get("label", "Transkrypt"), 11, _muted())
-                lab.setFrame_(NSMakeRect(4, 2, frame.size.width - 2 * pad, 14))
-                lab.setLineBreakMode_(4)
-                btn.addSubview_(lab)
-                when = r.get("when")
-                if when:
-                    t = _label(when, 11, _c(111, 102, 90))
-                    t.setFrame_(NSMakeRect(frame.size.width - pad - 34, ry, 34, 14))
-                    t.setAlignment_(2)
-                    view.addSubview_(t)
-                view.addSubview_(btn)
-                ry += 19
+            else:
+                # Pytanie: collapsed "Podsunięte N ›" on top (click → back to
+                # Przegląd), then the lit "Zapytałeś" section with the current
+                # query as the active entry (terracotta bar — the user's action).
+                n = self._deck.counts().get("new", 0)
+                self._add_collapsed_header(
+                    view, frame, cy - 4, f"Podsunięte   {n}",
+                    "backToInsightsClicked:",
+                )
+                cy += 30
+                head = _typo_label(
+                    "Zapytałeś", "rail_header", NSMakeRect(pad, cy, 140, 14),
+                    wrapping=False,
+                )
+                view.addSubview_(head)
+                cy += 24
+                if self._query:
+                    row = NSView.alloc().initWithFrame_(
+                        NSMakeRect(8, cy, frame.size.width - 16, 40)
+                    )
+                    row.setWantsLayer_(True)
+                    if row.layer() is not None:
+                        row.layer().setCornerRadius_(8.0)
+                        row.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                    tbar = NSView.alloc().initWithFrame_(NSMakeRect(1, 8, 2.5, 24))
+                    tbar.setWantsLayer_(True)
+                    if tbar.layer() is not None:
+                        tbar.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
+                        tbar.layer().setCornerRadius_(2.0)
+                    row.addSubview_(tbar)
+                    q = _typo_label(
+                        self._query, "rail_title",
+                        NSMakeRect(12, 5, frame.size.width - 16 - 20, 30),
+                    )
+                    q.setMaximumNumberOfLines_(2)
+                    try:
+                        q.cell().setTruncatesLastVisibleLine_(True)
+                    except Exception:  # pragma: no cover
+                        pass
+                    row.addSubview_(q)
+                    view.addSubview_(row)
+
+            self._recent_paths = []  # recents cut per redesign; handler no-ops
             return view
 
         @objc.python_method
-        def _build_rail_segments(self, view, frame, cy):
-            """Hybrid triage segmented control (Claude Design redesign C1).
-
-            Active segment = icon + label + count, fills the free width; inactive
-            segments collapse to icon + count. The full nav fits the 236px rail
-            without widening it. Track is one NSView (layer fill + border); each
-            segment is a hover button with icon/label/count subviews.
-            """
+        def _add_collapsed_header(self, view, frame, y, label, action):
+            """Collapsed section header '{LABEL} ›' — the mode switch (B5)."""
             from src.ui.hover import make_hover_button
-            from src.ui import style
 
-            segs = (
-                ("new", "Nowe", "sparkles"),
-                ("kept", "Zachowane", "bookmark"),
-                ("dismissed", "Odrzucone", "archivebox"),
-            )
-            counts = self._deck.counts()
-            cur = self._deck.view
-            pad = 12.0
-            track_pad = 3.0
-            seg_gap = 3.0
-            track_h = 30.0
-            item_h = track_h - 2 * track_pad  # 24
-            track_w = frame.size.width - 2 * pad
-
-            track = NSView.alloc().initWithFrame_(NSMakeRect(pad, cy, track_w, track_h))
-            track.setWantsLayer_(True)
-            if track.layer() is not None:
-                track.layer().setCornerRadius_(_R_CONTROL)
-                track.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
-                track.layer().setBorderWidth_(1.0)
-                track.layer().setBorderColor_(_c(255, 255, 255, 0.10).CGColor())
-
-            def _count_w(n):
-                return max(8.0, _text_width(str(n), 10.0))
-
-            # Inactive items take their natural width (icon + count); the active
-            # one absorbs the remainder so the longest label always fits.
-            inactive_w = {}
-            for key, _lab, _ic in segs:
-                if key != cur:
-                    inactive_w[key] = 8.0 + 14.0 + 5.0 + _count_w(counts.get(key, 0)) + 8.0
-            inner = track_w - 2 * track_pad - seg_gap * (len(segs) - 1)
-            active_w = inner - sum(inactive_w.values())
-
-            sx = track_pad
-            for tag, (key, label, symbol) in enumerate(segs):
-                active = key == cur
-                n = counts.get(key, 0)
-                empty = n == 0 and not active
-                iw = active_w if active else inactive_w[key]
-                item = make_hover_button(NSMakeRect(sx, track_pad, iw, item_h))
-                item.setTitle_("")
-                item.setBordered_(False)
-                item.setTarget_(self)
-                item.setAction_("viewSegmentClicked:")
-                item.setTag_(tag)
-                item.setToolTip_(f"{label} — {n}")
-                if item.layer() is not None:
-                    item.layer().setCornerRadius_(4.0)
-                    if active:
-                        item.layer().setBackgroundColor_(_c(217, 84, 42, 0.16).CGColor())
-                        item.layer().setBorderWidth_(1.0)
-                        item.layer().setBorderColor_(_c(217, 84, 42, 0.55).CGColor())
-
-                # icon (tinted to the segment's text colour)
-                if active:
-                    icon_tint = _c(250, 243, 226)
-                elif empty:
-                    icon_tint = _c(140, 130, 115)
-                else:
-                    icon_tint = _c(176, 162, 141)
-                img = style.sf_symbol(symbol, point=12.0, weight="regular")
-                if img is not None:
-                    iv = NSImageView.alloc().initWithFrame_(
-                        NSMakeRect(8.0, (item_h - 14) / 2.0, 14.0, 14.0)
-                    )
-                    iv.setImage_(img)
-                    try:
-                        iv.setContentTintColor_(icon_tint)
-                    except Exception:  # pragma: no cover
-                        pass
-                    item.addSubview_(iv)
-
-                cx = 8.0 + 14.0 + 5.0
-                if active:
-                    lab = _label(label, 11.0, _c(250, 243, 226), bold=True)
-                    lw = _text_width(label, 11.0) + 2.0
-                    lab.setFrame_(NSMakeRect(cx, (item_h - 14) / 2.0, lw, 14.0))
-                    item.addSubview_(lab)
-                    cx += lw + 6.0
-
-                cnt_color = (
-                    _terracotta() if active else (_c(90, 82, 73) if empty else _c(111, 102, 90))
+            btn = make_hover_button(NSMakeRect(8, y, frame.size.width - 16, 24)) or (
+                NSButton.alloc().initWithFrame_(
+                    NSMakeRect(8, y, frame.size.width - 16, 24)
                 )
-                cnt = _label(str(n), 10.0, cnt_color)
-                cnt.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10.0, 0.0))
-                cnt.setFrame_(NSMakeRect(cx, (item_h - 13) / 2.0, _count_w(n) + 2.0, 13.0))
-                item.addSubview_(cnt)
+            )
+            btn.setTitle_("")
+            btn.setBordered_(False)
+            btn.setTarget_(self)
+            btn.setAction_(action)
+            if btn.layer() is not None:
+                btn.layer().setCornerRadius_(5.0)
+            lab = _typo_label(
+                label, "collapsed_h",
+                NSMakeRect(6, 5, frame.size.width - 44, 14), wrapping=False,
+            )
+            btn.addSubview_(lab)
+            car = _label("›", 11.0, _muted())
+            car.setFrame_(NSMakeRect(frame.size.width - 34, 4, 14, 15))
+            btn.addSubview_(car)
+            view.addSubview_(btn)
 
-                track.addSubview_(item)
-                sx += iw + seg_gap
+        def collapsedAskClicked_(self, _sender):
+            # Enter Pytanie via the rail switcher: no query yet → the reader
+            # shows the ask prompt state; the overlay is the typing surface.
+            self._mode = "recall"
+            self._render()
 
-            view.addSubview_(track)
-            return cy + track_h
+        _FILTER_LABELS = (("new", "Nowe"), ("kept", "Zachowane"), ("dismissed", "Odrzucone"))
 
         @objc.python_method
+        def _build_rail_filter(self, view, frame, cy):
+            """The 'Nowe N ⌄' trigger in the rail header → view-based NSMenu (A3)."""
+            from src.ui.hover import make_hover_button
+
+            cur = self._deck.view
+            label = dict(self._FILTER_LABELS).get(cur, "Nowe")
+            n = self._deck.counts().get(cur, 0)
+            cnt_style = "rail_count" if cur == "new" else "menu_shortcut"
+            # Kern-aware measured layout: [label] 6 [count] 5 [⌄], padded 6 each
+            # side; trigger 22pt tall, radius 5 (redline).
+            # NSTextField draws with ~2pt internal inset per side — measured
+            # widths get +5 slack so the label never truncates ("NOWE"→"NOW").
+            SLACK = 5.0
+            lw = _typo_width(label, "collapsed_h") + SLACK
+            cw = _typo_width(str(n), cnt_style) + SLACK
+            PADS, GAP1, GAP2, CARW = 6.0, 5.0, 4.0, 12.0
+            tw = PADS + lw + GAP1 + cw + GAP2 + CARW + PADS
+            tx = frame.size.width - 12.0 - tw
+            trig = make_hover_button(NSMakeRect(tx, cy - 4, tw, 22)) or (
+                NSButton.alloc().initWithFrame_(NSMakeRect(tx, cy - 4, tw, 22))
+            )
+            trig.setTitle_("")
+            trig.setBordered_(False)
+            trig.setTarget_(self)
+            trig.setAction_("railFilterClicked:")
+            if trig.layer() is not None:
+                trig.layer().setCornerRadius_(5.0)
+            x = PADS
+            lab = _typo_label(label, "collapsed_h", NSMakeRect(x, 4, lw, 14), wrapping=False)
+            trig.addSubview_(lab)
+            x += lw + GAP1
+            cnt = _typo_label(str(n), cnt_style, NSMakeRect(x, 4, cw, 14), wrapping=False)
+            trig.addSubview_(cnt)
+            x += cw + GAP2
+            car = _label("⌄", 10.0, _muted())
+            car.setFrame_(NSMakeRect(x, 4, CARW, 14))
+            trig.addSubview_(car)
+            view.addSubview_(trig)
+
+        def railFilterClicked_(self, sender):
+            from AppKit import NSMenu, NSMenuItem
+
+            counts = self._deck.counts()
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+            for key, label in self._FILTER_LABELS:
+                it = NSMenuItem.alloc().init()
+                it.setTarget_(self)
+                it.setAction_("railFilterPicked:")
+                it.setRepresentedObject_(key)
+                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 210, 28))
+                v._spec = dict(
+                    label=label, count=counts.get(key, 0),
+                    checked=(key == self._deck.view), is_new=(key == "new"),
+                )
+                it.setView_(v)
+                menu.addItem_(it)
+            menu.popUpMenuPositioningItem_atLocation_inView_(
+                None, NSMakePoint(0, sender.frame().size.height + 2), sender
+            )
+
+        def railFilterPicked_(self, sender):
+            key = sender.representedObject()
+            if key:
+                self._deck.set_view(key)
+                self._reset_card_state()
+                self._render()
+
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
 
@@ -921,38 +1165,46 @@ if _APPKIT_AVAILABLE:
             active = index == self._deck.active_index
             kept = self._deck.is_kept(index)
             if btn.layer() is not None:
-                btn.layer().setCornerRadius_(_R_ROW)
+                # radius 8 per the row redline (cards keep _R_ROW).
+                btn.layer().setCornerRadius_(8.0)
                 if active:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
 
             if active:
+                # Gold bar = the insight role; the TITLE stays full white.
                 bar = NSView.alloc().initWithFrame_(
-                    NSMakeRect(1, 11, 2.5, frame.size.height - 22)
+                    NSMakeRect(1, 8, 2.5, frame.size.height - 16)
                 )
                 bar.setWantsLayer_(True)
                 if bar.layer() is not None:
                     bar.layer().setBackgroundColor_(_gold().CGColor())
-                    bar.layer().setCornerRadius_(1.25)
+                    bar.layer().setCornerRadius_(2.0)
                 btn.addSubview_(bar)
 
-            btn.addSubview_(_sigil(NSMakeRect(8, 6, 26, 26), conn.layout(), conn.resolved_tcolor()))
+            # Redline: padding 9×8, sigil 18, title 12.5/700 (1 line, truncated),
+            # snippet 11.5 clamped to 2 lines with an ellipsis — never clipped.
+            btn.addSubview_(_sigil(NSMakeRect(8, 9, 18, 18), conn.layout(), conn.resolved_tcolor()))
 
-            lab = _label(
+            text_x = 34.0
+            text_w = frame.size.width - text_x - 8.0
+            lab = _typo_label(
                 conn.resolved_label(),
-                12.5,
-                _gold() if active else _c(201, 187, 166),
-                bold=True,
+                "rail_title" if active else "rail_title_quiet",
+                NSMakeRect(text_x, 9, text_w, 16),
+                wrapping=False,
             )
-            lab.setFrame_(NSMakeRect(42, 7, frame.size.width - 60, 15))
-            lab.setLineBreakMode_(4)
+            lab.setLineBreakMode_(4)  # truncate tail
             btn.addSubview_(lab)
 
-            snip = _wrapping_label(
-                conn.snippet,
-                12,
-                _c(176, 162, 141) if active else _c(140, 130, 115),
-                NSMakeRect(42, 24, frame.size.width - 50, 30),
+            snip = _typo_label(
+                conn.snippet, "rail_snippet",
+                NSMakeRect(text_x, 27, text_w, frame.size.height - 27 - 8),
             )
+            snip.setMaximumNumberOfLines_(2)
+            try:
+                snip.cell().setTruncatesLastVisibleLine_(True)
+            except Exception:  # pragma: no cover - older AppKit
+                pass
             btn.addSubview_(snip)
 
             if kept:
@@ -975,31 +1227,49 @@ if _APPKIT_AVAILABLE:
         @objc.python_method
         def _build_reader(self, frame):
             view = _DashFlippedView.alloc().initWithFrame_(frame)
-            div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 1, frame.size.height))
+            div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, _hairline(), frame.size.height))
             div.setWantsLayer_(True)
             if div.layer() is not None:
                 div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
             view.addSubview_(div)
 
+            # Stały ask-bar cut per redesign (changelog): the pull entry moves to
+            # the ⌥Space overlay (ekran C) + ⌕ in the title-bar; the reader
+            # content now starts directly under the native titlebar. In Pytanie
+            # the question becomes the reader title, not a field.
+            top = 0.0
+            if self._mode == "recall":
+                self._build_recall_reader(view, frame, top)
+            else:
+                self._build_insight_reader(view, frame, top)
+            return view
+
+        @objc.python_method
+        def _build_insight_reader(self, view, frame, top):
             conn = self._deck.active()
             if conn is None:
                 if self._transcribing:
-                    return self._build_skeleton(view, frame)
+                    self._build_skeleton(view, frame)
+                    return
                 if not self._deck.is_empty:
                     # The deck has connections, just none in the current view.
                     title, subtitle = self._EMPTY_VIEW_COPY.get(
                         self._deck.view, (None, None)
                     )
-                    return self._build_empty(view, frame, title, subtitle)
-                return self._build_empty(view, frame)
+                    self._build_empty(view, frame, title, subtitle)
+                    return
+                self._build_empty(view, frame)
+                return
 
             has_sel = bool(self._selected)
+            if not has_sel:
+                self._handoff_bar_shown = False  # next reveal animates again
             bar_h = _BAR_H if has_sel else 0.0
-            scroll_h = frame.size.height - _FOOTER_H - bar_h
+            scroll_h = frame.size.height - _FOOTER_H - bar_h - top
 
             # scrolling document (spark + ground + directions)
             scroll = NSScrollView.alloc().initWithFrame_(
-                NSMakeRect(0, 0, frame.size.width, scroll_h)
+                NSMakeRect(0, top, frame.size.width, scroll_h)
             )
             scroll.setHasVerticalScroller_(True)
             scroll.setAutohidesScrollers_(True)
@@ -1032,7 +1302,692 @@ if _APPKIT_AVAILABLE:
             self._build_footer(
                 view, NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H)
             )
-            return view
+
+        @objc.python_method
+        def _build_recall_reader(self, view, frame, top):
+            # The triage footer DOES NOT EXIST in Pytanie mode (redesign B) —
+            # the mistake disappears from the architecture, not behind an `if`
+            # on the buttons: the reader owns the full height here.
+            scroll_h = frame.size.height - top
+            scroll = NSScrollView.alloc().initWithFrame_(
+                NSMakeRect(0, top, frame.size.width, scroll_h)
+            )
+            scroll.setHasVerticalScroller_(True)
+            scroll.setAutohidesScrollers_(True)
+            scroll.setDrawsBackground_(False)
+            scroll.setBorderType_(0)
+            doc, content_h = self._build_recall_content(frame.size.width, self._recall)
+            doc.setFrame_(NSMakeRect(0, 0, frame.size.width, max(content_h, scroll_h)))
+            scroll.setDocumentView_(doc)
+            self._scroll = scroll
+            view.addSubview_(scroll)
+
+        # -- ask-bar (pull entry) + recall results (no LLM) ------------------ #
+
+        @objc.python_method
+        def _build_askbar(self, view, frame):
+            strip = NSView.alloc().initWithFrame_(frame)
+            strip.setWantsLayer_(True)
+            if strip.layer() is not None:
+                strip.layer().setBackgroundColor_(_c(0, 0, 0, 0.14).CGColor())
+            view.addSubview_(strip)
+            bd = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, frame.size.height - 1, frame.size.width, 1)
+            )
+            bd.setWantsLayer_(True)
+            if bd.layer() is not None:
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, 0.06).CGColor())
+            strip.addSubview_(bd)
+
+            pad = 15.0
+            field_h = 38.0
+            fy = (frame.size.height - field_h) / 2.0
+            left = pad
+            if self._mode == "recall":
+                back = _pill_button(
+                    "‹ Podsunięte", NSMakeRect(pad, fy + 6, 118, 26),
+                    _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                    self, "backToInsightsClicked:", 12.0,
+                )
+                strip.addSubview_(back)
+                left = pad + 130
+
+            fld_w = max(160.0, frame.size.width - left - pad)
+            cont = NSView.alloc().initWithFrame_(NSMakeRect(left, fy, fld_w, field_h))
+            cont.setWantsLayer_(True)
+            if cont.layer() is not None:
+                cont.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
+                cont.layer().setCornerRadius_(6.0)
+                cont.layer().setBorderWidth_(1.0)
+                cont.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+            strip.addSubview_(cont)
+
+            glyph = _label("⌕", 15, _terracotta())
+            glyph.setFrame_(NSMakeRect(11, (field_h - 20) / 2.0, 18, 20))
+            cont.addSubview_(glyph)
+
+            fld = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(34, (field_h - 22) / 2.0, fld_w - 44, 22)
+            )
+            fld.setEditable_(True)
+            fld.setBezeled_(False)
+            fld.setBordered_(False)
+            fld.setDrawsBackground_(False)
+            fld.setTextColor_(_cream())
+            fld.setFont_(NSFont.systemFontOfSize_(14))
+            try:
+                fld.setPlaceholderString_("Zapytaj swój korpus…  (lokalnie, bez AI)")
+                fld.setFocusRingType_(1)  # NSFocusRingTypeNone
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+            if self._query:
+                fld.setStringValue_(self._query)
+            fld.setTarget_(self)
+            fld.setAction_("askSubmitted:")
+            cont.addSubview_(fld)
+            self._ask_field = fld
+
+        @objc.python_method
+        def _index_snapshot(self):
+            cb = self._callbacks.get("recall_index_status")
+            if cb is None:
+                return None
+            try:
+                return cb()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("recall_index_status callback failed: %s", exc)
+                return None
+
+        @objc.python_method
+        def _build_index_banner(self, doc, cy, inner_w):
+            """Honest 'still indexing' strip: you can ask now, results are partial."""
+            snap = self._index_snapshot()
+            if not snap or snap.get("state") != "indexing":
+                return cy
+            done, total = snap.get("done", 0), snap.get("total", 0)
+            count = f"  ({done}/{total})" if total else ""
+            band = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 30))
+            band.setWantsLayer_(True)
+            if band.layer() is not None:
+                band.layer().setBackgroundColor_(_c(214, 176, 51, 0.08).CGColor())
+                band.layer().setCornerRadius_(6.0)
+            doc.addSubview_(band)
+            lbl = _label(f"Indeksuję Twoje notatki{count} — możesz pytać już teraz "
+                         f"(wyniki częściowe).", 12, _gold())
+            lbl.setFrame_(NSMakeRect(_READER_PAD_X + 10, cy + 7, inner_w - 20, 16))
+            doc.addSubview_(lbl)
+            return cy + 40
+
+        @objc.python_method
+        def _build_recall_content(self, reader_w, vm):
+            doc = _DashFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, reader_w, 10))
+            inner_w = reader_w - 2 * _READER_PAD_X
+            cy = _PAD
+            self._recall_note_ids = []
+            self._synth_note_ids = []  # reset in lockstep — never carry stale answer tags
+
+            # honest partial-index banner while the background backfill is still running
+            cy = self._build_index_banner(doc, cy, inner_w)
+
+            # query header — the question IS the reader title (redesign B), not a
+            # field: small "Zapytałeś" eyebrow + the query as a 21pt display title.
+            if self._query:
+                eye = _typo_label(
+                    "Zapytałeś", "collapsed_h", NSMakeRect(_READER_PAD_X, cy, inner_w, 13),
+                    wrapping=False,
+                )
+                doc.addSubview_(eye)
+                cy += 20
+                measure = min(inner_w, _THESIS_MEASURE)
+                qh = max(24.0, _typo_measure(self._query, "question_title", measure))
+                doc.addSubview_(_typo_label(
+                    self._query, "question_title",
+                    NSMakeRect(_READER_PAD_X, cy, measure, qh)))
+                cy += qh + 12
+
+            if self._recall_loading:
+                lbl = _label("Szukam w Twoich notatkach…  (lokalnie, bez AI)", 13.5, _muted())
+                lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
+                doc.addSubview_(lbl)
+                cy += 30
+                doc.setFrameSize_(NSMakeSize(reader_w, cy + _PAD))
+                return doc, cy + _PAD
+
+            if vm is None:
+                lbl = _wrapping_label(
+                    "Zapytaj swój korpus — ⌃⌥Space albo ⌕ w pasku tytułu. "
+                    "Przeszukam Twoje notatki lokalnie.",
+                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 26))
+                doc.addSubview_(lbl)
+                cy += 34
+                # Privacy disclosure — the trust backbone: local search, cloud only on
+                # the explicit synthesis, and only matched excerpts.
+                privacy = (
+                    "Wyszukiwanie jest w 100% lokalne — nic nie opuszcza Twojego Maca. "
+                    "Do chmury idą tylko dopasowane fragmenty i tylko gdy klikniesz "
+                    "„Zsyntetyzuj”."
+                )
+                ph = _measure_height(privacy, 12, inner_w)
+                doc.addSubview_(_wrapping_label(
+                    privacy, 12, _c(111, 102, 90),
+                    NSMakeRect(_READER_PAD_X, cy, inner_w, ph)))
+                doc.setFrameSize_(NSMakeSize(reader_w, cy + ph + 20))
+                return doc, cy + ph + 20
+
+            if not vm.is_empty:
+                meta = _label(f"{vm.count} fragmentów · lokalnie, bez AI", 12, _muted())
+                meta.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 16))
+                doc.addSubview_(meta)
+                cy += 22
+
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
+            rule.setWantsLayer_(True)
+            if rule.layer() is not None:
+                rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
+            doc.addSubview_(rule)
+            cy += 16
+
+            if vm.is_empty and self._recall_status != "ok":
+                cy = self._build_recall_notready(doc, cy, inner_w)
+            elif vm.is_empty:
+                cy = self._build_recall_abstinence(doc, vm, cy, inner_w, reader_w)
+            elif self._answer is not None:
+                # synthesized card (thesis) sits above its grounding (the same passages)
+                cy = self._build_answer_card(doc, cy, inner_w, reader_w)
+                shdr = _eyebrow("Źródła", _muted())
+                shdr.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(shdr)
+                cy += 20
+                for row in vm.rows:
+                    cy = self._build_recall_row(doc, row, cy, inner_w, reader_w)
+            else:
+                for row in vm.rows:
+                    cy = self._build_recall_row(doc, row, cy, inner_w, reader_w)
+                cy = self._build_escalation(doc, cy, inner_w, reader_w)
+
+            cy += _PAD
+            doc.setFrameSize_(NSMakeSize(reader_w, cy))
+            return doc, cy
+
+        @objc.python_method
+        def _build_recall_notready(self, doc, cy, inner_w):
+            # Honest states distinct from a genuine no-match: never claim "nothing in
+            # your notes about X" when the search couldn't actually run.
+            if self._recall_status == "empty":
+                head = "Twoje notatki nie są jeszcze zaindeksowane."
+                sub = ("Recall potrzebuje jednorazowego zindeksowania vaulta, zanim "
+                       "przeszuka — to nie znaczy, że nic nie ma. (Auto-backfill: wkrótce.)")
+            else:  # "unavailable"
+                head = "Nie udało się przeszukać notatek."
+                sub = ("Indeks lub lokalny model nie są jeszcze gotowe — spróbuj "
+                       "ponownie za chwilę. To nie znaczy, że nic nie ma.")
+            hh = max(24.0, _measure_height(head, 20, inner_w))
+            doc.addSubview_(_wrapping_label(
+                head, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            cy += hh + 8
+            sh = max(18.0, _measure_height(sub, 13.5, inner_w))
+            doc.addSubview_(_wrapping_label(
+                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            cy += sh + 12
+            return cy
+
+        @objc.python_method
+        def _build_escalation(self, doc, cy, inner_w, reader_w):
+            # The one LLM door: explicit, gold, and honest that excerpts leave the Mac.
+            cy += 8
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
+            rule.setWantsLayer_(True)
+            if rule.layer() is not None:
+                rule.layer().setBackgroundColor_(_c(214, 176, 51, 0.22).CGColor())
+            doc.addSubview_(rule)
+            cy += 14
+            if self._answer_loading:
+                lbl = _label(
+                    "Syntetyzuję…  (jedyny moment, gdy dopasowane fragmenty idą do chmury)",
+                    12.5, _gold())
+                lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
+                doc.addSubview_(lbl)
+                cy += 28
+                return cy
+            btn = _pill_button(
+                "✦ Zsyntetyzuj te wyniki", NSMakeRect(_READER_PAD_X, cy, 214, 30),
+                _c(244, 221, 142), _c(214, 176, 51, 0.08), _c(214, 176, 51, 0.5),
+                self, "synthesizeClicked:", 13.0)
+            doc.addSubview_(btn)
+            note = _label("Tylko teraz fragmenty świadomie opuszczają Maca.", 11.5, _c(140, 130, 115))
+            note.setFrame_(NSMakeRect(_READER_PAD_X + 226, cy + 7, inner_w - 226, 16))
+            doc.addSubview_(note)
+            cy += 40
+            return cy
+
+        @objc.python_method
+        def _build_answer_card(self, doc, cy, inner_w, reader_w):
+            self._synth_note_ids = []
+            ans = self._answer
+            answered = getattr(ans, "answered", True)
+            eye = _eyebrow(
+                "✦ Synteza" if answered else "✦ Synteza — brak pokrycia w notatkach",
+                _gold() if answered else _muted())
+            eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 130, 13))
+            doc.addSubview_(eye)
+            back = _pill_button(
+                "‹ tylko wyniki", NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
+                _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                self, "clearAnswerClicked:", 11.5)
+            doc.addSubview_(back)
+            cy += 24
+
+            # When the model says the notes don't cover the question, the thesis is an
+            # honest "not covered" note — render it muted, not as a confident answer.
+            thesis = "„" + (getattr(ans, "thesis", "") or "") + "”"
+            tcolor = _cream() if answered else _c(176, 162, 141)
+            th = max(28.0, _measure_height(thesis, 22, inner_w))
+            doc.addSubview_(_wrapping_label(
+                thesis, 22, tcolor, NSMakeRect(_READER_PAD_X, cy, inner_w, th)))
+            cy += th + 14
+
+            for ev in getattr(ans, "evidence", None) or []:
+                cy = self._build_answer_evidence(doc, ev, cy, inner_w, reader_w)
+
+            dirs = getattr(ans, "directions", None) or []
+            if dirs:
+                dh = _eyebrow("Kierunki", _muted())
+                dh.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(dh)
+                cy += 20
+                for d in dirs:
+                    line = "→  " + (d or "").strip()
+                    lh = max(18.0, _measure_height(line, 13.5, inner_w))
+                    doc.addSubview_(_wrapping_label(
+                        line, 13.5, _cream_soft(), NSMakeRect(_READER_PAD_X, cy, inner_w, lh)))
+                    cy += lh + 6
+
+            save = _pill_button(
+                "⤓ Zapisz do notatek", NSMakeRect(_READER_PAD_X, cy + 6, 170, 28),
+                _c(255, 255, 255), _terra_deep(), _terra_deep(), self, "saveAnswerClicked:", 12.5)
+            doc.addSubview_(save)
+            cy += 46
+            return cy
+
+        @objc.python_method
+        def _build_answer_evidence(self, doc, ev, cy, inner_w, reader_w):
+            from src.ui.recall_presenter import split_stem
+
+            date, title = split_stem(getattr(ev, "note", "") or "")
+            top = f"{date}   ·   {title}" if date else (title or getattr(ev, "note", ""))
+            tl = _label(top, 12.0, _muted())
+            tl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 40, 16))
+            doc.addSubview_(tl)
+            idx = len(self._synth_note_ids)
+            self._synth_note_ids.append(getattr(ev, "note", "") or "")
+            ob = _pill_button(
+                "↗", NSMakeRect(reader_w - _READER_PAD_X - 30, cy - 2, 30, 22),
+                _terracotta(), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
+                self, "synthOpenClicked:", 12.0)
+            ob.setTag_(idx)
+            doc.addSubview_(ob)
+            cy += 19
+            quote = "„" + (getattr(ev, "quote", "") or "") + "”"
+            qh = max(16.0, _measure_height(quote, 13.5, inner_w - 12))
+            lbl = _wrapping_label(quote, 13.5, _cream_soft(),
+                                  NSMakeRect(_READER_PAD_X + 12, cy, inner_w - 12, qh))
+            doc.addSubview_(lbl)
+            cy += qh + 12
+            return cy
+
+        @objc.python_method
+        def _build_recall_row(self, doc, row, cy, inner_w, reader_w):
+            x = _READER_PAD_X
+            faint = _c(111, 102, 90)
+            rank = _label(f"{row.rank:02d}", 12, faint)
+            rank.setFrame_(NSMakeRect(x, cy + 1, 24, 15))
+            doc.addSubview_(rank)
+            text_x = x + 32
+            text_w = inner_w - 32
+
+            # Top line: date (mono, gold) + title (bold) — the redline split.
+            tx = text_x
+            if row.date:
+                dlab = _typo_label(row.date, "result_date",
+                                   NSMakeRect(tx, cy, 60, 16), wrapping=False)
+                doc.addSubview_(dlab)
+                tx += _text_width(row.date, 11.5) + 16
+            if row.title:
+                tlab = _typo_label(row.title, "result_title",
+                                   NSMakeRect(tx, cy, text_w - (tx - text_x) - 96, 16),
+                                   wrapping=False)
+                tlab.setLineBreakMode_(4)
+                doc.addSubview_(tlab)
+
+            idx = len(self._recall_note_ids)
+            self._recall_note_ids.append(row.note_id)
+            ob = _pill_button(
+                "↗ otwórz", NSMakeRect(reader_w - _READER_PAD_X - 84, cy - 3, 84, 22),
+                _c(224, 213, 191, 0.45), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
+                self, "recallOpenClicked:", 11.5,
+            )
+            ob.setTag_(idx)
+            doc.addSubview_(ob)
+            cy += 20
+
+            quote = "„" + row.quote + "”"
+            qh = max(18.0, _typo_measure(quote, "result_quote", text_w))
+            ql = _typo_label(quote, "result_quote", NSMakeRect(text_x, cy, text_w, qh))
+            if row.dimmed:
+                from AppKit import (
+                    NSAttributedString, NSFontAttributeName,
+                    NSForegroundColorAttributeName, NSParagraphStyleAttributeName,
+                )
+                from src.ui import typography as _T
+                at = _T.attributes("result_quote", color_alpha=0.45)
+                ql.setAttributedStringValue_(
+                    NSAttributedString.alloc().initWithString_attributes_(quote, at))
+            doc.addSubview_(ql)
+            cy += qh + 12
+
+            sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, _hairline()))
+            sep.setWantsLayer_(True)
+            if sep.layer() is not None:
+                sep.layer().setBackgroundColor_(_c(255, 255, 255, 0.055).CGColor())
+            doc.addSubview_(sep)
+            cy += 12
+            return cy
+
+        @objc.python_method
+        def _build_recall_abstinence(self, doc, vm, cy, inner_w, reader_w):
+            head_txt = "Nic w Twoich notatkach na to pytanie."
+            hh = max(24.0, _measure_height(head_txt, 20, inner_w))
+            doc.addSubview_(_wrapping_label(
+                head_txt, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            cy += hh + 8
+            sub = ("Search jest w 100% lokalny i niczego nie zmyśla — "
+                   "nic nie opuszcza Twojego Maca.")
+            sh = max(18.0, _measure_height(sub, 13.5, inner_w))
+            doc.addSubview_(_wrapping_label(
+                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            cy += sh + 20
+
+            if vm.nearest is not None:
+                nh = _eyebrow("Najbliższe (słabe) trafienie", _c(111, 102, 90))
+                nh.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                doc.addSubview_(nh)
+                cy += 20
+                cy = self._build_recall_row(doc, vm.nearest, cy, inner_w, reader_w)
+            return cy
+
+        # -- ask-bar / recall actions --------------------------------------- #
+
+        def askSubmitted_(self, sender):
+            try:
+                text = str(sender.stringValue()).strip()
+            except Exception:  # pragma: no cover - defensive
+                text = ""
+            self._run_recall(text)
+
+        def recallOpenClicked_(self, sender):
+            ids = getattr(self, "_recall_note_ids", [])
+            i = int(sender.tag())
+            if 0 <= i < len(ids):
+                self._invoke_callback("open_note", ids[i])
+
+        def backToInsightsClicked_(self, sender):
+            self._epoch += 1          # invalidate any in-flight search/synthesis
+            self._mode = "insight"
+            self._recall = None
+            self._recall_loading = False
+            self._answer = None
+            self._answer_loading = False
+            self._query = ""
+            self._render()
+
+        @objc.python_method
+        def _reset_recall_flight(self):
+            """Clear per-query state and bump the epoch so in-flight workers drop."""
+            self._epoch += 1
+            self._recall = None
+            self._recall_status = "ok"
+            self._answer = None
+            self._answer_loading = False
+            self._answer_failed = False
+
+        @objc.python_method
+        def _run_recall(self, text):
+            self._query = (text or "").strip()
+            if not self._query:
+                self._reset_recall_flight()
+                self._mode = "insight"
+                self._recall_loading = False
+                self._render()
+                return
+            # Show the query in a "searching" state immediately, then do the work off
+            # the main thread — the embed + full-corpus BM25 (and a first-run model
+            # download) must never block the AppKit UI, mirroring the digest/retranscribe
+            # daemon threads.
+            self._reset_recall_flight()
+            self._mode = "recall"
+            self._recall_loading = True
+            self._scroll_y = 0.0
+            epoch = self._epoch
+            self._render()
+            import threading
+
+            threading.Thread(
+                target=self._recall_worker_, args=(self._query, epoch),
+                name="RecallSearch", daemon=True,
+            ).start()
+
+        @objc.python_method
+        def _recall_worker_(self, query, epoch):
+            """Runs on a daemon thread: search + build the view-model, then marshal
+            the result back onto the main thread for rendering."""
+            results, confidence, status = [], 0.0, "unavailable"
+            cb = self._callbacks.get("recall_search")
+            if cb is None:
+                status = "unavailable"
+            else:
+                try:
+                    out = cb(query)
+                    if isinstance(out, tuple) and len(out) == 3:
+                        results, confidence, status = out
+                    elif isinstance(out, tuple) and len(out) == 2:
+                        results, confidence = out
+                        status = "ok"
+                    else:  # wrong-shape contract → treat as failure, not "no match"
+                        status = "unavailable"
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_search callback failed: %s", exc)
+                    status = "unavailable"
+            from src.ui import recall_presenter as rp
+
+            self._pending_recall = {
+                "epoch": epoch,
+                "query": query,
+                "vm": rp.present(query, results, confidence),
+                "status": status,
+                "results": results,  # raw hits kept for the optional synthesis escalation
+            }
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyRecall:", None, False
+            )
+
+        def applyRecall_(self, _ignored):
+            payload = self._pending_recall
+            # Drop stale results — a newer search/navigation bumped the epoch meanwhile.
+            if not payload or payload.get("epoch") != self._epoch:
+                return
+            self._recall = payload["vm"]
+            self._recall_status = payload.get("status", "ok")
+            self._recall_raw = payload.get("results", [])
+            self._recall_loading = False
+            self._render()
+
+        # -- synthesis escalation (the one LLM door in the pull path) -------- #
+
+        @objc.python_method
+        def _run_synthesis(self):
+            if not self._recall_raw or self._answer_loading:
+                return
+            self._answer_failed = False
+            self._answer_loading = True
+            epoch = self._epoch
+            self._render()
+            import threading
+
+            threading.Thread(
+                target=self._synth_worker_, args=(self._query, list(self._recall_raw), epoch),
+                name="RecallSynthesis", daemon=True,
+            ).start()
+
+        @objc.python_method
+        def _synth_worker_(self, query, results, epoch):
+            answer = None
+            cb = self._callbacks.get("recall_synthesize")
+            if cb is not None:
+                try:
+                    answer = cb(query, results)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_synthesize callback failed: %s", exc)
+            self._pending_answer = {"epoch": epoch, "answer": answer}
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyAnswer:", None, False
+            )
+
+        def applyAnswer_(self, _ignored):
+            payload = self._pending_answer
+            # Epoch guard: a stale answer (built from now-replaced passages) must never
+            # land on a newer result set — that would cite passages the user can't see.
+            if not payload or payload.get("epoch") != self._epoch:
+                return
+            self._answer = payload.get("answer")
+            self._answer_loading = False
+            if self._answer is None:
+                # Synthesis attempted but produced nothing (no key, disabled, or error) —
+                # tell the user instead of silently snapping back to the same results.
+                self._answer_failed = True
+                self._show_toast("Synteza niedostępna — sprawdź klucz API lub spróbuj ponownie")
+            self._render()
+
+        def synthesizeClicked_(self, sender):
+            self._run_synthesis()
+
+        def clearAnswerClicked_(self, sender):
+            self._answer = None
+            self._answer_loading = False
+            self._answer_failed = False
+            self._render()
+
+        def saveAnswerClicked_(self, sender):
+            if self._answer is None:
+                return
+            path = None
+            cb = self._callbacks.get("recall_save_answer")
+            if cb is not None:
+                try:
+                    path = cb(self._query, self._answer)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("recall_save_answer callback failed: %s", exc)
+            self._show_toast("Zapisano do notatek" if path else "Nie udało się zapisać")
+
+        def synthOpenClicked_(self, sender):
+            ids = getattr(self, "_synth_note_ids", [])
+            i = int(sender.tag())
+            if 0 <= i < len(ids):
+                self._invoke_callback("open_note", ids[i])
+
+        def askAboutInsightClicked_(self, sender):
+            # push→pull: seed the ask-bar with the active insight and search the corpus.
+            conn = self._deck.active()
+            if conn is not None and getattr(conn, "rationale", ""):
+                self._run_recall(conn.rationale)
+
+        @objc.python_method
+        def focusRecall(self, prefill=None):
+            """Recall entry (⌃⌥Space / ⌕): show the ask-bar overlay (screen C).
+
+            The persistent in-window strip was cut in the redesign; the pull entry
+            is now a floating NSPanel overlay. A prefill runs the query straight
+            away (the 'Zapytaj o to' path) instead of opening the field.
+            """
+            if prefill:
+                self._ensure_window()
+                self._run_recall(prefill)
+                self.showWindow()
+                return
+            self.showAskOverlay()
+
+        @objc.python_method
+        def showAskOverlay(self):
+            """Present the ask-bar overlay (redesign C): a borderless floating
+            NSPanel with a dark rounded field + terracotta focus ring."""
+            from AppKit import (
+                NSPanel, NSColor, NSTextField, NSFloatingWindowLevel,
+                NSBackingStoreBuffered, NSAttributedString,
+                NSForegroundColorAttributeName, NSFontAttributeName,
+            )
+
+            self._ensure_window()  # results land in the window; keep it realised
+            W, FLD_H = 560.0, 52.0
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, W, FLD_H + 24), 1 << 7, NSBackingStoreBuffered, False
+            )
+            panel.setLevel_(NSFloatingWindowLevel)
+            panel.setOpaque_(False)
+            panel.setBackgroundColor_(NSColor.clearColor())
+            panel.setHasShadow_(True)
+            panel.setHidesOnDeactivate_(True)
+
+            container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, FLD_H + 24))
+            container.setWantsLayer_(True)
+            if container.layer() is not None:
+                container.layer().setCornerRadius_(10.0)
+                container.layer().setBackgroundColor_(_c(32, 30, 40, 0.98).CGColor())
+                container.layer().setBorderWidth_(3.0)
+                container.layer().setBorderColor_(_c(217, 84, 42, 0.18).CGColor())
+            panel.setContentView_(container)
+
+            fld = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(18, 12, W - 36, FLD_H)
+            )
+            fld.setBordered_(False)
+            fld.setBezeled_(False)
+            fld.setDrawsBackground_(False)
+            fld.setFocusRingType_(1)  # NSFocusRingTypeNone — the ring is on the container
+            fld.setTextColor_(_c(250, 243, 226))
+            ph = NSAttributedString.alloc().initWithString_attributes_(
+                "Zapytaj swój korpus…",
+                {
+                    NSForegroundColorAttributeName: _c(250, 243, 226, 0.4),
+                    NSFontAttributeName: NSFont.systemFontOfSize_weight_(15.0, 0.0),
+                },
+            )
+            fld.setPlaceholderAttributedString_(ph)
+            fld.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.0))
+            fld.setTarget_(self)
+            fld.setAction_("askOverlaySubmitted:")
+            container.addSubview_(fld)
+            self._ask_overlay = panel
+            self._ask_overlay_field = fld
+
+            panel.center()
+            panel.makeKeyAndOrderFront_(None)
+            panel.makeFirstResponder_(fld)
+
+        def titlebarAskClicked_(self, _sender):
+            self.showAskOverlay()
+
+        def askOverlaySubmitted_(self, sender):
+            try:
+                text = str(sender.stringValue()).strip()
+            except Exception:  # pragma: no cover - defensive
+                text = ""
+            panel = getattr(self, "_ask_overlay", None)
+            if panel is not None:
+                panel.orderOut_(None)
+                self._ask_overlay = None
+            if text:
+                self._ensure_window()
+                self._run_recall(text)
+                self.showWindow()
 
         @objc.python_method
         def _build_reader_content(self, reader_w, conn):
@@ -1046,22 +2001,32 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(
                 _sigil(NSMakeRect(_READER_PAD_X, cy, 34, 34), conn.layout(), conn.resolved_tcolor())
             )
-            tlabel = _eyebrow(conn.resolved_label(), _hex(conn.resolved_tcolor()))
-            tlabel.setFrame_(NSMakeRect(_READER_PAD_X + 44, cy + 10, inner_w - 160, 14))
+            # type eyebrow — gold, uppercase, tracked (typography ramp)
+            tlabel = _typo_label(
+                conn.resolved_label(), "eyebrow",
+                NSMakeRect(_READER_PAD_X + 44, cy + 12, inner_w - 160, 14),
+                wrapping=False,
+            )
             doc.addSubview_(tlabel)
-            eye = _label("✦ NOWY INSIGHT", 10.5, _c(154, 140, 123))
-            eye.setFrame_(NSMakeRect(reader_w - 160, cy + 10, 136, 14))
+            # Right-side marker (A6): "digest dd.mm · z chmury" — the to-cloud
+            # provenance chip, NOT the beta.17 "✦ Nowy insight" badge.
+            marker = getattr(self._deck, "digest_label", None) or "z chmury"
+            eye = _typo_label(
+                "✦ " + marker, "cloud_chip",
+                NSMakeRect(reader_w - 230, cy + 12, 206, 14), wrapping=False,
+            )
             eye.setAlignment_(2)
             doc.addSubview_(eye)
             cy += 46
 
-            # thesis (the spark)
+            # thesis (the spark) — display 24pt, capped to a readable measure (30em)
             thesis = "„" + conn.rationale + "”"
-            th = max(30.0, _measure_height(thesis, 21, inner_w))
+            measure = min(inner_w, _THESIS_MEASURE)
+            th = max(30.0, _typo_measure(thesis, "thesis", measure))
             doc.addSubview_(
-                _wrapping_label(thesis, 21, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, th))
+                _typo_label(thesis, "thesis", NSMakeRect(_READER_PAD_X, cy, measure, th))
             )
-            cy += th + 14
+            cy += th + 16
 
             # note chips
             self._note_basenames = list(conn.notes)
@@ -1074,6 +2039,12 @@ if _APPKIT_AVAILABLE:
                     cx = _READER_PAD_X
                     cy += 30
             cy += 34
+
+            # NOTE: the beta.17 "✦ Zapytaj o to" pill is CUT — in the redesign
+            # the card carries no such button (A1: eyebrow → thesis → chips →
+            # Dowód → Kierunki). The push→pull entry from a card is a gesture
+            # into the ask-bar with a prefill (spec C); askAboutInsightClicked_
+            # stays wired for that entry point.
 
             # ground — evidence toggle + (when expanded) rows
             if conn.evidence:
@@ -1103,7 +2074,7 @@ if _APPKIT_AVAILABLE:
 
             # divider
             rule = NSView.alloc().initWithFrame_(
-                NSMakeRect(_READER_PAD_X, cy, inner_w, 1)
+                NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline())
             )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
@@ -1161,13 +2132,13 @@ if _APPKIT_AVAILABLE:
 
             selected = index in self._selected
             # Design C3: padding 12/14, cols [18px chk] 11 [text], radius 12.
-            PADX = 14.0
-            PADTOP = 12.0
-            BOX = 18.0
+            PADX = 12.0
+            PADTOP = 11.0
+            BOX = 16.0
             COLGAP = 11.0
-            text_x = PADX + BOX + COLGAP  # 43
+            text_x = PADX + BOX + COLGAP  # 39
             text_w = inner_w - text_x - PADX
-            th = _measure_height(text, 15.0, text_w)
+            th = _typo_measure(text, "direction", text_w)
             row_h = max(46.0, PADTOP * 2 + th)
             frame = NSMakeRect(_READER_PAD_X, cy, inner_w, row_h)
             btn = make_hover_button(frame) or NSButton.alloc().initWithFrame_(frame)
@@ -1186,9 +2157,11 @@ if _APPKIT_AVAILABLE:
                 else:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.018).CGColor())
 
-            # Checkbox: margin-top 3px lands the box on the first line's optical
-            # centre for 15px text at line-height 1.5 (per the design redline).
-            box_y = PADTOP + 3.0
+            # Checkbox centred on the FIRST text line (redesign E). The ramp now
+            # uses lineSpacing (between lines only), so the first line's glyph
+            # box starts exactly at PADTOP: centre = PADTOP + lineHeight/2
+            # (≈15.5/2 for 13pt) → box_y for a 16pt box ≈ PADTOP + 1.
+            box_y = PADTOP + 1.0
             box = NSView.alloc().initWithFrame_(NSMakeRect(PADX, box_y, BOX, BOX))
             box.setWantsLayer_(True)
             if box.layer() is not None:
@@ -1207,12 +2180,22 @@ if _APPKIT_AVAILABLE:
                 chk.setAlignment_(1)
                 btn.addSubview_(chk)
 
-            line = _wrapping_label(
-                text,
-                15.0,
-                _c(250, 243, 226) if selected else _c(201, 187, 166),
+            line = _typo_label(
+                text, "direction",
                 NSMakeRect(text_x, PADTOP, text_w, row_h - PADTOP * 2 + 4),
             )
+            if selected:  # 'on' → lit to full white
+                from AppKit import (
+                    NSAttributedString,
+                    NSFontAttributeName,
+                    NSForegroundColorAttributeName,
+                    NSParagraphStyleAttributeName,
+                )
+                from src.ui import typography as _T
+                at = _T.attributes("direction", color_alpha=1.0)
+                line.setAttributedStringValue_(
+                    NSAttributedString.alloc().initWithString_attributes_(text, at)
+                )
             btn.addSubview_(line)
             doc.addSubview_(btn)
             return cy + row_h + 9
@@ -1222,11 +2205,13 @@ if _APPKIT_AVAILABLE:
             bar = _DashFlippedView.alloc().initWithFrame_(frame)
             bar.setWantsLayer_(True)
             if bar.layer() is not None:
-                bar.layer().setBackgroundColor_(_c(40, 22, 16, 0.62).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, 1))
+                # Redline E: bg rgba(0,0,0,.22) + white .08 hairline on top (the
+                # old terracotta-tinted strip was beta.17).
+                bar.layer().setBackgroundColor_(_c(0, 0, 0, 0.22).CGColor())
+            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
-                tdiv.layer().setBackgroundColor_(_c(224, 99, 58, 0.24).CGColor())
+                tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
             bar.addSubview_(tdiv)
 
             from src.ui import style
@@ -1241,18 +2226,12 @@ if _APPKIT_AVAILABLE:
                 tool = "claude"
             name = ho.tool_name(tool)
 
-            # Secondary actions: compact, icon-only with tooltips (a quiet cluster
-            # set apart from the one strong CTA by silence, not size).
-            secondary = (
-                ("checklist", "Utwórz zadanie", "taskClicked:"),
-                ("calendar", "Dodaj do kalendarza", "calendarClicked:"),
-                ("doc.on.doc", "Kopiuj do schowka", "copyClicked:"),
-            )
+            # Secondary actions live behind ONE ⋯ menu (redesign changelog cut:
+            # 'klaster 3 ikon zawsze → menu ⋯ + jeden split-CTA').
             ICON_W = 34.0
-            ICON_GAP = 6.0
             CARET_W = 28.0
             GAP_CLUSTER = 16.0
-            sec_w = len(secondary) * ICON_W + (len(secondary) - 1) * ICON_GAP
+            sec_w = ICON_W
 
             def _cta_width(label):
                 # lead pad + white brand chip + gap + measured text + trail pad
@@ -1264,8 +2243,15 @@ if _APPKIT_AVAILABLE:
             # Measured, right-anchored layout; degrade so the actions never clip:
             # drop the provider name from the CTA, then drop the status label.
             avail = frame.size.width - 2 * pad
-            cnt = "1 kierunek wybrany" if n == 1 else f"{n} kierunki wybrane"
-            label_w = _text_width(cnt, 12.5)
+            # PL plurals per the redline: 1 kierunek · 2–4 kierunki · 5+ kierunków.
+            if n == 1:
+                cnt = "1 kierunek wybrany"
+            elif 2 <= n <= 4:
+                cnt = f"{n} kierunki wybrane"
+            else:
+                cnt = f"{n} kierunków wybranych"
+            cnt_cloud = "   ✦ do chmury"
+            label_w = _text_width(cnt, 12.5) + _text_width(cnt_cloud, 10.5) + 10
             cta_label = "Kontynuuj w " + name
             cta_w = _cta_width(cta_label)
             show_label = True
@@ -1276,11 +2262,18 @@ if _APPKIT_AVAILABLE:
                 show_label = False
 
             if show_label:
-                lab = _label(cnt, 12.5, _c(240, 224, 200))
+                lab = _label(cnt, 12.0, _c(250, 243, 226, 0.6))
+                cw_ = _text_width(cnt, 12.0) + 6
                 lab.setFrame_(
-                    NSMakeRect(pad, frame.size.height / 2 - 8, label_w + 4, 16)
+                    NSMakeRect(pad, frame.size.height / 2 - 8, cw_, 16)
                 )
                 bar.addSubview_(lab)
+                cloud = _typo_label(
+                    "✦ do chmury", "cloud_chip",
+                    NSMakeRect(pad + cw_ + 10, frame.size.height / 2 - 7, 140, 14),
+                    wrapping=False,
+                )
+                bar.addSubview_(cloud)
 
             x = max(pad, frame.size.width - pad - _cluster_width(cta_w))
 
@@ -1339,18 +2332,21 @@ if _APPKIT_AVAILABLE:
             bar.addSubview_(caret)
             bar.addSubview_(seam)
 
+            # ⋯ menu = the former 3-icon cluster (task · calendar · clipboard).
             sx = x + cta_w + CARET_W + GAP_CLUSTER
-            for symbol, tip, sel in secondary:
-                b = _icon_button(
-                    style.sf_symbol(symbol, point=15.0, weight="regular"),
-                    tip,
-                    NSMakeRect(sx, BTN_Y, ICON_W, CTA_H),
-                    _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                    self, sel,
-                )
-                bar.addSubview_(b)
-                sx += ICON_W + ICON_GAP
+            more = _icon_button(
+                style.sf_symbol("ellipsis", point=15.0, weight="regular"),
+                "Akcje wtórne (zadanie · kalendarz · schowek)",
+                NSMakeRect(sx, BTN_Y, ICON_W, CTA_H),
+                _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                self, "handoffMoreClicked:",
+            )
+            bar.addSubview_(more)
             view.addSubview_(bar)
+            # Reveal slide (spec §04): only on the 0→≥1 transition, not rebuilds.
+            if not getattr(self, "_handoff_bar_shown", False):
+                _slide_in(bar, 10.0, 0.15)
+            self._handoff_bar_shown = True
 
         @objc.python_method
         def _build_footer(self, view, frame):
@@ -1358,7 +2354,7 @@ if _APPKIT_AVAILABLE:
             foot.setWantsLayer_(True)
             if foot.layer() is not None:
                 foot.layer().setBackgroundColor_(_c(16, 14, 21, 0.86).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, 1))
+            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
                 tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
@@ -1366,27 +2362,38 @@ if _APPKIT_AVAILABLE:
 
             from src.ui import style
 
-            # Dismiss = ghost (hover brightens the label); Keep = jade pill, the
-            # design's local/private affirmative.
+            # Center position counter "N z M" (redesign: lives in the footer, not
+            # the title-bar, which keeps only ⌕).
+            vis = self._deck.visible()
+            if vis:
+                pos = next(
+                    (k for k, (i, _cn) in enumerate(vis) if i == self._deck.active_index),
+                    -1,
+                )
+                if pos >= 0:
+                    ctr = _typo_label(
+                        f"{pos + 1} z {len(vis)}", "footer_counter",
+                        NSMakeRect(frame.size.width / 2 - 50, 15, 100, 16), wrapping=False,
+                    )
+                    ctr.setAlignment_(1)
+                    foot.addSubview_(ctr)
+
+            # Redline A4: buttons 31pt / radius 6. Odrzuć = ghost WITH a border
+            # (rgba .16, text .7); Zachowaj = jade (bg .16, border .45, text
+            # #8BE0B5 bold) — text-only: an NSImage on the button forces a white
+            # bezel draw, which is what washed the old Zachowaj out.
             dismiss = _pill_button(
-                "Odrzuć", NSMakeRect(frame.size.width - 240, 8, 86, 30),
-                _c(140, 130, 115), None, None, self, "dismissClicked:",
+                "Odrzuć", NSMakeRect(frame.size.width - 226, 8, 86, 31),
+                _c(255, 255, 255, 0.7), None, _c(255, 255, 255, 0.16),
+                self, "dismissClicked:", 12.5,
             )
             foot.addSubview_(dismiss)
             keep = _pill_button(
-                "Zachowaj", NSMakeRect(frame.size.width - 138, 8, 122, 30),
-                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(91, 196, 149, 0.5),
-                self, "keepClicked:",
+                "Zachowaj", NSMakeRect(frame.size.width - 128, 8, 112, 31),
+                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(70, 177, 126, 0.45),
+                self, "keepClicked:", 12.5,
             )
-            kmark = style.sf_symbol("bookmark", point=12.0, weight="regular")
-            if kmark is not None:
-                keep.setImage_(kmark)
-                keep.setImagePosition_(NSImageLeft)
-                try:
-                    keep.setImageHugsTitle_(True)
-                    keep.setContentTintColor_(_c(139, 224, 181))
-                except Exception:  # pragma: no cover - older AppKit
-                    pass
+            keep.setFont_(NSFont.boldSystemFontOfSize_(12.5))
             foot.addSubview_(keep)
             view.addSubview_(foot)
 
@@ -1394,7 +2401,7 @@ if _APPKIT_AVAILABLE:
         def _build_empty(self, view, frame, title=None, subtitle=None):
             title = title or "Cisza w korpusie"
             subtitle = subtitle or (
-                "Wszystkie połączenia przejrzane. Malinche czyta dalej — gdy coś "
+                "Wszystkie połączenia przejrzane. Timshel czyta dalej — gdy coś "
                 "się zapali, wróci tu rozbłysk."
             )
             view.addSubview_(
@@ -1403,14 +2410,15 @@ if _APPKIT_AVAILABLE:
                     "triad", "#E3C16B",
                 )
             )
-            h = _label(title, 20, _cream(), bold=True)
-            h.setFrame_(NSMakeRect(0, frame.size.height / 2, frame.size.width, 26))
+            h = _typo_label(
+                title, "empty_title",
+                NSMakeRect(0, frame.size.height / 2, frame.size.width, 24), wrapping=False,
+            )
             h.setAlignment_(1)
             view.addSubview_(h)
-            p = _wrapping_label(
-                subtitle,
-                13.5, _muted(),
-                NSMakeRect(frame.size.width / 2 - 150, frame.size.height / 2 + 30, 300, 50),
+            p = _typo_label(
+                subtitle, "empty_desc",
+                NSMakeRect(frame.size.width / 2 - 170, frame.size.height / 2 + 28, 340, 50),
             )
             p.setAlignment_(1)
             view.addSubview_(p)
@@ -1451,7 +2459,9 @@ if _APPKIT_AVAILABLE:
         def _chip(self, text, origin, index):
             from AppKit import NSAttributedString, NSForegroundColorAttributeName
 
-            w = min(240.0, 22.0 + 7.0 * len(text))
+            # dot inset (~20) + glyphs + trailing " ↗" (~18); cap keeps long
+            # basenames truncating instead of eating the row.
+            w = min(260.0, 38.0 + 7.0 * len(text))
             btn = NSButton.alloc().initWithFrame_(
                 NSMakeRect(origin.x, origin.y, w, 26)
             )
@@ -1461,16 +2471,30 @@ if _APPKIT_AVAILABLE:
             btn.setTag_(int(index))
             btn.setWantsLayer_(True)
             if btn.layer() is not None:
-                btn.layer().setCornerRadius_(13)
+                # radius 6 (native macOS feel — NOT a pill) per the redline.
+                btn.layer().setCornerRadius_(_R_CONTROL)
                 btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
                 btn.layer().setBorderWidth_(1.0)
-                btn.layer().setBorderColor_(_c(255, 255, 255, 0.12).CGColor())
+                btn.layer().setBorderColor_(_c(255, 255, 255, 0.14).CGColor())
+            # Redline .nchip: 5pt terracotta dot (not the beta.17 ◇ glyph),
+            # label body .8, trailing ↗.
+            dot = NSView.alloc().initWithFrame_(NSMakeRect(9, 10.5, 5, 5))
+            dot.setWantsLayer_(True)
+            if dot.layer() is not None:
+                dot.layer().setCornerRadius_(2.5)
+                dot.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
+            btn.addSubview_(dot)
             btn.setAttributedTitle_(
                 NSAttributedString.alloc().initWithString_attributes_(
-                    "◇ " + text + "  ↗", {NSForegroundColorAttributeName: _c(216, 203, 180)}
+                    "      " + text + "  ↗",
+                    {NSForegroundColorAttributeName: _c(224, 213, 191)},
                 )
             )
             btn.setFont_(NSFont.systemFontOfSize_(11.5))
+            try:  # left-align so the label sits right of the 5pt dot (redline)
+                btn.cell().setAlignment_(0)
+            except Exception:  # pragma: no cover - defensive
+                pass
             btn.setToolTip_("Otwórz w Obsidian: " + text)
             return btn
 
@@ -1480,14 +2504,6 @@ if _APPKIT_AVAILABLE:
             self._deck.select(int(sender.tag()))
             self._reset_card_state()
             self._render()
-
-        def viewSegmentClicked_(self, sender):
-            views = ("new", "kept", "dismissed")
-            tag = int(sender.tag())
-            if 0 <= tag < len(views):
-                self._deck.set_view(views[tag])
-                self._reset_card_state()
-                self._render()
 
         def directionClicked_(self, sender):
             i = int(sender.tag())
@@ -1518,6 +2534,29 @@ if _APPKIT_AVAILABLE:
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
 
+        def handoffMoreClicked_(self, sender):
+            """⋯ menu — the secondary handoff actions (redesign E3)."""
+            from AppKit import NSMenu, NSMenuItem
+
+            items = (
+                ("Utwórz zadanie", "taskClicked:"),
+                ("Dodaj do kalendarza", "calendarClicked:"),
+                ("Kopiuj do schowka", "copyClicked:"),
+            )
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+            for label, sel in items:
+                it = NSMenuItem.alloc().init()
+                it.setTarget_(self)
+                it.setAction_(sel)
+                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 28))
+                v._spec = dict(label=label, count="", checked=False, is_new=False)
+                it.setView_(v)
+                menu.addItem_(it)
+            menu.popUpMenuPositioningItem_atLocation_inView_(
+                None, NSMakePoint(0, sender.frame().size.height + 2), sender
+            )
+
         def taskClicked_(self, sender):
             self._do_handoff(ho.TASK)
 
@@ -1545,6 +2584,13 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _do_handoff(self, target):
+            """Gather view state on the main thread, dispatch OFF it.
+
+            ho.dispatch runs subprocess (osascript/open/pbcopy); osascript can
+            block on the TCC consent prompt or a Reminders cold launch — on
+            the main thread that froze the whole app ('Not Responding').
+            Mirrors the _recall_worker_/applyRecall_ pattern.
+            """
             conn = self._deck.active()
             if conn is None or not self._selected:
                 return
@@ -1552,23 +2598,62 @@ if _APPKIT_AVAILABLE:
             dirs = [conn.directions[i] for i in idxs]
             tool = getattr(config, "LLM_HANDOFF_TOOL", "claude")
             evidence = [(e.date, e.note, e.quote) for e in conn.evidence]
+            payload = {
+                "target": target,
+                "label": conn.resolved_label(),
+                "rationale": conn.rationale,
+                "evidence": evidence,
+                "directions": dirs,
+                "direction_idxs": idxs,
+                "tool": tool,
+                "sig": conn.sig or "",
+                "conn_type": conn.synthesis_type,  # raw type only — never the display constant (keeps the canonical sig joinable)
+                "notes": conn.notes,
+            }
+            import threading
+
+            # Kept on self so tests (and a curious debugger) can join it.
+            self._handoff_thread = threading.Thread(
+                target=self._handoff_worker_, args=(payload,),
+                name="HandoffDispatch", daemon=True,
+            )
+            self._handoff_thread.start()
+
+        @objc.python_method
+        def _handoff_worker_(self, payload):
+            """Daemon thread: subprocess dispatch + signal append, then toast
+            back on the main thread. A late toast is harmless — no epoch."""
+            target = payload["target"]
             res = ho.dispatch(
                 target,
-                label=conn.resolved_label(),
-                rationale=conn.rationale,
-                evidence=evidence,
-                directions=dirs,
-                tool=tool,
+                label=payload["label"],
+                rationale=payload["rationale"],
+                evidence=payload["evidence"],
+                directions=payload["directions"],
+                tool=payload["tool"],
             )
-            vsig.record_action(
-                target,
-                sig=conn.sig or "",
-                conn_type=conn.synthesis_type,  # raw type only — never the display constant (keeps the canonical sig joinable)
-                notes=conn.notes,
-                directions=idxs,
-                tool=(tool if target == ho.LLM else ""),
+            try:
+                vsig.record_action(
+                    target,
+                    sig=payload["sig"],
+                    conn_type=payload["conn_type"],
+                    notes=payload["notes"],
+                    directions=payload["direction_idxs"],
+                    tool=(payload["tool"] if target == ho.LLM else ""),
+                )
+            except Exception as exc:  # pragma: no cover - signal is best-effort
+                logger.debug("record_action failed: %s", exc)
+            self._pending_handoff = {"toast": res.toast}
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyHandoff:", None, False
             )
-            self._show_toast(res.toast)
+
+        def applyHandoff_(self, _ignored):
+            payload = getattr(self, "_pending_handoff", None)
+            if not payload:
+                return
+            self._pending_handoff = None
+            self._show_toast(payload["toast"])
 
         @objc.python_method
         def _reset_card_state(self):

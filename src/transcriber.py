@@ -1,10 +1,11 @@
-"""Transcription engine for Malinche."""
+"""Transcription engine for Timshel."""
 
 import fcntl
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -21,12 +22,14 @@ from src.summarizer import (
     BaseSummarizer,
     _is_permanent_api_error,
     get_summarizer,
+    is_fallback_summary,
 )
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
 from src.state_manager import get_last_sync_time, save_sync_time
 from src.tag_index import TagIndex
 from src.tagger import BaseTagger, get_tagger
+from src.vocabulary import VocabularyIndex, find_alias_misses
 from src.fingerprint import compute_fingerprint
 from src.hostinfo import get_hostname
 from src.vault_index import IndexEntry, VaultIndex
@@ -40,7 +43,7 @@ _PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
 
 def send_notification(title: str, message: str, subtitle: str = "") -> None:
     """Send macOS notification using osascript.
-    
+
     Args:
         title: Notification title
         message: Notification message body
@@ -51,17 +54,14 @@ def send_notification(title: str, message: str, subtitle: str = "") -> None:
         title = title.replace('"', '\\"')
         message = message.replace('"', '\\"')
         subtitle = subtitle.replace('"', '\\"')
-        
+
         if subtitle:
             script = f'display notification "{message}" with title "{title}" subtitle "{subtitle}"'
         else:
             script = f'display notification "{message}" with title "{title}"'
-        
+
         subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            timeout=5.0,
-            check=False
+            ["osascript", "-e", script], capture_output=True, timeout=5.0, check=False
         )
     except Exception as e:
         logger.debug(f"Failed to send notification: {e}")
@@ -148,12 +148,13 @@ class ProcessLock:
                 pass
             self._fd = None
 
+
 class Transcriber:
     """Main transcription engine.
-    
+
     Handles finding the recorder, scanning for new audio files,
     managing transcription state, and invoking Whisper CLI.
-    
+
     Attributes:
         transcription_in_progress: Track files currently being transcribed
         whisper_available: Flag indicating if Whisper CLI is available
@@ -162,17 +163,17 @@ class Transcriber:
         state_updater: Optional callback to update application state
         config: Configuration instance (injected dependency)
     """
-    
+
     def __init__(self, config: Optional[Config] = None):
         """Initialize the transcriber.
-        
+
         Args:
             config: Configuration instance. If None, uses global default config.
                     This allows for dependency injection in tests.
         """
         # Use injected config or fall back to global default
         self.config = config if config is not None else default_config
-        
+
         self.transcription_in_progress: Dict[str, bool] = {}
         self.whisper_available = self._check_whisper()
         self.recorder_monitoring = False
@@ -182,6 +183,11 @@ class Transcriber:
         # menu action run on separate threads). Cross-process exclusion — and
         # crash-safe auto-release — is handled by ProcessLock (fcntl.flock).
         self._workflow_lock = threading.Lock()
+        # Live whisper-cli subprocess, tracked so stop() can kill its process
+        # group on app quit — otherwise an orphaned whisper (cores-2 threads)
+        # keeps burning CPU with its timeout enforcement dead.
+        self._active_whisper_proc: Optional[subprocess.Popen] = None
+        self._active_proc_lock = threading.Lock()
         self.state_updater: Optional[
             Callable[
                 [
@@ -194,11 +200,14 @@ class Transcriber:
                 None,
             ]
         ] = None
-        
+
         # Initialize summarizer and markdown generator
         self.summarizer: Optional[BaseSummarizer] = get_summarizer()
         self.markdown_generator = MarkdownGenerator()
         self.tag_index = TagIndex()
+        # Personal glossary — rebuilt per recording (see workflow) so every
+        # new note's wikilinks widen the vocabulary for the *next* one.
+        self.vocabulary = VocabularyIndex()
         self.tagger: Optional[BaseTagger] = get_tagger()
         self._ai_disabled_reason: Optional[str] = None
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
@@ -209,10 +218,10 @@ class Transcriber:
         self.vault_index = VaultIndex(self.config.TRANSCRIBE_DIR)
         self.vault_index.load()
         self._run_index_migration_if_needed()
-        
+
         # Ensure output directory exists
         self.config.ensure_directories()
-    
+
     def set_state_updater(
         self,
         updater: Callable[
@@ -221,15 +230,13 @@ class Transcriber:
         ],
     ) -> None:
         """Set callback function for state updates.
-        
+
         Args:
             updater: Function that takes (status, current_file, error_message)
         """
         self.state_updater = updater
 
-    def set_ai_billing_callback(
-        self, callback: Callable[[Exception], None]
-    ) -> None:
+    def set_ai_billing_callback(self, callback: Callable[[Exception], None]) -> None:
         """Register a callback invoked once when the AI circuit breaker trips."""
         self.ai_billing_callback = callback
 
@@ -272,7 +279,11 @@ class Transcriber:
             if settings.index_migrated and not self._vault_needs_reindex():
                 return
             self._update_state(AppStatus.MIGRATING)
-            script_path = Path(__file__).resolve().parent.parent / "scripts" / "migrate_to_v2_index.py"
+            script_path = (
+                Path(__file__).resolve().parent.parent
+                / "scripts"
+                / "migrate_to_v2_index.py"
+            )
             subprocess.run(
                 [sys.executable, str(script_path)],
                 timeout=120.0,
@@ -292,7 +303,7 @@ class Transcriber:
         if not self.config.TRANSCRIBE_DIR.exists():
             return False
         return any(self.config.TRANSCRIBE_DIR.glob("*.md"))
-    
+
     def _update_state(
         self,
         status: AppStatus,
@@ -302,7 +313,7 @@ class Transcriber:
         pending_count: Optional[int] = None,
     ) -> None:
         """Update application state via callback if available.
-        
+
         Args:
             status: New status
             current_file: Current file being processed
@@ -319,10 +330,10 @@ class Transcriber:
                 )
             except Exception as e:
                 logger.debug(f"Error updating state: {e}")
-    
+
     def _check_whisper(self) -> bool:
         """Check if whisper.cpp binary and ffmpeg are available.
-        
+
         Returns:
             True if both whisper.cpp and ffmpeg are available, False otherwise
         """
@@ -335,7 +346,7 @@ class Transcriber:
             )
             # Nie zwracamy False - pozwalamy aplikacji sprawdzić czy może pobrać
             # (UI powinno pokazać ekran pobierania)
-        
+
         # Check for ffmpeg
         ffmpeg_path = self.config.FFMPEG_PATH
         if not ffmpeg_path or not ffmpeg_path.exists():
@@ -348,15 +359,19 @@ class Transcriber:
                     "⚠️  ffmpeg not found. Aplikacja spróbuje pobrać automatycznie."
                 )
                 # Nie zwracamy False - pozwalamy aplikacji sprawdzić czy może pobrać
-        
-        if self.config.WHISPER_CPP_PATH.exists() and ffmpeg_path and ffmpeg_path.exists():
+
+        if (
+            self.config.WHISPER_CPP_PATH.exists()
+            and ffmpeg_path
+            and ffmpeg_path.exists()
+        ):
             logger.info(f"✓ Found whisper.cpp at: {self.config.WHISPER_CPP_PATH}")
             logger.info(f"✓ Found ffmpeg at: {ffmpeg_path}")
-            
+
             # Check for Core ML encoder (required by whisper-cli built with WHISPER_COREML=ON)
             coreml_model = (
-                self.config.WHISPER_CPP_MODELS_DIR /
-                f"ggml-{self.config.WHISPER_MODEL}-encoder.mlmodelc"
+                self.config.WHISPER_CPP_MODELS_DIR
+                / f"ggml-{self.config.WHISPER_MODEL}-encoder.mlmodelc"
             )
             if coreml_model.exists():
                 logger.info("✓ Core ML encoder found - GPU acceleration enabled")
@@ -385,12 +400,12 @@ class Transcriber:
                     daemon=True,
                     name="CoreMLEncoderDownload",
                 ).start()
-            
+
             return True
-        
+
         # Zależności brakują - zwróć False (UI powinno pokazać ekran pobierania)
         return False
-    
+
     def find_recorder(self) -> Optional[Path]:
         """Search for a connected recorder volume.
 
@@ -438,43 +453,41 @@ class Transcriber:
         else:
             logger.debug("No recorder found in /Volumes")
         return matching
-    
+
     def get_last_sync_time(self) -> datetime:
         """Get timestamp of last synchronization.
-        
+
         Returns:
             Datetime of last sync, or 7 days ago if no state file exists
         """
         return get_last_sync_time()
-    
+
     def save_sync_time(self) -> None:
         """Save current time as last sync timestamp."""
         save_sync_time()
-    
-    def find_audio_files(
-        self, recorder_path: Path, since: datetime
-    ) -> List[Path]:
+
+    def find_audio_files(self, recorder_path: Path, since: datetime) -> List[Path]:
         """Find new audio files modified after given datetime.
-        
+
         Args:
             recorder_path: Root path of the recorder volume
             since: Only return files modified after this datetime
-            
+
         Returns:
             List of audio file paths, sorted by modification time
         """
         from src.config.defaults import defaults
-        
+
         new_files = []
         max_depth = defaults.MAX_SCAN_DEPTH
-        
+
         try:
             # Recursively find all files
             for item in recorder_path.rglob("*"):
                 # Skip directories and non-audio files
                 if not item.is_file():
                     continue
-                
+
                 # Check depth limit (count directories, not file name)
                 # max_depth=3 means up to 3 directory levels deep
                 try:
@@ -482,32 +495,38 @@ class Transcriber:
                     # Count directory depth: parts - 1 (exclude filename)
                     dir_depth = len(relative.parts) - 1
                     if dir_depth > max_depth:
-                        logger.debug(f"Skipping file beyond max_depth ({max_depth}): {item.relative_to(recorder_path)} (depth: {dir_depth})")
+                        logger.debug(
+                            f"Skipping file beyond max_depth ({max_depth}): {item.relative_to(recorder_path)} (depth: {dir_depth})"
+                        )
                         continue
                 except ValueError:
                     # If relative_to fails, skip this item
                     continue
-                
+
                 # Skip macOS metadata files
-                if item.name.startswith('._') or item.name == '.DS_Store':
+                if item.name.startswith("._") or item.name == ".DS_Store":
                     logger.debug(f"Skipping macOS metadata file: {item.name}")
                     continue
-                
+
                 if item.suffix.lower() not in self.config.AUDIO_EXTENSIONS:
                     continue
-                
+
                 # Check modification time
                 try:
                     mtime = datetime.fromtimestamp(item.stat().st_mtime)
                     if mtime > since:
                         new_files.append(item)
-                        logger.debug(f"Found new file: {item.name} (mtime: {mtime}, depth: {dir_depth})")
+                        logger.debug(
+                            f"Found new file: {item.name} (mtime: {mtime}, depth: {dir_depth})"
+                        )
                 except OSError as e:
                     logger.warning(f"Could not access file {item}: {e}")
                     continue
-        
+
         except OSError as e:
-            logger.error(f"OSError scanning recorder (may have unmounted): {e}", exc_info=True)
+            logger.error(
+                f"OSError scanning recorder (may have unmounted): {e}", exc_info=True
+            )
             return []
         except PermissionError as e:
             logger.error(f"PermissionError scanning recorder: {e}", exc_info=True)
@@ -515,12 +534,12 @@ class Transcriber:
         except Exception as e:
             logger.error(f"Error scanning for audio files: {e}", exc_info=True)
             return []
-        
+
         logger.debug(f"Scan complete: found {len(new_files)} new audio file(s)")
-        
+
         # Sort by modification time (oldest first)
         new_files.sort(key=lambda x: x.stat().st_mtime)
-        
+
         return new_files
 
     def _iter_audio_files(self, recorder_path: Path) -> Iterator[Path]:
@@ -568,9 +587,7 @@ class Transcriber:
                 continue
             yield item
 
-    def find_pending_audio_files(
-        self, recorder_path: Path
-    ) -> List[Tuple[Path, str]]:
+    def find_pending_audio_files(self, recorder_path: Path) -> List[Tuple[Path, str]]:
         """Return recorder audio files (with fingerprint) missing from vault index."""
         pending_files: List[Tuple[Path, str]] = []
         try:
@@ -580,12 +597,11 @@ class Transcriber:
                 except OSError as error:
                     logger.warning("Cannot stat %s: %s", audio_file, error)
                     continue
-                if self.vault_index.lookup_by_filename_size(
-                    audio_file.name, size
-                ) is not None:
-                    logger.debug(
-                        "✓ Skip (filename+size match): %s", audio_file.name
-                    )
+                if (
+                    self.vault_index.lookup_by_filename_size(audio_file.name, size)
+                    is not None
+                ):
+                    logger.debug("✓ Skip (filename+size match): %s", audio_file.name)
                     continue
                 try:
                     fingerprint = compute_fingerprint(audio_file)
@@ -593,9 +609,7 @@ class Transcriber:
                     logger.warning("Cannot fingerprint %s: %s", audio_file, error)
                     continue
                 if fingerprint in self._session_failed_fingerprints:
-                    logger.debug(
-                        "Skipping previously failed file: %s", audio_file.name
-                    )
+                    logger.debug("Skipping previously failed file: %s", audio_file.name)
                     continue
                 if self.vault_index.lookup(fingerprint) is None:
                     pending_files.append((audio_file, fingerprint))
@@ -611,37 +625,39 @@ class Transcriber:
                 error,
             )
         return pending_files
-    
+
     def _stage_audio_file(self, audio_file: Path) -> Optional[Path]:
         """Copy audio file from recorder to local staging directory.
-        
+
         Creates a local copy of the recorder file in the staging directory.
         This allows transcription to proceed even if the recorder unmounts
         during processing. The staged file preserves the original filename
         and modification time.
-        
+
         Args:
             audio_file: Path to audio file on recorder (e.g., /Volumes/LS-P1/...)
-            
+
         Returns:
             Path to staged file in LOCAL_RECORDINGS_DIR, or None if staging failed
         """
         try:
             # Ensure staging directory exists
             self.config.LOCAL_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-            
+
             # Destination path (same filename as original)
             staged_path = self.config.LOCAL_RECORDINGS_DIR / audio_file.name
-            
+
             # Check if file already exists and matches (size and mtime)
             if staged_path.exists():
                 try:
                     source_stat = audio_file.stat()
                     staged_stat = staged_path.stat()
-                    
+
                     # If size and mtime match, reuse existing copy
-                    if (source_stat.st_size == staged_stat.st_size and
-                        abs(source_stat.st_mtime - staged_stat.st_mtime) < 1.0):
+                    if (
+                        source_stat.st_size == staged_stat.st_size
+                        and abs(source_stat.st_mtime - staged_stat.st_mtime) < 1.0
+                    ):
                         logger.debug(
                             f"✓ Reusing existing staged copy: {audio_file.name}"
                         )
@@ -650,14 +666,14 @@ class Transcriber:
                     # If we can't stat the source, try to copy anyway
                     # (might be a race condition with unmounting)
                     pass
-            
+
             # Copy file with metadata preservation
             logger.debug(f"📋 Staging file: {audio_file.name}")
             shutil.copy2(audio_file, staged_path)
             logger.debug(f"✓ Staged: {audio_file.name} -> {staged_path}")
-            
+
             return staged_path
-            
+
         except FileNotFoundError as e:
             logger.warning(
                 f"⚠️  Could not stage {audio_file.name}: "
@@ -665,17 +681,14 @@ class Transcriber:
             )
             return None
         except OSError as e:
-            logger.warning(
-                f"⚠️  Could not stage {audio_file.name}: {e}"
-            )
+            logger.warning(f"⚠️  Could not stage {audio_file.name}: {e}")
             return None
         except Exception as e:
             logger.error(
-                f"✗ Unexpected error staging {audio_file.name}: {e}",
-                exc_info=True
+                f"✗ Unexpected error staging {audio_file.name}: {e}", exc_info=True
             )
             return None
-    
+
     def _run_whisper_transcription(
         self,
         audio_file: Path,
@@ -701,23 +714,43 @@ class Transcriber:
         whisper_input = source_audio if source_audio is not None else audio_file
 
         # Build whisper.cpp command
-        model_path = self.config.WHISPER_CPP_MODELS_DIR / f"ggml-{self.config.WHISPER_MODEL}.bin"
+        model_path = (
+            self.config.WHISPER_CPP_MODELS_DIR / f"ggml-{self.config.WHISPER_MODEL}.bin"
+        )
         output_base = self.config.TRANSCRIBE_DIR / audio_file.stem
 
         threads = self._whisper_thread_count()
         whisper_cmd = [
             str(self.config.WHISPER_CPP_PATH),
-            "-m", str(model_path),
-            "-f", str(whisper_input),
+            "-m",
+            str(model_path),
+            "-f",
+            str(whisper_input),
             "-otxt",
-            "-of", str(output_base),
-            "-t", str(threads),
+            "-of",
+            str(output_base),
+            "-t",
+            str(threads),
             "-pp",  # stream progress to stderr so a long run never looks hung
         ]
 
         # Add language if specified
         if self.config.WHISPER_LANGUAGE:
             whisper_cmd.extend(["-l", self.config.WHISPER_LANGUAGE])
+
+        # Personal glossary as initial prompt: biases decoding toward the
+        # user's confirmed spellings, so "Tech to the Rescue" doesn't come
+        # out as "TekTutoreski". Refreshed here (cheap: one vault scan) so
+        # notes written since daemon start already feed this recording.
+        glossary = ""
+        try:
+            self.vocabulary.build(force_refresh=True)
+            glossary = self.vocabulary.whisper_prompt()
+        except Exception as exc:  # noqa: BLE001 — glossary must never block
+            logger.warning("Vocabulary glossary unavailable: %s", exc)
+        if glossary:
+            whisper_cmd.extend(["--prompt", glossary])
+            logger.debug("Whisper glossary (%d chars): %s", len(glossary), glossary)
 
         # Set environment for Core ML / Metal control
         env = None
@@ -784,7 +817,15 @@ class Transcriber:
 
         encoding/errors are critical under py2app (ASCII locale) — whisper prints
         UTF-8 paths / Polish chars to stderr.
+
+        All reads happen on the RAW non-blocking fd (``os.read``), never on the
+        buffered ``proc.stderr`` wrapper: a buffered ``readline()`` blocks
+        forever on a partial line without a newline (a stalled whisper mid-write
+        used to wedge this thread — and with it ``_workflow_lock`` + the process
+        flock — past the deadline). With ``os.read`` a partial line just sits in
+        our own buffer and the deadline check always fires.
         """
+        import codecs
         import select
 
         proc = subprocess.Popen(
@@ -795,7 +836,10 @@ class Transcriber:
             encoding="utf-8",
             errors="replace",
             env=env,
+            start_new_session=True,  # own process group → stop() can killpg
         )
+        with self._active_proc_lock:
+            self._active_whisper_proc = proc
 
         stderr_chunks: List[str] = []
         deadline = time.time() + max(self.config.TRANSCRIPTION_TIMEOUT, 0.0)
@@ -804,14 +848,77 @@ class Transcriber:
         started = time.time()
         coreml_failed = False
 
+        assert proc.stderr is not None  # stderr=PIPE above guarantees it
+        stderr_fd = proc.stderr.fileno()
+        os.set_blocking(stderr_fd, False)
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""  # text accumulated until a newline arrives
+
+        def handle_line(line: str) -> bool:
+            """Marker + progress logic for one stderr line. True = stop."""
+            nonlocal coreml_failed, last_logged_pct, last_heartbeat
+            if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
+                coreml_failed = True
+                logger.warning(
+                    "⚡ Core ML/Metal error detected after %.0fs — "
+                    "aborting GPU attempt, will retry on CPU",
+                    time.time() - started,
+                )
+                proc.kill()
+                return True
+            match = _PROGRESS_RE.search(line)
+            if match:
+                pct = int(match.group(1))
+                now = time.time()
+                if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
+                    logger.info(
+                        "⏳ Transkrypcja %d%% — %s",
+                        pct,
+                        audio_file.name,
+                    )
+                    last_logged_pct = pct
+                    last_heartbeat = now
+            return False
+
+        def read_chunk() -> Optional[str]:
+            """One non-blocking read. Text (possibly ''), or None on EOF."""
+            try:
+                chunk = os.read(stderr_fd, 65536)
+            except BlockingIOError:
+                return ""
+            except OSError:  # pragma: no cover - defensive (closed fd)
+                return None
+            if not chunk:
+                return None
+            return decoder.decode(chunk)
+
+        def process_remaining() -> None:
+            """Flush the decoder and run marker/progress logic on every
+            not-yet-processed line, including a final newline-less one (a Metal
+            error can be the last thing whisper prints before stalling)."""
+            nonlocal pending
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                stderr_chunks.append(tail)
+                pending += tail
+            for line in pending.split("\n"):
+                if line and handle_line(line):
+                    break
+            pending = ""
+
         try:
-            while True:
+            stop = False
+            while not stop:
                 # Check exit before blocking on select so a finished (or fast)
                 # run drains cleanly without needing a selectable fd.
                 if proc.poll() is not None:
-                    rest = proc.stderr.read()
-                    if rest:
-                        stderr_chunks.append(rest)
+                    while True:
+                        text = read_chunk()
+                        if not text:
+                            break
+                        stderr_chunks.append(text)
+                        pending += text
+                    process_remaining()
                     break
 
                 remaining = deadline - time.time()
@@ -821,41 +928,25 @@ class Transcriber:
                         cmd, self.config.TRANSCRIPTION_TIMEOUT
                     )
 
-                ready, _, _ = select.select(
-                    [proc.stderr], [], [], min(1.0, remaining)
-                )
+                ready, _, _ = select.select([stderr_fd], [], [], min(1.0, remaining))
                 if not ready:
                     continue
-                line = proc.stderr.readline()
-                if not line:
-                    break  # EOF
 
-                stderr_chunks.append(line)
-
-                if use_coreml and any(
-                    m in line for m in self._COREML_FAIL_MARKERS
-                ):
-                    coreml_failed = True
-                    logger.warning(
-                        "⚡ Core ML/Metal error detected after %.0fs — "
-                        "aborting GPU attempt, will retry on CPU",
-                        time.time() - started,
-                    )
-                    proc.kill()
+                text = read_chunk()
+                if text is None:
+                    # EOF: the write end closed — flush any final partial line.
+                    process_remaining()
                     break
+                if not text:
+                    continue
 
-                match = _PROGRESS_RE.search(line)
-                if match:
-                    pct = int(match.group(1))
-                    now = time.time()
-                    if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
-                        logger.info(
-                            "⏳ Transkrypcja %d%% — %s",
-                            pct,
-                            audio_file.name,
-                        )
-                        last_logged_pct = pct
-                        last_heartbeat = now
+                stderr_chunks.append(text)
+                pending += text
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    if handle_line(line):
+                        stop = True
+                        break
         finally:
             try:
                 if proc.stderr is not None:
@@ -870,6 +961,8 @@ class Transcriber:
                     proc.wait()
             else:
                 proc.wait()
+            with self._active_proc_lock:
+                self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
         if coreml_failed and returncode == 0:
@@ -879,6 +972,33 @@ class Transcriber:
         return subprocess.CompletedProcess(
             args=cmd, returncode=returncode, stdout="", stderr="".join(stderr_chunks)
         )
+
+    def stop(self) -> None:
+        """Kill an in-flight whisper-cli on shutdown (SIGTERM → SIGKILL).
+
+        Without this, quitting mid-transcription orphans whisper-cli: its
+        timeout enforcement lives in this process's deadline loop, the kernel
+        releases the flock on exit, and a relaunched app can start a second
+        whisper on the same file alongside the orphan. Targets the process
+        GROUP (Popen uses start_new_session=True). Safe to call anytime.
+        """
+        with self._active_proc_lock:
+            proc = self._active_whisper_proc
+        if proc is None or proc.poll() is not None:
+            return
+        pid = getattr(proc, "pid", None)  # test fakes may lack a pid
+        if pid is None:
+            return
+        try:
+            pgid = os.getpgid(pid)
+            logger.info("⏹  Stopping in-flight whisper (pgid=%s)...", pgid)
+            os.killpg(pgid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError) as error:
+            logger.debug("stop(): could not kill whisper process: %s", error)
 
     def _coreml_flag_path(self) -> Path:
         """Sidecar file recording that Core ML/Metal failed on this machine."""
@@ -911,9 +1031,7 @@ class Transcriber:
         try:
             self._coreml_flag_path().parent.mkdir(parents=True, exist_ok=True)
             self._coreml_flag_path().write_text(
-                json.dumps(
-                    {"disabled": True, "signature": self._coreml_signature()}
-                ),
+                json.dumps({"disabled": True, "signature": self._coreml_signature()}),
                 encoding="utf-8",
             )
         except OSError as exc:  # pragma: no cover - defensive
@@ -945,9 +1063,18 @@ class Transcriber:
         wav_path = self.config.TRANSCRIBE_DIR / f".{audio_file.stem}.whisper16k.wav"
         cmd = [
             str(ffmpeg_path),
-            "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(audio_file),
-            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(audio_file),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
             str(wav_path),
         ]
         try:
@@ -1000,6 +1127,48 @@ class Transcriber:
             return False
 
         return any(marker in stderr for marker in self._COREML_FAIL_MARKERS)
+
+    def _canonicalize_aliases(
+        self, summary: dict, transcript_text: str, known_terms: str
+    ) -> dict:
+        """Judge the summary for un-canonicalised aliases; ONE corrective retry.
+
+        The model owns canonicalisation (a code substitution would stop the
+        vocabulary learning new variants — see ``VocabularyIndex.find_alias_hits``).
+        This detects confirmed aliases the model left outside the Quotes section
+        and, if any, re-prompts it ONCE naming the specific misses. The retry is
+        accepted only when it is non-empty and not itself a fallback. A miss that
+        survives the retry is logged as a model-quality signal, never patched.
+        The extra Haiku call happens only on a miss, so a clean summary is free.
+        """
+        if not summary:
+            return summary
+        misses = find_alias_misses(summary.get("summary", ""), self.vocabulary)
+        if not misses:
+            return summary
+
+        correction = "\n".join(f"- '{a}' → '{c}'" for a, c in misses)
+        try:
+            retry = self.summarizer.generate(
+                transcript_text,
+                known_terms_block=known_terms,
+                correction=correction,
+            )
+        except APIBillingError as exc:
+            # Keep the first (good) summary; disable AI for subsequent notes.
+            self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+            logger.warning("alias-judge retry hit billing error — keeping first summary")
+            return summary
+
+        retry_summary = retry.get("summary", "") if retry else ""
+        if retry_summary and not is_fallback_summary(retry_summary):
+            summary = retry
+            misses = find_alias_misses(retry_summary, self.vocabulary)
+
+        if misses:
+            survivors = ", ".join(sorted({a for a, _ in misses}))
+            logger.warning("alias-miss survived retry: %s", survivors)
+        return summary
 
     @staticmethod
     def _extract_fallback_title(transcript: str, max_chars: int = 60) -> str:
@@ -1082,28 +1251,28 @@ class Transcriber:
         if not self.whisper_available:
             logger.error("whisper.cpp not available, cannot transcribe")
             return None
-        
+
         # Generate expected output file path
         output_file = self.config.TRANSCRIBE_DIR / f"{audio_file.stem}.txt"
         file_id = audio_file.stem
-        
+
         # Check if already in progress
         if file_id in self.transcription_in_progress:
             logger.info(f"⏳ Already transcribing: {audio_file.name}")
             return None
-        
+
         # Check if already transcribed (check for both TXT and MD)
         if output_file.exists():
             logger.info(f"✓ Already transcribed: {audio_file.name}")
             return output_file
-        
+
         # Check if markdown version exists
         md_pattern = f"{audio_file.stem}*.md"
         existing_md = list(self.config.TRANSCRIBE_DIR.glob(md_pattern))
         if existing_md:
             logger.info(f"✓ Already transcribed (markdown exists): {audio_file.name}")
             return None
-        
+
         logger.info(f"🎙️  Starting transcription: {audio_file.name}")
         self.transcription_in_progress[file_id] = True
         self._update_state(AppStatus.TRANSCRIBING, audio_file.name)
@@ -1134,15 +1303,17 @@ class Transcriber:
             result = self._run_whisper_transcription(
                 audio_file, use_coreml=True, source_audio=wav_for_whisper
             )
-            
+
             logger.debug(
                 f"Transcription attempt completed - "
                 f"returncode: {result.returncode}, "
                 f"stderr length: {len(result.stderr) if result.stderr else 0}"
             )
-            
+
             # If Core ML failed, retry without it
-            if self._should_retry_without_coreml(result.stderr, use_coreml_attempted=True):
+            if self._should_retry_without_coreml(
+                result.stderr, use_coreml_attempted=True
+            ):
                 logger.warning(
                     f"⚠️  Core ML/Metal failed, falling back to CPU for {audio_file.name}"
                 )
@@ -1162,7 +1333,7 @@ class Transcriber:
                     audio_file, use_coreml=False, source_audio=wav_for_whisper
                 )
                 logger.debug(f"CPU retry completed - returncode: {result.returncode}")
-            
+
             # Check for errors
             if result.returncode != 0:
                 error_msg = f"Transkrypcja nieudana (kod: {result.returncode})"
@@ -1174,7 +1345,7 @@ class Transcriber:
                     logger.error(f"  Error: {result.stderr[:500]}")
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
-            
+
             logger.info(
                 "✓ whisper.cpp process completed (rc=0): %s",
                 audio_file.name,
@@ -1209,7 +1380,7 @@ class Transcriber:
                     if txt_files:
                         logger.debug(f"✓ Using found file: {txt_files[0]}")
                         return txt_files[0]
-                
+
                 logger.error(
                     f"✗ Transcription completed but output file not found: "
                     f"{output_file}"
@@ -1242,7 +1413,7 @@ class Transcriber:
                     logger.info(f"  stdout: {result.stdout}")
                 self._last_run_was_transient_failure = True
                 return None
-        
+
         except subprocess.TimeoutExpired:
             error_msg = f"Timeout ({self.config.TRANSCRIPTION_TIMEOUT}s)"
             logger.error(
@@ -1251,16 +1422,13 @@ class Transcriber:
             )
             self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
             return None
-        
+
         except Exception as e:
             error_msg = str(e)[:200]
-            logger.error(
-                f"✗ Error transcribing {audio_file.name}: {e}",
-                exc_info=True
-            )
+            logger.error(f"✗ Error transcribing {audio_file.name}: {e}", exc_info=True)
             self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
             return None
-        
+
         finally:
             # Drop the temporary converted WAV (best-effort).
             if wav_for_whisper is not None:
@@ -1270,7 +1438,7 @@ class Transcriber:
             # Reset state if no more files in progress
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
-    
+
     def _postprocess_transcript(
         self,
         audio_file: Path,
@@ -1281,61 +1449,117 @@ class Transcriber:
         output_filename: Optional[str] = None,
     ) -> Optional[Path]:
         """Post-process transcript: generate summary and create markdown.
-        
+
         Args:
             audio_file: Original audio file path
             transcript_path: Path to temporary TXT transcript file
-            
+
         Returns:
             True if post-processing succeeded, False otherwise
         """
         try:
             # Read transcript
             logger.debug(f"Reading transcript from: {transcript_path}")
-            with open(transcript_path, 'r', encoding='utf-8') as f:
+            with open(transcript_path, "r", encoding="utf-8") as f:
                 transcript_text = f.read()
 
-            # Pusty transcript = legalny scenariusz (cisza, muzyka bez wokalu).
-            # Generujemy markdown-placeholder z notatką, żeby plik został
-            # zaindeksowany i nie wracał w pętlę retry.
-            empty_transcript = not transcript_text.strip()
-            if empty_transcript:
-                logger.info(
-                    "Pusty transkrypt dla %s — generuję markdown-placeholder",
-                    audio_file.name,
-                )
-                transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
+            metadata = self.markdown_generator.extract_audio_metadata(audio_file)
+            md_path = self._finalize_note(
+                transcript_text,
+                metadata,
+                fingerprint,
+                version=version,
+                previous_version=previous_version,
+                output_filename=output_filename,
+                fallback_title=audio_file.stem.replace("_", " ").title(),
+                extra_frontmatter={
+                    "source_volume": audio_file.parent.name,
+                    "model": self.config.WHISPER_MODEL,
+                    "language": self.config.WHISPER_LANGUAGE,
+                },
+            )
+            if md_path is None:
+                return None
 
-            # Generate summary (if summarizer available and AI not disabled).
-            # Pomijamy AI dla pustego transcriptu (nic do podsumowania, oszczędza koszty).
-            summary = None
-            if empty_transcript:
-                summary = {
-                    "title": audio_file.stem.replace("_", " ").title(),
-                    "summary": "(Brak rozpoznawalnej mowy w nagraniu)",
-                }
-            elif self.summarizer and self._ai_disabled_reason is None:
+            # Delete temporary TXT file if configured
+            if self.config.DELETE_TEMP_TXT:
                 try:
-                    logger.info("📝 Generating summary...")
-                    summary = self.summarizer.generate(transcript_text)
-                    logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
-                except APIBillingError as exc:
-                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
-                    summary = None
-                except Exception as e:
-                    logger.error(f"Summary generation failed: {e}", exc_info=True)
-                    logger.warning("Continuing without summary")
-                    summary = None
-            
-            # Fallback summary if summarizer unavailable
-            if not summary:
-                logger.debug("Using fallback summary")
-                fallback_title = self._extract_fallback_title(transcript_text)
-                if not fallback_title:
-                    fallback_title = audio_file.stem.replace("_", " ").title()
-                summary = {
-                    "title": fallback_title,
-                    "summary": """## Podsumowanie
+                    transcript_path.unlink()
+                    logger.debug(
+                        f"✓ Deleted temporary TXT file: {transcript_path.name}"
+                    )
+                except OSError as e:
+                    logger.warning(f"Could not delete temporary TXT file: {e}")
+                self._cleanup_transcript_sidecar(transcript_path)
+
+            return md_path
+
+        except Exception as e:
+            logger.error(
+                f"Post-processing failed for {audio_file.name}: {e}", exc_info=True
+            )
+            return None
+
+    def _finalize_note(
+        self,
+        transcript_text: str,
+        metadata: Dict[str, str],
+        fingerprint: str,
+        *,
+        version: int = 1,
+        previous_version: Optional[str] = None,
+        output_filename: Optional[str] = None,
+        fallback_title: str = "Nagranie",
+        extra_frontmatter: Optional[Dict[str, str]] = None,
+    ) -> Optional[Path]:
+        """Summarize → tag → render one note. The single 'text → note' tail,
+        shared by audio post-processing and text import (``src.ingest``).
+
+        ``metadata`` is the dict :meth:`MarkdownGenerator.extract_audio_metadata`
+        returns (``source_file``, ``recording_datetime``, ``duration_*``); the
+        import path synthesizes it without audio. ``extra_frontmatter`` carries
+        source-specific keys (audio: source_volume/model/language; import:
+        source_type/origin) merged over the common fingerprint/version block.
+        """
+        # Empty transcript is legal (silence, music) — write a placeholder note
+        # so the file is indexed and doesn't loop in the retry queue.
+        empty_transcript = not transcript_text.strip()
+        if empty_transcript:
+            logger.info("Pusty transkrypt — generuję markdown-placeholder")
+            transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
+
+        summary = None
+        if empty_transcript:
+            summary = {
+                "title": fallback_title,
+                "summary": "(Brak rozpoznawalnej mowy w nagraniu)",
+            }
+        elif self.summarizer and self._ai_disabled_reason is None:
+            try:
+                logger.info("📝 Generating summary...")
+                known_terms = self.vocabulary.known_terms_block()
+                summary = self.summarizer.generate(
+                    transcript_text,
+                    known_terms_block=known_terms,
+                )
+                summary = self._canonicalize_aliases(
+                    summary, transcript_text, known_terms
+                )
+                logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
+            except APIBillingError as exc:
+                self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+                summary = None
+            except Exception as e:
+                logger.error(f"Summary generation failed: {e}", exc_info=True)
+                logger.warning("Continuing without summary")
+                summary = None
+
+        if not summary:
+            logger.debug("Using fallback summary")
+            title = self._extract_fallback_title(transcript_text) or fallback_title
+            summary = {
+                "title": title,
+                "summary": """## Podsumowanie
 
 Brak podsumowania AI. Możliwe przyczyny:
 - klucz Claude API (ANTHROPIC_API_KEY) nie jest skonfigurowany
@@ -1345,85 +1569,55 @@ Brak podsumowania AI. Możliwe przyczyny:
 ## Lista działań (To-do)
 
 - Przejrzeć transkrypcję ręcznie
-- Wyciągnąć kluczowe wnioski ze spotkania"""
-                }
-            
-            # Extract audio metadata
-            logger.debug("Extracting audio metadata...")
-            metadata = self.markdown_generator.extract_audio_metadata(audio_file)
+- Wyciągnąć kluczowe wnioski ze spotkania""",
+            }
 
-            # Generate tags
-            tags = ["transcription"]
-            if empty_transcript:
-                tags.append("transcript-empty")
-            if (
-                not empty_transcript
-                and self.config.ENABLE_LLM_TAGGING
-                and self.tagger
-                and self._ai_disabled_reason is None
-            ):
-                try:
-                    existing_tags = self.tag_index.existing_tags()
-                    generated_tags = self.tagger.generate_tags(
-                        transcript=transcript_text,
-                        summary_markdown=summary.get("summary", ""),
-                        existing_tags=existing_tags,
-                    )
-                    for tag in generated_tags:
-                        if tag not in tags:
-                            tags.append(tag)
-                except APIBillingError as exc:
-                    self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
-                except Exception as error:  # noqa: BLE001
-                    logger.error(
-                        "Tag generation failed for %s: %s",
-                        audio_file.name,
-                        error,
-                        exc_info=True,
-                    )
-            
-            # Create markdown document
-            logger.info("📄 Creating markdown document...")
-            md_path = self.markdown_generator.create_markdown_document(
-                transcript=transcript_text,
-                summary=summary,
-                metadata=metadata,
-                output_dir=self.config.TRANSCRIBE_DIR,
-                tags=tags,
-                extra_frontmatter={
-                    "fingerprint": fingerprint,
-                    "source_volume": audio_file.parent.name,
-                    "version": version,
-                    "transcribed_on": get_hostname(),
-                    "model": self.config.WHISPER_MODEL,
-                    "language": self.config.WHISPER_LANGUAGE,
-                    "previous_version": previous_version or "",
-                },
-                output_filename=output_filename,
-            )
-            
-            logger.info(f"✓ Markdown document created: {md_path.name}")
-            
-            # Delete temporary TXT file if configured
-            if self.config.DELETE_TEMP_TXT:
-                try:
-                    transcript_path.unlink()
-                    logger.debug(f"✓ Deleted temporary TXT file: {transcript_path.name}")
-                except OSError as e:
-                    logger.warning(f"Could not delete temporary TXT file: {e}")
-            
-            return md_path
-            
-        except Exception as e:
-            logger.error(
-                f"Post-processing failed for {audio_file.name}: {e}",
-                exc_info=True
-            )
-            return None
+        tags = ["transcription"]
+        if empty_transcript:
+            tags.append("transcript-empty")
+        if (
+            not empty_transcript
+            and self.config.ENABLE_LLM_TAGGING
+            and self.tagger
+            and self._ai_disabled_reason is None
+        ):
+            try:
+                existing_tags = self.tag_index.existing_tags()
+                generated_tags = self.tagger.generate_tags(
+                    transcript=transcript_text,
+                    summary_markdown=summary.get("summary", ""),
+                    existing_tags=existing_tags,
+                )
+                for tag in generated_tags:
+                    if tag not in tags:
+                        tags.append(tag)
+            except APIBillingError as exc:
+                self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
+            except Exception as error:  # noqa: BLE001
+                logger.error("Tag generation failed: %s", error, exc_info=True)
 
-    def _find_existing_markdown_for_audio(
-        self, audio_file: Path
-    ) -> Optional[Path]:
+        frontmatter = {
+            "fingerprint": fingerprint,
+            "version": version,
+            "transcribed_on": get_hostname(),
+            "previous_version": previous_version or "",
+        }
+        frontmatter.update(extra_frontmatter or {})
+
+        logger.info("📄 Creating markdown document...")
+        md_path = self.markdown_generator.create_markdown_document(
+            transcript=transcript_text,
+            summary=summary,
+            metadata=metadata,
+            output_dir=self.config.TRANSCRIBE_DIR,
+            tags=tags,
+            extra_frontmatter=frontmatter,
+            output_filename=output_filename,
+        )
+        logger.info(f"✓ Markdown document created: {md_path.name}")
+        return md_path
+
+    def _find_existing_markdown_for_audio(self, audio_file: Path) -> Optional[Path]:
         """Find existing markdown note for given audio file.
 
         Looks for markdown files in the transcription directory whose YAML
@@ -1484,7 +1678,12 @@ Brak podsumowania AI. Możliwe przyczyny:
             Dict z licznikami:
             ``{"indexed": N, "orphan_cleaned": K, "txt_cleaned": M, "txt_recovered": R}``.
         """
-        result = {"indexed": 0, "orphan_cleaned": 0, "txt_cleaned": 0, "txt_recovered": 0}
+        result = {
+            "indexed": 0,
+            "orphan_cleaned": 0,
+            "txt_cleaned": 0,
+            "txt_recovered": 0,
+        }
         transcribe_dir = self.config.TRANSCRIBE_DIR
 
         if not transcribe_dir.exists():
@@ -1552,6 +1751,7 @@ Brak podsumowania AI. Możliwe przyczyny:
             if txt_path.exists():
                 try:
                     txt_path.unlink()
+                    self._cleanup_transcript_sidecar(txt_path)
                     result["txt_cleaned"] += 1
                     logger.debug("Reconciliation: removed leftover %s", txt_path.name)
                 except OSError as error:
@@ -1596,7 +1796,9 @@ Brak podsumowania AI. Możliwe przyczyny:
             stem = txt_path.stem
             # Czy istnieje MD wskazujący na ten audio? Heurystyka: source field
             # ma rozszerzenie, więc szukamy `stem.MP3`, `stem.WAV`, itd.
-            possible_sources = {f"{stem}.{ext}" for ext in ("MP3", "WAV", "M4A", "mp3", "wav", "m4a")}
+            possible_sources = {
+                f"{stem}.{ext}" for ext in ("MP3", "WAV", "M4A", "mp3", "wav", "m4a")
+            }
             if md_sources & possible_sources:
                 continue  # MD już istnieje, .txt zostanie sprzątnięty w etapie A
             result["txt_recovered"] += 1
@@ -1650,22 +1852,22 @@ Brak podsumowania AI. Możliwe przyczyny:
                 ],
             ),
         )
-    
+
     def _remove_existing_transcription(self, audio_file: Path) -> Dict[str, List[str]]:
         """Remove existing transcription files for given audio.
-        
+
         Finds and removes markdown files with matching source field,
         and removes TXT transcript file if it exists.
-        
+
         Args:
             audio_file: Path to audio file (staged copy)
-            
+
         Returns:
             Dict with 'removed_md' and 'removed_txt' lists containing
             names of removed files
         """
         removed = {"removed_md": [], "removed_txt": []}
-        
+
         # Find and remove markdown files with matching source
         existing_md = self._find_existing_markdown_for_audio(audio_file)
         if existing_md:
@@ -1675,7 +1877,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                 logger.info(f"🗑️  Removed existing markdown: {existing_md.name}")
             except OSError as e:
                 logger.warning(f"Could not remove {existing_md}: {e}")
-        
+
         # Find and remove TXT file
         txt_path = self.config.TRANSCRIBE_DIR / f"{audio_file.stem}.txt"
         if txt_path.exists():
@@ -1685,28 +1887,29 @@ Brak podsumowania AI. Możliwe przyczyny:
                 logger.info(f"🗑️  Removed existing TXT: {txt_path.name}")
             except OSError as e:
                 logger.warning(f"Could not remove {txt_path}: {e}")
-        
+        self._cleanup_transcript_sidecar(txt_path)
+
         return removed
 
     def force_retranscribe(self, audio_file: Path) -> bool:
         """Force re-transcription of a previously processed file.
-        
+
         Removes existing transcription files (MD/TXT) and runs
         transcription again. Uses ProcessLock to prevent conflicts
         with automatic processing.
-        
+
         Args:
             audio_file: Path to audio file (should be in staging directory)
-            
+
         Returns:
             True if re-transcription succeeded, False otherwise
         """
         if not audio_file.exists():
             logger.error(f"Audio file not found: {audio_file}")
             return False
-        
+
         logger.info(f"🔄 Force re-transcription requested: {audio_file.name}")
-        
+
         # In-process guard first: an automatic process_recorder pass on the
         # periodic-checker thread is the usual contender for this lock.
         if not self._workflow_lock.acquire(blocking=False):
@@ -1727,7 +1930,7 @@ Brak podsumowania AI. Możliwe przyczyny:
             raise RetranscribeLockBusyError(
                 "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
             )
-        
+
         try:
             # Remove existing transcription files
             removed = self._remove_existing_transcription(audio_file)
@@ -1761,30 +1964,105 @@ Brak podsumowania AI. Możliwe przyczyny:
             self._update_state(AppStatus.TRANSCRIBING, audio_file.name)
 
             success = self.transcribe_file(audio_file)
-            
+
             if success:
                 logger.info(f"✅ Re-transcription complete: {audio_file.name}")
             else:
                 logger.error(f"❌ Re-transcription failed: {audio_file.name}")
-            
+
             return success
-            
+
         finally:
             lock.release()
             self._workflow_lock.release()
             # Reset state if no more files in progress
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
-    
+
+    # ------------------------------------------------------------------ #
+    # TXT ownership sidecar
+    #
+    # A leftover ``{stem}.txt`` (crash between whisper and postprocess, or
+    # DELETE_TEMP_TXT=False) used to be adopted as the CURRENT audio's
+    # transcript purely by stem — recorders reset numbering, so REC001.MP3
+    # from another card could permanently receive someone else's transcript.
+    # The sidecar records which fingerprint a TXT belongs to; adoption is
+    # allowed only on a match. A vault-index check cannot replace this: the
+    # index entry is written only AFTER postprocess, i.e. it does not exist
+    # yet in exactly the crash-recovery window adoption must serve.
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _transcript_sidecar_path(transcript_path: Path) -> Path:
+        """Hidden ownership sidecar next to the TXT: ``.{stem}.txt.owner``."""
+        return transcript_path.parent / f".{transcript_path.name}.owner"
+
+    def _write_transcript_owner(
+        self, transcript_path: Path, audio_file: Path, fingerprint: str
+    ) -> None:
+        """Best-effort: record which recording the upcoming TXT belongs to."""
+        try:
+            payload = {
+                "fingerprint": fingerprint,
+                "source": audio_file.name,
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            self._transcript_sidecar_path(transcript_path).write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+        except OSError as error:
+            logger.debug("Could not write transcript sidecar: %s", error)
+
+    def _owns_transcript(self, transcript_path: Path, fingerprint: str) -> bool:
+        """True iff the sidecar exists and names this audio's fingerprint."""
+        sidecar = self._transcript_sidecar_path(transcript_path)
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+        return bool(fingerprint) and data.get("fingerprint") == fingerprint
+
+    def _cleanup_transcript_sidecar(self, transcript_path: Path) -> None:
+        """Remove the sidecar once its TXT is consumed or removed."""
+        try:
+            self._transcript_sidecar_path(transcript_path).unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - defensive
+            pass
+
+    def _quarantine_stale_transcript(self, transcript_path: Path) -> Optional[Path]:
+        """Rename an unowned leftover TXT aside — never delete user data.
+
+        Returns the new path, or ``None`` if the rename failed (in which case
+        the caller proceeds and whisper simply overwrites the file).
+        """
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        candidate = transcript_path.with_name(
+            f"{transcript_path.stem}.stale-{stamp}.txt"
+        )
+        counter = 2
+        while candidate.exists():
+            candidate = transcript_path.with_name(
+                f"{transcript_path.stem}.stale-{stamp}-{counter}.txt"
+            )
+            counter += 1
+        try:
+            transcript_path.rename(candidate)
+        except OSError as error:
+            logger.warning(
+                "Could not move stale TXT %s aside: %s", transcript_path.name, error
+            )
+            return None
+        self._cleanup_transcript_sidecar(transcript_path)
+        return candidate
+
     def transcribe_file(self, audio_file: Path) -> bool:
         """Transcribe a single audio file using whisper.cpp.
-        
+
         Automatically falls back to CPU-only if Core ML fails.
         Post-processes transcript to create markdown document with summary.
-        
+
         Args:
             audio_file: Path to the audio file to transcribe
-            
+
         Returns:
             True if transcription succeeded, False otherwise
         """
@@ -1795,16 +2073,44 @@ Brak podsumowania AI. Możliwe przyczyny:
         # Tier gating removed: versioning (v2/v3) is available to everyone.
         can_version = True
         if existing_entry and not can_version:
-            logger.info("✓ Already transcribed (fingerprint exists): %s", audio_file.name)
+            logger.info(
+                "✓ Already transcribed (fingerprint exists): %s", audio_file.name
+            )
             return True
 
-        # If TXT transcript already exists, skip whisper and only post-process
-        # once to create markdown. This avoids generating multiple notes for
-        # the same recording while still allowing migration from raw TXT.
-        transcript_path = (
-            self.config.TRANSCRIBE_DIR / f"{audio_file.stem}.txt"
-        )
-        if transcript_path.exists():
+        # If TXT transcript already exists AND belongs to this recording
+        # (ownership sidecar), skip whisper and only post-process once to
+        # create markdown — the crash-recovery path. An unowned TXT (legacy
+        # leftover, or a different recording sharing the stem) is moved aside
+        # and the audio transcribed fresh: wrong-transcript adoption is worse
+        # than one redundant whisper run.
+        transcript_path = self.config.TRANSCRIBE_DIR / f"{audio_file.stem}.txt"
+        adopt_existing_txt = transcript_path.exists()
+        if adopt_existing_txt and not self._owns_transcript(
+            transcript_path, fingerprint
+        ):
+            adopt_existing_txt = False
+            quarantined = self._quarantine_stale_transcript(transcript_path)
+            if quarantined is None:
+                # Can't move it aside and must not adopt it: skip this run
+                # (retried next cycle) rather than risk attaching someone
+                # else's transcript via the whisper-side early return.
+                logger.error(
+                    "✗ Stale TXT %s could not be moved aside — skipping %s "
+                    "this cycle",
+                    transcript_path.name,
+                    audio_file.name,
+                )
+                self._last_run_was_transient_failure = True
+                return False
+            logger.warning(
+                "⚠️  Leftover TXT %s did not belong to %s — moved aside as "
+                "%s; transcribing fresh",
+                transcript_path.name,
+                audio_file.name,
+                quarantined.name,
+            )
+        if adopt_existing_txt:
             logger.info(
                 "✓ Transcription TXT already exists, "
                 "creating markdown if needed: %s",
@@ -1833,7 +2139,11 @@ Brak podsumowania AI. Możliwe przyczyny:
                 )
             return success
 
-        # Run whisper transcription
+        # Run whisper transcription. The sidecar written first claims the
+        # upcoming TXT for this fingerprint, so a crash between whisper and
+        # postprocess stays recoverable (adoption above) without stem-only
+        # guessing.
+        self._write_transcript_owner(transcript_path, audio_file, fingerprint)
         transcript_path = self._run_macwhisper(audio_file)
 
         if transcript_path is None:
@@ -1852,7 +2162,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                     fingerprint,
                 )
             return False
-        
+
         # Post-process: generate summary and create markdown
         version = 1
         previous_version = None
@@ -1870,12 +2180,14 @@ Brak podsumowania AI. Możliwe przyczyny:
             output_filename=output_filename,
         )
         success = md_path is not None
-        
+
         if success:
             logger.info(f"✓ Complete: {audio_file.name}")
         else:
-            logger.warning(f"⚠️  Transcription complete but post-processing failed: {audio_file.name}")
-        
+            logger.warning(
+                f"⚠️  Transcription complete but post-processing failed: {audio_file.name}"
+            )
+
         if success and md_path is not None:
             self._index_completed_transcription(
                 audio_file=audio_file,
@@ -1885,36 +2197,37 @@ Brak podsumowania AI. Możliwe przyczyny:
                 version=version,
             )
 
-            # Connection synthesis is opportunistic and must NEVER disturb
-            # transcription — enqueue (a cheap in-memory counter bump, no API,
-            # no IO) and swallow anything that goes wrong.
-            try:
-                from src.connections import enqueue_connection_analysis
-
-                enqueue_connection_analysis(self)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("connection enqueue skipped: %s", exc)
-
-            # Keep the local recall index fresh at transcription time. Opt-in
-            # (ENABLE_RECALL_INDEX) and fully guarded — must never disturb
-            # transcription.
-            try:
-                from src.config.config import get_config
-
-                if getattr(get_config(), "ENABLE_RECALL_INDEX", False):
-                    from src.connections.recall.seam import index_transcript_safe
-
-                    index_transcript_safe(md_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("recall index skipped: %s", exc)
+            self._post_note_hooks(md_path)
 
         return success
+
+    def _post_note_hooks(self, md_path: Path) -> None:
+        """Fire the two opportunistic post-note hooks: bump the digest new-note
+        counter and refresh the recall index. Both are best-effort and must
+        NEVER disturb the caller. Shared by audio transcription and text import.
+        """
+        try:
+            from src.connections import enqueue_connection_analysis
+
+            enqueue_connection_analysis(self)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("connection enqueue skipped: %s", exc)
+
+        try:
+            from src.config.config import get_config
+
+            if getattr(get_config(), "ENABLE_RECALL_INDEX", False):
+                from src.connections.recall.seam import index_transcript_safe
+
+                index_transcript_safe(md_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("recall index skipped: %s", exc)
 
     def stage_audio_file(self, source: Path) -> Path:
         """Copy a manually chosen audio file into the local staging area.
 
         Fallback path for when automatic recorder/SD detection misses a file:
-        the user points Malinche at an audio file anywhere on disk. The
+        the user points Timshel at an audio file anywhere on disk. The
         original is never touched — a copy is placed in
         ``LOCAL_RECORDINGS_DIR`` (collision-safe) and returned for transcription.
 
@@ -1971,15 +2284,125 @@ Brak podsumowania AI. Możliwe przyczyny:
         Convenience wrapper around :meth:`stage_audio_file` +
         :meth:`transcribe_file` for the menu-bar "Import audio…" action.
 
+        Takes the same locks as :meth:`force_retranscribe` — without them a
+        manual import (menu background thread) could run a second whisper-cli
+        concurrently with the automatic recorder workflow: 2×(cores-2)
+        threads pegging every core and unsynchronized vault_index writes.
+        Locks are acquired BEFORE staging so a busy rejection has zero side
+        effects (no orphaned staged copy).
+
         Returns:
             True if transcription succeeded, False otherwise.
 
         Raises:
+            RetranscribeLockBusyError: another transcription is in progress.
             FileNotFoundError / ValueError: propagated from
             :meth:`stage_audio_file` for invalid input.
         """
-        staged = self.stage_audio_file(source)
-        return self.transcribe_file(staged)
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
+        if not lock.acquire():
+            logger.warning(
+                "Cannot acquire process lock - another process is transcribing"
+            )
+            self._workflow_lock.release()
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        try:
+            staged = self.stage_audio_file(source)
+            return self.transcribe_file(staged)
+        finally:
+            lock.release()
+            self._workflow_lock.release()
+            if not self.transcription_in_progress:
+                self._update_state(AppStatus.IDLE)
+
+    def import_text_file(self, source: Path) -> bool:
+        """Import an already-transcribed text file (txt/md/vtt) as a note.
+
+        Skips whisper entirely: parses the source via :mod:`src.ingest`, then
+        runs the SAME summarize→render→index tail as audio (``_finalize_note``),
+        so imported notes get v2 summaries (canonicalisation + Stanowiska), land
+        in the vault index and recall, and feed the next digest. Imported notes
+        carry ``source_type: import`` in frontmatter for provenance.
+
+        Takes the same workflow + process locks as audio import so it can't run
+        concurrently with a transcription (CPU/vault-index safety).
+
+        Returns:
+            True on success (or a duplicate already imported), False on failure.
+
+        Raises:
+            RetranscribeLockBusyError: another transcription is in progress.
+            FileNotFoundError / ValueError: unsupported or empty source.
+        """
+        from src.ingest import parse, text_fingerprint
+
+        if not self._workflow_lock.acquire(blocking=False):
+            logger.warning(
+                "Cannot acquire workflow lock - another transcription in progress"
+            )
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        lock = ProcessLock(self.config.PROCESS_LOCK_FILE)
+        if not lock.acquire():
+            logger.warning(
+                "Cannot acquire process lock - another process is transcribing"
+            )
+            self._workflow_lock.release()
+            raise RetranscribeLockBusyError(
+                "Auto transkrypcja w toku — spróbuj ponownie za chwilę."
+            )
+
+        try:
+            doc = parse(Path(source))  # raises ValueError on unsupported/empty
+            fingerprint = text_fingerprint(doc.text, doc.source_name)
+
+            if self.vault_index.lookup(fingerprint):
+                logger.info("✓ Already imported (fingerprint exists): %s", doc.source_name)
+                return True
+
+            metadata = {
+                "source_file": doc.source_name,
+                "recording_datetime": doc.recorded_at,
+                "duration_seconds": None,
+                "duration_formatted": "00:00:00",
+                "extension": Path(source).suffix.lower(),
+            }
+            self._update_state(AppStatus.TRANSCRIBING, doc.source_name)
+            md_path = self._finalize_note(
+                doc.text,
+                metadata,
+                fingerprint,
+                fallback_title=doc.title,
+                extra_frontmatter={"source_type": "import", "origin": doc.origin},
+            )
+            if md_path is None:
+                logger.warning("Import post-processing failed: %s", doc.source_name)
+                return False
+
+            self._index_completed_transcription(
+                Path(source), fingerprint, md_path, existing_entry=None
+            )
+            logger.info("✓ Imported: %s → %s", doc.source_name, md_path.name)
+            self._post_note_hooks(md_path)
+            return True
+        finally:
+            lock.release()
+            self._workflow_lock.release()
+            if not self.transcription_in_progress:
+                self._update_state(AppStatus.IDLE)
 
     def _index_completed_transcription(
         self,
@@ -2022,10 +2445,10 @@ Brak podsumowania AI. Możliwe przyczyny:
                     versions=[version_info],
                 ),
             )
-    
+
     def process_recorder(self) -> None:
         """Main workflow: detect recorder, find new files, transcribe.
-        
+
         This is the main entry point called when recorder activity is detected.
         It orchestrates the entire transcription workflow.
         """
@@ -2097,9 +2520,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                 )
                 return
 
-            logger.info(
-                f"✓ Recorder(s) detected: {[r.name for r in recorders]}"
-            )
+            logger.info(f"✓ Recorder(s) detected: {[r.name for r in recorders]}")
 
             # Recorder volume may have unmounted between find_recorders() and now
             # (LS-P1 auto-sleep, USB drop, etc). Drop any that disappeared.
@@ -2170,7 +2591,9 @@ Brak podsumowania AI. Możliwe przyczyny:
                         continue
                     logger.info(f"Processing: {recorder_file.name}")
 
-                    existing_markdown = self._find_existing_markdown_for_audio(recorder_file)
+                    existing_markdown = self._find_existing_markdown_for_audio(
+                        recorder_file
+                    )
                     if self.vault_index.lookup(fingerprint):
                         logger.info(
                             "↪️ Skipping already transcribed file (fingerprint): %s",
@@ -2191,7 +2614,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                         )
                         processed_success += 1
                         continue
-                    
+
                     # Stage file to local directory
                     staged_file = self._stage_audio_file(recorder_file)
                     if staged_file is None:
@@ -2201,27 +2624,27 @@ Brak podsumowania AI. Możliwe przyczyny:
                         )
                         processed_failed += 1
                         continue
-                    
+
                     # Transcribe using staged file
                     if self.transcribe_file(staged_file):
                         processed_success += 1
                     else:
                         processed_failed += 1
-                    
+
                     # Small delay between files
                     time.sleep(1)
-                
+
                 total_processed = processed_success + processed_failed
                 logger.info(
                     f"✓ Transcription batch complete: "
                     f"{processed_success}/{total_processed} succeeded, "
                     f"{processed_failed}/{total_processed} failed"
                 )
-                
+
                 # Completion notification removed: menu-bar status reflects this.
             else:
                 logger.info("ℹ️  No pending files to transcribe")
-            
+
             # Only advance sync time if ALL files were successfully processed
             # This prevents losing files that failed due to unmounting or other errors
             if processed_failed == 0 and processed_success > 0:
@@ -2239,13 +2662,13 @@ Brak podsumowania AI. Możliwe przyczyny:
                     "State remains at previous value."
                 )
             logger.info("=" * 60)
-            
+
             # Keep recorder_monitoring True if any recorder still connected
             # This prevents notification spam on periodic checks
             if not self.find_recorders():
                 self.recorder_monitoring = False
                 self.recorder_was_notified = False
-            
+
             if self.recorder_monitoring:
                 if pending_count > 0:
                     self._update_state(
@@ -2260,8 +2683,9 @@ Brak podsumowania AI. Możliwe przyczyny:
                         pending_count=0,
                     )
             else:
-                self._update_state(AppStatus.IDLE, recorder_name=None, pending_count=None)
+                self._update_state(
+                    AppStatus.IDLE, recorder_name=None, pending_count=None
+                )
         finally:
             lock.release()
             self._workflow_lock.release()
-

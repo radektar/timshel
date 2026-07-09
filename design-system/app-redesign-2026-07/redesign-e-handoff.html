@@ -1,0 +1,141 @@
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1640x1000" name="E — Kierunki + handoff" subtitle="Progresywne odsłanianie: checkbox kierunku → pasek handoffu z jednym CTA. Akcje wtórne w menu. Spec do portu AppKit." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timshel — E · Kierunki + handoff</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="redesign-spec.css">
+<script src="redesign-sigils.js" defer></script>
+</head>
+<body class="spec">
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Timshel · redesign · ekran E z 9</div>
+    <h1>E — Kierunki i pasek handoffu</h1>
+    <p class="lede">Progresywne odsłanianie w czystej postaci: <b>0 zaznaczonych = paska nie ma.</b> Zaznaczenie kierunku wyraża intencję — dopiero wtedy pojawia się pasek z jednym CTA. Akcje wtórne (zadanie · kalendarz · schowek) schodzą do menu ⋯. Handoff = tekst opuszcza Maca → znacznik ✦.</p>
+  </header>
+
+  <section class="sec" data-screen-label="E1 · Wiersz kierunku">
+    <div class="sec-bar"><span class="sec-id">E1</span><h2>Wiersz kierunku — checkbox + pytanie</h2>
+      <p>Checkbox 16 px wyrównany do <b>pierwszej linii</b> tekstu (margin-top 2 px przy line-height 19 px), nie do środka wiersza. Pusty checkbox z borderem .4 — widoczny, ale cichy.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">default</div>
+        <div class="dark-cell" style="width:430px"><div class="dirrow"><span class="cbx"></span>Co wymusiło zmianę założenia jakościowego — jednorazowy kompromis, czy trwała zmiana kierunku, którą warto nazwać wprost?</div></div></div>
+      <div class="state"><div class="state-label on">hover</div>
+        <div class="dark-cell" style="width:430px"><div class="dirrow is-hover"><span class="cbx"></span>Co wymusiło zmianę założenia jakościowego — jednorazowy kompromis, czy trwała zmiana kierunku, którą warto nazwać wprost?</div></div></div>
+      <div class="state"><div class="state-label on">zaznaczony</div>
+        <div class="dark-cell" style="width:430px"><div class="dirrow on"><span class="cbx"></span>Co wymusiło zmianę założenia jakościowego — jednorazowy kompromis, czy trwała zmiana kierunku, którą warto nazwać wprost?</div></div>
+        <div class="state-note">terakotowy fill + ✓; tint wiersza <span class="tok">rgba(217,84,42,.09)</span> + border <span class="tok">.55</span></div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="E2 · Odsłanianie paska">
+    <div class="sec-bar"><span class="sec-id">E2</span><h2>Odsłanianie paska — trzy klatki</h2>
+      <p>Pasek (48 px) wsuwa się nad stopką triażu; reduced-motion: pojawia się bez ruchu. Status liczby wybranych po lewej, CTA po prawej.</p></div>
+    <div class="states" style="flex-direction:column">
+      <div class="state" style="width:860px"><div class="state-label">0 zaznaczonych — paska nie ma</div>
+        <div class="win" style="border-radius:10px">
+          <div style="padding:14px 16px">
+            <div class="dirrow" style="max-width:600px"><span class="cbx"></span>Filary projektu — bronić mimo budżetu, czy zrewidować i szukać oszczędności gdzie indziej?</div>
+          </div>
+          <div class="wfooter"><span class="btn btn-ghost">Odrzuć</span><span class="btn btn-jade">Zachowaj</span></div>
+        </div></div>
+      <div class="state" style="width:860px"><div class="state-label on">1 zaznaczony — pasek wsuwa się</div>
+        <div class="win" style="border-radius:10px">
+          <div style="padding:14px 16px">
+            <div class="dirrow on" style="max-width:600px"><span class="cbx"></span>Filary projektu — bronić mimo budżetu, czy zrewidować i szukać oszczędności gdzie indziej?</div>
+          </div>
+          <div class="handoff">
+            <span>1 kierunek wybrany</span>
+            <span class="cloud-chip" style="font-size:10px">do chmury</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <span class="btn btn-ghost btn-caret"><span data-ico="wiecej"></span></span>
+              <span style="display:inline-flex">
+                <span class="btn btn-terra" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span>
+                <span class="btn btn-terra btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span>
+              </span>
+            </span>
+          </div>
+          <div class="wfooter"><span class="btn btn-ghost">Odrzuć</span><span class="btn btn-jade">Zachowaj</span></div>
+        </div></div>
+      <div class="state" style="width:860px"><div class="state-label on">2 zaznaczone</div>
+        <div class="win" style="border-radius:10px">
+          <div class="handoff" style="border-top:none">
+            <span>2 kierunki wybrane</span>
+            <span class="cloud-chip" style="font-size:10px">do chmury</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <span class="btn btn-ghost btn-caret"><span data-ico="wiecej"></span></span>
+              <span style="display:inline-flex">
+                <span class="btn btn-terra" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span>
+                <span class="btn btn-terra btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span>
+              </span>
+            </span>
+          </div>
+        </div>
+        <div class="state-note">polska liczebność: 1 kierunek · 2–4 kierunki · 5+ kierunków</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="E3 · CTA i menu">
+    <div class="sec-bar"><span class="sec-id">E3</span><h2>CTA z marką, switcher, menu akcji wtórnych</h2>
+      <p>Split-button: część główna wykonuje, caret przełącza narzędzie (Claude / ChatGPT — tylko te dwa). Marka = lokalne SVG jako template-image, tint biały. Menu ⋯ przejmuje dawny klaster ikon.</p></div>
+    <div class="states">
+      <div class="state"><div class="state-label">cta · default</div>
+        <div class="dark-cell"><span style="display:inline-flex"><span class="btn btn-terra" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span><span class="btn btn-terra btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span></span></div></div>
+      <div class="state"><div class="state-label on">hover</div>
+        <div class="dark-cell"><span style="display:inline-flex"><span class="btn btn-terra is-hover" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span><span class="btn btn-terra btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span></span></div></div>
+      <div class="state"><div class="state-label on">pressed</div>
+        <div class="dark-cell"><span style="display:inline-flex"><span class="btn btn-terra is-pressed" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span><span class="btn btn-terra btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span></span></div></div>
+      <div class="state"><div class="state-label on">switcher otwarty</div>
+        <div class="dark-cell" style="padding-bottom:14px">
+          <span style="display:inline-flex"><span class="btn btn-terra" style="border-radius:6px 0 0 6px"><span class="bicon" data-ico="claude"></span>Kontynuuj w Claude</span><span class="btn btn-terra is-pressed btn-caret" style="border-radius:0 6px 6px 0;border-left:1px solid rgba(255,255,255,.25)"><span data-ico="caret"></span></span></span>
+          <div class="menu" style="width:180px;margin-top:8px">
+            <div class="mi is-hover"><span class="bicon" data-ico="claude"></span>Claude <span class="sc">✓</span></div>
+            <div class="mi">ChatGPT</div>
+          </div>
+        </div>
+        <div class="state-note">wybór zapamiętany globalnie; etykieta CTA podąża</div></div>
+      <div class="state"><div class="state-label on">menu ⋯ otwarte</div>
+        <div class="dark-cell" style="padding-bottom:14px">
+          <span class="btn btn-ghost btn-caret is-pressed"><span data-ico="wiecej"></span></span>
+          <div class="menu" style="width:210px;margin-top:8px">
+            <div class="mi"><span class="bicon" data-ico="zadanie"></span>Utwórz zadanie</div>
+            <div class="mi is-hover"><span class="bicon" data-ico="kalendarz"></span>Dodaj do kalendarza</div>
+            <div class="mi"><span class="bicon" data-ico="kopiuj"></span>Skopiuj kierunki</div>
+          </div>
+        </div>
+        <div class="state-note">dawny klaster trzech ikon — teraz jedno ciche wejście; kopiowanie daje toast (ekran I)</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="E4 · Ślad handoffu">
+    <div class="sec-bar"><span class="sec-id">E4</span><h2>Po handoffie — trwały ślad na karcie</h2></div>
+    <div class="states">
+      <div class="state"><div class="state-label on">ślad</div>
+        <div class="dark-cell" style="width:480px"><span class="trace" style="background:rgba(231,180,92,.07);border-color:rgba(231,180,92,.3)"><span style="color:#E7B45C">✦</span> Przekazano do Claude <span class="o">↗ otwórz wątek</span> <span class="t">14:32</span></span></div>
+        <div class="state-note">złoty wariant śladu — tekst wyszedł do chmury; trwały, przeżywa zamknięcie okna</div></div>
+    </div>
+  </section>
+
+  <section class="sec" data-screen-label="E5 · Redline">
+    <div class="sec-bar"><span class="sec-id">E5</span><h2>Redline</h2></div>
+    <table class="redline">
+      <thead><tr><th>Element</th><th>Wymiar</th><th>Kolor / token</th></tr></thead>
+      <tbody>
+        <tr><td>Checkbox</td><td><span class="px">16 px</span>, radius <span class="px">4</span>, border <span class="px">1,5 px</span>; align: top + <span class="px">2 px</span></td><td>pusty <code>rgba(250,243,226,.4)</code> · zaznaczony fill <code>--terracotta</code> + ✓ biały</td></tr>
+        <tr><td>Wiersz kierunku</td><td>padding <span class="px">11×12</span>, radius <span class="px">10</span>, gap <span class="px">11</span></td><td>on: tint <code>rgba(217,84,42,.09)</code> + border <code>.55</code>, tekst pełną bielą</td></tr>
+        <tr><td>Pasek handoffu</td><td>wys. <span class="px">48 px</span> (bez zmian); wsuwa 150 ms</td><td>tło <code>rgba(0,0,0,.22)</code>; status 12 px <code>.6</code>; znacznik ✦ <code>--grad-gold</code></td></tr>
+        <tr><td>CTA split</td><td><span class="px">31 px</span>; glif marki <span class="px">16 px</span>, gap <span class="px">7</span>; caret <span class="px">31 px</span></td><td><code>--terracotta</code> → hover <code>--terracotta-lit</code> + cień accent → pressed <code>--terracotta-deep</code>; marka tint biały (template-image)</td></tr>
+        <tr><td>Menu ⋯ / switcher</td><td>NSMenu; pozycje <span class="px">28 px</span></td><td>zaznaczenie <code>--terracotta</code>, tekst biały</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot"><b>Zależności:</b> kierunki żyją na karcie insightu (A) i karcie syntezy (D) · toast kopiowania i ślady → I. Marki: <code style="font-family:var(--font-mono)">assets/brands/claude.svg · openai.svg</code>, template-image, tint biały na terakocie — glif tu jest placeholderem.</div>
+
+</div>
+</body>
+</html>

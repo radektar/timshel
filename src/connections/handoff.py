@@ -2,9 +2,9 @@
 
 A gesture = package the insight's context (the spark + the dated evidence + the
 directions the user selected) and throw it over the wall to the user's own tool.
-Malinche does not host the conversation or store the action — it packages and
+Timshel does not host the conversation or store the action — it packages and
 hands off. **Zero OAuth in v1**: every target is reached with macOS ``open`` /
-``osascript`` / ``pbcopy``, so Malinche itself makes no network call.
+``osascript`` / ``pbcopy``, so Timshel itself makes no network call.
 
 Split, as everywhere in this codebase: the **builders are pure and testable**
 (seeded prompt, per-tool URL, ``.ics`` body, AppleScript); the side-effecting
@@ -137,10 +137,10 @@ def ics_text(summary: str, description: str, *, now: Optional[datetime] = None) 
         [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
-            "PRODID:-//Malinche//Insights//PL",
+            "PRODID:-//Timshel//Insights//PL",
             "CALSCALE:GREGORIAN",
             "BEGIN:VEVENT",
-            f"UID:{stamp}-{hashlib.sha1(summary.encode('utf-8')).hexdigest()[:8]}@malinche",
+            f"UID:{stamp}-{hashlib.sha1(summary.encode('utf-8')).hexdigest()[:8]}@timshel",
             f"DTSTAMP:{stamp}",
             f"DTSTART:{dtstart}",
             "DURATION:PT30M",
@@ -187,13 +187,19 @@ class HandoffResult:
 
 
 def _run(args: Sequence[str], *, input_text: Optional[str] = None) -> bool:
-    """Run a local command, returning success. Never raises."""
+    """Run a local command, returning success. Never raises.
+
+    The timeout matters: osascript blocks on the first-run TCC consent prompt
+    or a Reminders/Calendar cold launch — without a bound, that hang would be
+    forever (TimeoutExpired lands in the broad except → False).
+    """
     try:
         subprocess.run(
             list(args),
             input=(input_text.encode("utf-8") if input_text is not None else None),
             check=True,
             capture_output=True,
+            timeout=15,
         )
         return True
     except Exception as exc:  # noqa: BLE001

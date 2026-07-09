@@ -19,11 +19,10 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.config import config
 from src.connections.candidate_assembly import CandidateSet
+from src.llm.client import build_anthropic_client
 from src.llm.model_router import resolve_model
 from src.logger import logger
 from src.summarizer import APIBillingError, _is_permanent_api_error
-
-Anthropic: Any = None
 
 _TOOL_NAME = "emit_connections"
 
@@ -179,7 +178,9 @@ _SYSTEM_PROMPT = (
     "- 'rationale' is 1-2 grounded sentences naming the SPECIFIC tension or "
     "transfer (what new thing follows from putting these notes together), never "
     "just the shared topic. It is the high-level SPARK — do NOT pack the dated "
-    "quotes into it; those belong in 'evidence'.\n"
+    "quotes into it; those belong in 'evidence'. Address the PERSON as the "
+    "subject ('w marcu zakładałeś X, teraz przesuwasz to za Y'); dates are "
+    "timestamps, never narrators ('March proposes...' is wrong).\n"
     "- 'evidence': for EACH linked note, one item with its exact [[basename]] "
     "as 'note', its 'date' as given, and a SHORT VERBATIM fragment of that "
     "note's summary as 'quote' (the line that grounds the connection). Quote "
@@ -223,16 +224,7 @@ class ConnectionSynthesizer:
     """Runs one Claude synthesis pass over an assembled candidate set."""
 
     def __init__(self, api_key: str, model: str) -> None:
-        global Anthropic
-        try:
-            from anthropic import Anthropic as AnthropicClient
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "anthropic package not installed. Install via `pip install anthropic`."
-            ) from exc
-        if Anthropic is None:
-            Anthropic = AnthropicClient
-        self.client = Anthropic(api_key=api_key)
+        self.client = build_anthropic_client(api_key)
         self.model = model
         self.last_usage: Any = None  # usage of the most recent call (for the eval)
 

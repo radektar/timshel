@@ -1,12 +1,15 @@
 """Assemble a bounded, relevance-ranked set of notes for one synthesis pass.
 
-No embeddings: we combine three cheap, local signals —
-  1. the *recency window* (new material since the last digest — always kept),
-  2. *tag bridges* (older notes sharing normalized tags with the window),
-  3. *lexical overlap* via a compact in-process BM25 over note summaries —
-then bound the result to a token budget. Deliberately dependency-light (no
-scipy / scikit-learn): the corpus is hundreds of short notes, where a small
-BM25 is plenty. ``bm25s`` is the documented drop-in if scale ever demands it.
+We combine several cheap, local preselection channels and round-robin them into
+a bounded candidate set:
+  * the *recency window* (new material since the last digest — always kept),
+  * *tag bridges* + a compact in-process *BM25* (similarity channels),
+  * *rare-token bridges*, *shared-entity*, *dense KNN* (recall engine),
+    *note-term graph PPR*, and *stance-flip* (distance channels — off by
+    default, enabled by the magic-insights prototype).
+Deliberately dependency-light for the local signals (no scipy / scikit-learn);
+the dense channel reuses the vault's existing embedding index. The corpus is
+hundreds of short notes, where these small algorithms are plenty.
 
 We always feed *summaries*, never full transcripts — and when a note has no
 summary block (AI summaries were off when it was transcribed) we fall back to a
@@ -19,11 +22,13 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from src.config import config
 from src.connections.dismissals import DismissalStore
+from src.connections.entities import entity_keys
 from src.logger import logger
 from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
 from src.tag_index import TagIndex
@@ -61,10 +66,23 @@ class CandidateSet:
     notes: List[NoteRef]
     window_basenames: Set[str]
     bridge_basenames: Set[str] = None  # type: ignore[assignment]
+    # basename -> the preselection channels that surfaced it ("window", "tag",
+    # "bm25", "bridge", "entity", "dense"). The prototype's recall instrument
+    # (H3): to ask "did preselection reach this planted pair, and via which
+    # channel?", score the answer against this map. Empty by default.
+    channel_map: Dict[str, Set[str]] = None  # type: ignore[assignment]
+    # Every basename ANY channel ranked BEFORE the note-count cap / char budget.
+    # Lets the recall eval tell "never found" from "found but cut by budget" —
+    # two different failures needing two different fixes.
+    precap_basenames: Set[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.bridge_basenames is None:
             self.bridge_basenames = set()
+        if self.channel_map is None:
+            self.channel_map = {}
+        if self.precap_basenames is None:
+            self.precap_basenames = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -123,7 +141,12 @@ def _summary_or_excerpt(full: str, max_chars: int) -> str:
     return _excerpt(body, max_chars)
 
 
+@lru_cache(maxsize=8192)
 def _tokenize(text: str) -> List[str]:
+    # Cached: called by bm25, bridges, doc-freq and the graph channel — several
+    # full-corpus passes per assemble, hundreds of assembles per recall run over
+    # an unchanging corpus. Pure text->list; callers only read it (set(), len(),
+    # Counter()), never mutate, so the shared cached list is safe.
     tokens: List[str] = []
     for raw in _TOKEN_RE.findall(text.lower()):
         tok = TagIndex.normalize_tag(raw)
@@ -133,11 +156,26 @@ def _tokenize(text: str) -> List[str]:
     return tokens
 
 
+def clear_tokenize_cache() -> None:
+    """Drop the _tokenize LRU. The cache keys are whole note texts (up to
+    ~2×max_chars each): great within one recall run's many assembles, but in
+    the long-lived daemon it otherwise pins up to 8192 note texts + token lists
+    forever after a weekly digest. Called at the end of a digest run so the
+    speedup is kept where it matters and the retention is bounded to one pass.
+    """
+    _tokenize.cache_clear()
+
+
 # --------------------------------------------------------------------------- #
 # Corpus loading + ranking
 # --------------------------------------------------------------------------- #
-def load_corpus(vault_dir: Path) -> List[NoteRef]:
-    """Load top-level transcript notes (digests live in a subfolder, excluded)."""
+def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
+    """Load top-level transcript notes (digests live in a subfolder, excluded).
+
+    ``as_of`` (YYYY-MM-DD, inclusive) drops notes dated after it — the
+    time-travel seam for the recall harness, which replays "what would
+    assembly have seen the day note X arrived". Production callers omit it.
+    """
     notes: List[NoteRef] = []
     note_chars = config.MAX_SYNTHESIS_NOTE_CHARS
     for md_path in sorted(Path(vault_dir).glob("*.md")):
@@ -147,7 +185,15 @@ def load_corpus(vault_dir: Path) -> List[NoteRef]:
             logger.debug("skip unreadable note %s: %s", md_path, exc)
             continue
         fm = _frontmatter(full)
-        if fm.get("type") == "malinche-digest":
+        # Accept the pre-rename marker too: a migrated vault still holds digests
+        # stamped ``malinche-digest`` that must keep self-excluding.
+        if fm.get("type") in ("timshel-digest", "malinche-digest"):
+            continue
+        note_date = (fm.get("date") or fm.get("recording_date") or "")[:10]
+        # Under a time-travel replay, a note dated after the cutoff — OR with no
+        # usable date at all — cannot be placed on the timeline, so it must not
+        # leak into the replayed corpus. (as_of is None in production: no effect.)
+        if as_of and (not note_date or note_date > as_of):
             continue
         tags = _parse_tags(fm.get("tags", ""))
         notes.append(
@@ -155,7 +201,7 @@ def load_corpus(vault_dir: Path) -> List[NoteRef]:
                 md_path=md_path,
                 basename=md_path.stem,
                 title=fm.get("title") or md_path.stem,
-                date=(fm.get("date") or fm.get("recording_date") or "")[:10],
+                date=note_date,
                 tags=tags,
                 norm_tags={TagIndex.normalize_tag(t) for t in tags if t},
                 summary_md=_summary_or_excerpt(full, note_chars),
@@ -253,6 +299,142 @@ def _bridge_neighbors(
     return [note for _, _, note in scored[:max_n]]
 
 
+def _entity_neighbors(
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Notes joined to the window by a shared *named entity*, not shared words.
+
+    The channel Challenge #3 asks for: a contradiction months apart survives on
+    the person / project / org both notes name, even after the topical
+    vocabulary has drifted (so BM25 and tags miss it). Matching uses
+    :func:`~src.connections.entities.entity_keys` — inflection-tolerant stems,
+    because Polish declension ('Fundacja Ziemi' vs 'Fundacji Ziemi') defeats
+    exact-form matching. Ranked by how many entities a note shares with the
+    window, then recency. Returns at most ``max_n`` notes.
+    """
+    if max_n <= 0:
+        return []
+    window_entities: Set[str] = set()
+    for note in window:
+        window_entities |= entity_keys(note.summary_md)
+    if not window_entities:
+        return []
+
+    scored: List[tuple] = []
+    for note in older:
+        if note.basename in exclude:
+            continue
+        shared = window_entities & entity_keys(note.summary_md)
+        if shared:
+            scored.append((len(shared), note.date, note))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [note for _, _, note in scored[:max_n]]
+
+
+def _graph_neighbors(
+    corpus: List[NoteRef],
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+) -> List[NoteRef]:
+    """Notes reached from the window by Personalized PageRank over the note-term
+    bridge graph (Swanson ABC / HippoRAG-lite).
+
+    Unlike the entity channel (a single shared entity) this spreads activation
+    over MULTIPLE hops of shared bridge terms, so it reaches notes connected to
+    the window through a chain of intermediates even when they share no direct
+    term with any single window note. Ranked by PPR score. Pure-local, $0.
+    """
+    if max_n <= 0 or not older:
+        return []
+    from src.connections.note_graph import NoteGraph, build_note_terms
+
+    graph = NoteGraph(build_note_terms(corpus))
+    scores = graph.ppr([n.basename for n in window])
+    if not scores:
+        return []
+    older_by_name = {n.basename: n for n in older if n.basename not in exclude}
+    ranked = sorted(
+        (b for b in scores if b in older_by_name),
+        key=lambda b: scores[b],
+        reverse=True,
+    )
+    return [older_by_name[b] for b in ranked[:max_n]]
+
+
+# Module-level cache: the recall engine loads an ONNX embedding model — build it
+# once per vault path per process, not once per assemble call (the recall eval
+# replays assembly hundreds of times).
+_ENGINE_CACHE: Dict[str, object] = {}
+
+
+def _get_recall_engine(vault_dir: Path):
+    """Cached RecallEngine for the dense channel; None when unavailable."""
+    key = str(vault_dir)
+    if key not in _ENGINE_CACHE:
+        try:
+            from src.connections.recall.engine import RecallEngine
+
+            _ENGINE_CACHE[key] = RecallEngine(vault_dir)
+        except Exception as exc:  # noqa: BLE001 - channel must never break assembly
+            logger.warning("dense channel unavailable (%s)", exc)
+            _ENGINE_CACHE[key] = None
+    return _ENGINE_CACHE[key]
+
+
+def _dense_neighbors(
+    vault_dir: Path,
+    window: List[NoteRef],
+    older: List[NoteRef],
+    exclude: Set[str],
+    max_n: int,
+    skip: int = 0,
+) -> List[NoteRef]:
+    """Semantic neighbours from the local embedding index (recall engine).
+
+    The preselection channel the business strategy promised from day one and
+    the digest lane never used: embed the window notes, KNN over the vault's
+    existing sqlite-vec index, keep the nearest OLDER notes. Purely local,
+    zero API cost. Fails soft: no index / no deps -> empty contribution.
+
+    ``skip`` drops the ``skip`` nearest neighbours before taking ``max_n`` — the
+    Goldilocks / "one step beyond the profile" band (Orwig 2025): the very
+    closest notes are near-duplicates of the window and carry no surprise. 0 =
+    plain top-K (default; recall harness sweeps this).
+    """
+    if max_n <= 0 or not older:
+        return []
+    engine = _get_recall_engine(vault_dir)
+    if engine is None:
+        return []
+    older_by_name = {n.basename: n for n in older if n.basename not in exclude}
+    if not older_by_name:
+        return []
+
+    # Aggregate best rank per note across up to 3 window queries.
+    best_rank: Dict[str, int] = {}
+    try:
+        for note in window[:3]:
+            query = note.summary_md.strip()[:800]
+            if not query:
+                continue
+            for rank, note_id in enumerate(
+                engine.knn_note_ids(query, k=(skip + max_n) * 3)
+            ):
+                if note_id in older_by_name:
+                    if note_id not in best_rank or rank < best_rank[note_id]:
+                        best_rank[note_id] = rank
+    except Exception as exc:  # noqa: BLE001 - channel must never break assembly
+        logger.warning("dense channel query failed (%s)", exc)
+        return []
+    ranked = sorted(best_rank.items(), key=lambda kv: kv[1])
+    return [older_by_name[name] for name, _ in ranked[skip : skip + max_n]]
+
+
 def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
     out: List[NoteRef] = []
     i = j = 0
@@ -263,6 +445,29 @@ def _interleave(first: List[NoteRef], second: List[NoteRef]) -> List[NoteRef]:
         if j < len(second):
             out.append(second[j])
             j += 1
+    return out
+
+
+def _round_robin(channels: List[List[NoteRef]]) -> List[NoteRef]:
+    """Interleave N ranked channel lists one item at a time (channel quotas).
+
+    Round-robin gives every channel a fair share of the note-count cap, so no
+    single dominant channel (bm25/tags) can crowd out the weak-signal ones —
+    and no pile of distance channels can starve similarity. Order within a round
+    follows the ``channels`` order (earlier = slight priority). With exactly two
+    lists this is byte-identical to :func:`_interleave`, so the baseline (only
+    tag + bm25 populated) is unchanged.
+    """
+    out: List[NoteRef] = []
+    idx = [0] * len(channels)
+    remaining = True
+    while remaining:
+        remaining = False
+        for c, ch in enumerate(channels):
+            if idx[c] < len(ch):
+                out.append(ch[idx[c]])
+                idx[c] += 1
+                remaining = True
     return out
 
 
@@ -294,6 +499,12 @@ def assemble_candidates(
     dismissals: DismissalStore,
     first_run_window: int = 15,
     inject_bridges: int = 0,
+    inject_entities: int = 0,
+    inject_dense: int = 0,
+    inject_graph: int = 0,
+    inject_stance: int = 0,
+    dense_skip: int = 0,
+    as_of: Optional[str] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -303,9 +514,22 @@ def assemble_candidates(
         dismissals: store used to drop muted notes (connection-level filtering
             happens later, on the synthesis output).
         first_run_window: how many recent notes seed the very first digest.
+        inject_bridges: rare-token distance-channel notes to inject (0 = off).
+        inject_entities: shared-entity distance-channel notes to inject (0 = off,
+            byte-identical to the pre-entity baseline).
+        inject_dense: semantic KNN notes from the local embedding index
+            (0 = off; requires the recall index — fails soft without it).
+        inject_graph: notes reached by PPR over the note-term bridge graph
+            (0 = off; pure-local ABC/HippoRAG-lite channel).
+        inject_stance: older notes sharing an anchor with the window but of
+            opposite polarity (0 = off; contradiction-candidate channel).
+        as_of: time-travel cutoff (YYYY-MM-DD, inclusive) for the recall
+            harness — see :func:`load_corpus`. Production callers omit it.
     """
     corpus = [
-        n for n in load_corpus(vault_dir) if not dismissals.note_muted(n.basename)
+        n
+        for n in load_corpus(vault_dir, as_of=as_of)
+        if not dismissals.note_muted(n.basename)
     ]
     if not corpus:
         return CandidateSet([], set())
@@ -346,21 +570,145 @@ def assemble_candidates(
         )
         bridge_basenames = {n.basename for n in bridges}
 
+    # Entity distance-channel: notes sharing a named entity with the window even
+    # when topic vocabulary has drifted (Challenge #3). Injected alongside
+    # bridges so it survives the cap/budget. Default 0 -> baseline unchanged.
+    entities: List[NoteRef] = []
+    entity_basenames: Set[str] = set()
+    if inject_entities > 0:
+        entities = _entity_neighbors(
+            window, older, window_basenames | bridge_basenames, inject_entities
+        )
+        entity_basenames = {n.basename for n in entities}
+
+    # Dense semantic channel: KNN over the vault's local embedding index (the
+    # recall engine). Injected alongside bridges/entities so it survives the
+    # cap/budget. Default 0 -> baseline unchanged; fails soft without an index.
+    dense: List[NoteRef] = []
+    dense_basenames: Set[str] = set()
+    if inject_dense > 0:
+        dense = _dense_neighbors(
+            Path(vault_dir),
+            window,
+            older,
+            window_basenames | bridge_basenames | entity_basenames,
+            inject_dense,
+            skip=dense_skip,
+        )
+        dense_basenames = {n.basename for n in dense}
+
+    # Graph channel: Personalized PageRank over the note-term bridge graph
+    # (Swanson ABC / HippoRAG-lite) — multi-hop reach the single-entity channel
+    # misses. Default 0 -> baseline unchanged.
+    graph: List[NoteRef] = []
+    graph_basenames: Set[str] = set()
+    if inject_graph > 0:
+        graph = _graph_neighbors(
+            corpus,
+            window,
+            older,
+            window_basenames | bridge_basenames | entity_basenames | dense_basenames,
+            inject_graph,
+        )
+        graph_basenames = {n.basename for n in graph}
+
+    # Stance-flip channel: older notes sharing an anchor (entity/tag) with the
+    # window but carrying OPPOSITE polarity — contradiction candidates the
+    # similarity channels miss. Default 0 -> baseline unchanged.
+    stance: List[NoteRef] = []
+    stance_basenames: Set[str] = set()
+    if inject_stance > 0:
+        from src.connections.stance import stance_flip_neighbors
+
+        stance = stance_flip_neighbors(
+            window,
+            older,
+            window_basenames
+            | bridge_basenames
+            | entity_basenames
+            | dense_basenames
+            | graph_basenames,
+            inject_stance,
+        )
+        stance_basenames = {n.basename for n in stance}
+
+    # Fair round-robin across all channels (quotas), so neither the dominant
+    # similarity channels nor the pile of distance channels can monopolize the
+    # note-count cap. Two-list baseline (only tag+bm25) stays byte-identical.
     ranked: List[NoteRef] = list(window)
     seen = set(window_basenames)
-    for note in bridges + _interleave(tag_neighbors, lexical_neighbors):
+    for note in _round_robin(
+        [
+            stance,
+            bridges,
+            entities,
+            dense,
+            graph,
+            tag_neighbors,
+            lexical_neighbors,
+        ]
+    ):
         if note.basename in seen:
             continue
         seen.add(note.basename)
         ranked.append(note)
 
+    # Everything ANY channel ranked, before cap/budget (recall-eval diagnostic).
+    precap_basenames = set(seen)
+
+    protected = (
+        window_basenames
+        | bridge_basenames
+        | entity_basenames
+        | dense_basenames
+        | graph_basenames
+        | stance_basenames
+    )
+    # The note-count cap must not drop the weak-signal distance channels in
+    # favour of the abundant similarity channels (bm25/tags). Round-robin fairly
+    # interleaves them, but a distance note landing deep in the round order would
+    # otherwise fall past the cap. Stable-partition protected (window + distance)
+    # ahead of the rest — preserving round-robin order within each group — so the
+    # cap trims similarity overflow first. (Without this, step-D's round-robin
+    # could REGRESS prototype recall vs the old distance-first concat.)
+    ranked.sort(key=lambda n: n.basename not in protected)
     ranked = ranked[: config.MAX_SYNTHESIS_NOTES]
-    ranked = _enforce_char_budget(ranked, window_basenames | bridge_basenames)
+    ranked = _enforce_char_budget(ranked, protected)
+
+    # Channel attribution for the surfaced notes (H3 recall instrument).
+    channel_sources = [
+        ("window", window),
+        ("tag", tag_neighbors),
+        ("bm25", lexical_neighbors),
+        ("bridge", bridges),
+        ("entity", entities),
+        ("dense", dense),
+        ("graph", graph),
+        ("stance", stance),
+    ]
+    kept = {n.basename for n in ranked}
+    channel_map: Dict[str, Set[str]] = {}
+    for channel, notes in channel_sources:
+        for note in notes:
+            if note.basename in kept:
+                channel_map.setdefault(note.basename, set()).add(channel)
+
     logger.info(
-        "connection assembly: %d candidates (%d new, %d bridges) from %d-note corpus",
+        "connection assembly: %d candidates (%d new, %d bridges, %d entities, "
+        "%d dense, %d graph, %d stance) from %d-note corpus",
         len(ranked),
         len(window_basenames),
         len(bridge_basenames),
+        len(entity_basenames),
+        len(dense_basenames),
+        len(graph_basenames),
+        len(stance_basenames),
         len(corpus),
     )
-    return CandidateSet(ranked, window_basenames, bridge_basenames)
+    return CandidateSet(
+        ranked,
+        window_basenames,
+        bridge_basenames,
+        channel_map=channel_map,
+        precap_basenames=precap_basenames,
+    )

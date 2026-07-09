@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import os
 
-from src.menu_app import MalincheMenuApp
+from src.menu_app import TimshelMenuApp
 
 
 def _app():
-    return MalincheMenuApp.__new__(MalincheMenuApp)
+    return TimshelMenuApp.__new__(TimshelMenuApp)
 
 
 def test_disk_fallback_lists_newest_first_excluding_digests(tmp_path, monkeypatch):
@@ -28,7 +28,7 @@ def test_disk_fallback_lists_newest_first_excluding_digests(tmp_path, monkeypatc
     digest = tmp_path / "Malinche Digests" / "Digest.md"
     digest.parent.mkdir(parents=True)
     digest.write_text("d", encoding="utf-8")
-    sidecar = tmp_path / ".malinche" / "index.md"
+    sidecar = tmp_path / ".timshel" / "index.md"
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("i", encoding="utf-8")
 

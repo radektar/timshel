@@ -45,9 +45,9 @@ def vault(tmp_path):
     _note(tmp_path, "skala", "Skalowanie", "01.06",
           "Automatyzacja daje zasieg ale gubi reczna robote.")
     # a digest note in the subfolder must be ignored by backfill
-    d = tmp_path / "Malinche Digests"
+    d = tmp_path / "Timshel Digests"
     d.mkdir()
-    (d / "digest.md").write_text("---\ntype: malinche-digest\n---\n\nignore me okien", encoding="utf-8")
+    (d / "digest.md").write_text("---\ntype: timshel-digest\n---\n\nignore me okien", encoding="utf-8")
     return tmp_path
 
 
@@ -107,5 +107,21 @@ def test_engine_end_to_end_real_embedder(vault):
         res = eng.search("co z dostawą okien i opóźnieniem dachu?", k=5)
         assert res and res[0].note_id == "okna"
         assert res[0].quote
+    finally:
+        eng.close()
+
+
+def test_backfill_incremental_skips_unchanged_reindexes_edited(vault, monkeypatch):
+    monkeypatch.setattr(engine_mod, "resolve_embedder", lambda *a, **k: FakeEmbedder())
+    eng = engine_mod.RecallEngine(vault)
+    try:
+        assert eng.backfill() == 2                     # first pass indexes both notes
+        assert eng.backfill(incremental=True) == 0     # nothing changed → nothing reindexed
+        # edit one note's body → only that note re-embeds
+        (Path(vault) / "okna.md").write_text(
+            '---\ntitle: "Okna"\ndate: 14.06\n---\n\nZupelnie nowa tresc o czym innym.\n',
+            encoding="utf-8")
+        assert eng.backfill(incremental=True) == 1
+        assert eng.backfill(incremental=True) == 0     # and now it's current again
     finally:
         eng.close()

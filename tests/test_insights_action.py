@@ -82,6 +82,7 @@ def test_continue_in_llm_dispatches_selection_and_logs(log_path, monkeypatch):
     conn = ctrl._deck.active()
     ctrl.directionClicked_(_Sender(0))
     ctrl.continueLLMClicked_(None)
+    ctrl._handoff_thread.join(timeout=5)  # dispatch runs off the main thread
 
     # handoff got the selected direction + the connection's evidence
     assert captured["target"] == ho.LLM
@@ -123,8 +124,30 @@ def test_calendar_handoff_logs_decide(log_path, monkeypatch):
     ctrl = _ctrl()
     ctrl.directionClicked_(_Sender(0))
     ctrl.calendarClicked_(None)
+    ctrl._handoff_thread.join(timeout=5)  # dispatch runs off the main thread
     rows = _rows(log_path)
     assert rows[0]["target"] == "calendar" and rows[0]["kind"] == "decide"
+
+
+def test_handoff_toast_marshalled_back_to_main(log_path, monkeypatch):
+    """The worker never touches UI: the toast lands via applyHandoff_ on the
+    main thread (worker/apply split, same as recall)."""
+    monkeypatch.setattr(
+        ho, "dispatch", lambda *a, **k: ho.HandoffResult(True, "open", "toast-msg")
+    )
+    ctrl = _ctrl()
+    shown = []
+    monkeypatch.setattr(ctrl, "_show_toast", lambda msg: shown.append(msg), raising=False)
+
+    ctrl.directionClicked_(_Sender(0))
+    ctrl.copyClicked_(None)
+    ctrl._handoff_thread.join(timeout=5)
+
+    assert shown == []  # nothing shown from the worker thread
+    ctrl.applyHandoff_(None)  # what performSelectorOnMainThread delivers
+    assert shown == ["toast-msg"]
+    ctrl.applyHandoff_(None)  # idempotent: payload consumed
+    assert shown == ["toast-msg"]
 
 
 def test_switch_llm_cycles_and_persists(monkeypatch):
@@ -156,4 +179,4 @@ def test_dismiss_is_signal_not_suppressor(log_path, tmp_path, monkeypatch):
     ctrl.dismissClicked_(None)
     rows = _rows(log_path)
     assert rows[0]["target"] == "none" and rows[0]["kind"] == "none"
-    assert not (tmp_path / ".malinche" / "connections.json").exists()
+    assert not (tmp_path / ".timshel" / "connections.json").exists()

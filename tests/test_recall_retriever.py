@@ -49,7 +49,7 @@ def _note(root, name, title, date, body):
 
 @pytest.fixture()
 def engine(tmp_path):
-    store = VaultVectorStore(tmp_path / ".malinche" / "v.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "v.db", dim=FakeEmbedder.dim)
     emb = FakeEmbedder()
     _note(tmp_path, "okna", "Okna i fundamenty", "14.06",
           "Dostepnosc okien przed sierpniem niepewna, producenci okien nie odpowiadaja, dach stoi w miejscu.")
@@ -85,7 +85,7 @@ def test_empty_query_returns_nothing(engine):
 
 
 def test_empty_store_returns_nothing(tmp_path):
-    store = VaultVectorStore(tmp_path / ".malinche" / "e.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "e.db", dim=FakeEmbedder.dim)
     try:
         assert HybridRetriever(store, FakeEmbedder()).search("cokolwiek") == []
     finally:
@@ -112,7 +112,7 @@ def test_title_proper_noun_retrieves_even_when_absent_from_body(tmp_path):
     the transcript, so only the note_id/title carries it. The lexical channel folds the
     note_id in, so BM25 can match it.
     """
-    store = VaultVectorStore(tmp_path / ".malinche" / "t.db", dim=FakeEmbedder.dim)
+    store = VaultVectorStore(tmp_path / ".timshel" / "t.db", dim=FakeEmbedder.dim)
     emb = FakeEmbedder()
     _note(tmp_path, "Haetta - rozmowa z konstruktorem", "Haetta - rozmowa z konstruktorem", "17.06",
           "Ustalenia dotyczace nosnosci belek i harmonogramu prac na dachu.")
@@ -126,6 +126,33 @@ def test_title_proper_noun_retrieves_even_when_absent_from_body(tmp_path):
         assert "lexical" in top[0].channels
     finally:
         store.close()
+
+
+def test_search_scored_returns_confidence(engine):
+    retriever, _ = engine
+    results, conf = retriever.search_scored("co z dostawa okien i opoznieniem dachu", k=5)
+    assert results and 0.0 < conf <= 1.0
+    # search() is the same pipeline without the confidence
+    assert [r.note_id for r in retriever.search("co z dostawa okien i opoznieniem dachu", k=5)] == \
+        [r.note_id for r in results]
+
+
+def test_search_scored_empty_query_is_zero_confidence(engine):
+    retriever, _ = engine
+    assert retriever.search_scored("   ") == ([], 0.0)
+
+
+def test_search_scored_confidence_clears_floor_for_relevant_query(engine):
+    # A query that literally shares a note's terms must clear the abstinence floor via
+    # the lexical-overlap net, else the UI would wrongly abstain on a real match. Binds
+    # confidence to the floor (not just a 0<c<=1 bound). Terms are taken verbatim from
+    # the 'okna' note so overlap is deterministic under the fake embedder; real models
+    # score even higher (validated on the live vault).
+    from src.ui.recall_presenter import DEFAULT_ABSTAIN_FLOOR
+
+    retriever, _ = engine
+    _, conf = retriever.search_scored("dostepnosc okien producenci dach", k=5)
+    assert conf >= DEFAULT_ABSTAIN_FLOOR
 
 
 def test_rrf_rewards_agreement():
