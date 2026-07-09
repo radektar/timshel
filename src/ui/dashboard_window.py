@@ -1295,16 +1295,21 @@ if _APPKIT_AVAILABLE:
             # honest partial-index banner while the background backfill is still running
             cy = self._build_index_banner(doc, cy, inner_w)
 
-            # query header — shown the moment we enter recall mode (even while loading)
+            # query header — the question IS the reader title (redesign B), not a
+            # field: small "Zapytałeś" eyebrow + the query as a 21pt display title.
             if self._query:
-                eye = _eyebrow("Zapytałeś", _muted())
-                eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 13))
+                eye = _typo_label(
+                    "Zapytałeś", "collapsed_h", NSMakeRect(_READER_PAD_X, cy, inner_w, 13),
+                    wrapping=False,
+                )
                 doc.addSubview_(eye)
                 cy += 20
-                qh = max(24.0, _measure_height(self._query, 18, inner_w))
-                doc.addSubview_(_wrapping_label(
-                    self._query, 18, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, qh)))
-                cy += qh + 10
+                measure = min(inner_w, _THESIS_MEASURE)
+                qh = max(24.0, _typo_measure(self._query, "question_title", measure))
+                doc.addSubview_(_typo_label(
+                    self._query, "question_title",
+                    NSMakeRect(_READER_PAD_X, cy, measure, qh)))
+                cy += qh + 12
 
             if self._recall_loading:
                 lbl = _label("Szukam w Twoich notatkach…  (lokalnie, bez AI)", 13.5, _muted())
@@ -1505,20 +1510,25 @@ if _APPKIT_AVAILABLE:
             text_x = x + 32
             text_w = inner_w - 32
 
-            top_line = row.title
-            if row.date and row.title:
-                top_line = f"{row.date}   ·   {row.title}"
-            elif row.date:
-                top_line = row.date
-            tline = _label(top_line, 12.0, _muted())
-            tline.setFrame_(NSMakeRect(text_x, cy, text_w - 96, 16))
-            doc.addSubview_(tline)
+            # Top line: date (mono, gold) + title (bold) — the redline split.
+            tx = text_x
+            if row.date:
+                dlab = _typo_label(row.date, "result_date",
+                                   NSMakeRect(tx, cy, 60, 16), wrapping=False)
+                doc.addSubview_(dlab)
+                tx += _text_width(row.date, 11.5) + 16
+            if row.title:
+                tlab = _typo_label(row.title, "result_title",
+                                   NSMakeRect(tx, cy, text_w - (tx - text_x) - 96, 16),
+                                   wrapping=False)
+                tlab.setLineBreakMode_(4)
+                doc.addSubview_(tlab)
 
             idx = len(self._recall_note_ids)
             self._recall_note_ids.append(row.note_id)
             ob = _pill_button(
                 "↗ otwórz", NSMakeRect(reader_w - _READER_PAD_X - 84, cy - 3, 84, 22),
-                _terracotta(), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
+                _c(224, 213, 191, 0.45), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
                 self, "recallOpenClicked:", 11.5,
             )
             ob.setTag_(idx)
@@ -1526,10 +1536,18 @@ if _APPKIT_AVAILABLE:
             cy += 20
 
             quote = "„" + row.quote + "”"
-            qcolor = _c(140, 130, 115) if row.dimmed else _cream_soft()
-            qh = max(18.0, _measure_height(quote, 14.5, text_w))
-            doc.addSubview_(_wrapping_label(
-                quote, 14.5, qcolor, NSMakeRect(text_x, cy, text_w, qh)))
+            qh = max(18.0, _typo_measure(quote, "result_quote", text_w))
+            ql = _typo_label(quote, "result_quote", NSMakeRect(text_x, cy, text_w, qh))
+            if row.dimmed:
+                from AppKit import (
+                    NSAttributedString, NSFontAttributeName,
+                    NSForegroundColorAttributeName, NSParagraphStyleAttributeName,
+                )
+                from src.ui import typography as _T
+                at = _T.attributes("result_quote", color_alpha=0.45)
+                ql.setAttributedStringValue_(
+                    NSAttributedString.alloc().initWithString_attributes_(quote, at))
+            doc.addSubview_(ql)
             cy += qh + 12
 
             sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, 1))
