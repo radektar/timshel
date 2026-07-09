@@ -13,7 +13,18 @@ ask-bar overlay, wizard, ustawienia, feedback. 9 ekranów A–I + spec.css + tok
 egzekwowane twardo: terakota #C24010 (akcja) · jadeit #46B17E (lokalne) · złoto #D6B033
 (insight/chmura). Ikona idzie w NOWY kierunek: mesh sygnet (fala 6 słupków) na kaflu
 #141414 (obecna = kremowy waveform — do wymiany).
-Sekwencja: **(1) paczka assetów ✅ DOWIEZIONA i ZATWIERDZONA → (2) dalsze testy [NASTĘPNE] → (3) port ekranów A–I.**
+Sekwencja: **(1) paczka assetów ✅ → (3) PORT OKNA ✅ UKOŃCZONY (2026-07-09) → (2) dalsze testy [NASTĘPNE].**
+Port dowieziony wg kryteriów akceptacji 08-cele: rampa SF Pro (typography.py, korekty
+Claude Design) · ekran A (teza/eyebrow/chipy-kropka/filtr „Nowe ⌄" NSMenu/stopka „1 z N")
+· B (pytanie=tytuł, wiersze wyników, przełącznik B5, BEZ stopki) · C (ask-overlay ⌃⌥Space
++ ⌕ accessory) · E (pasek handoffu: ⋯-menu, „✦ do chmury", split-CTA, slide-in 150ms) ·
+D (btn-syn/btn-terra) · F (sygnet w pasku menu) · sigile CG 1:1 (§06) · motion §04
+(reduce-motion) · hairline'y §05 · H3 sekcja Prywatność (jadeit/złoto).
+Odchylenia ŚWIADOME (nie hack): wizard G 2-krokowy koliduje z obowiązkowym downloadem
+silnika (zostaje 7-krokowy); ustawienia trzymają EN + obecne IA (pełny PL-pass i 3
+zakładki = follow-up); historia zapytań w szynie = nowy storage (follow-up).
+Po drodze: review jakościowy (visual-identity+maker) — root cause lineHeightMultiple
+naprawiony w rampie; „Zapytaj o to" wycięte z karty (nie ma go w A1).
 Assety: handoff wpięty `design-system/app-redesign-2026-07/`; tokeny w `src/ui/theme.py`
 (rodziny akcentów + MESH_STOPS + SIGIL_BARS); nowa ikona (mesh sygnet na #141414,
 `assets/gen_icon.py`) — Radek zatwierdził kierunek; znak menu-bar mono
@@ -57,7 +68,11 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit; potwierdzić
    że `checksums.py` release URL-e (`radektar/malinche`) rozwiązują się przez
    redirect po rename repo; lista 3–5 testerów P1 z gęstym vaultem.
-4. Zebranie sygnału H1 (N=3–5): rytuał tygodniowy rate→export ×3 tyg → `signal-report`.
+4. **Meeting-ingest v2 na bramce** (2026-07-09): plan `Docs/future/meeting-ingest-plan.md`
+   (konektory Zoom/Teams/drop-folder, transcript-first, reguła Stanowisk zamiast
+   diaryzacji; Meet OAuth po popycie). Strategia rozszerzeń: vault →
+   `research/2026-07-09 - Strategia rozszerzeń - synteza`. Czeka na "ok" przed kodem.
+5. Zebranie sygnału H1 (N=3–5): rytuał tygodniowy rate→export ×3 tyg → `signal-report`.
 GO: ≥3 warte akcji **połączenia dowolnego typu**/tydz., w tym ≥1 nieoczywiste.
 Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding FREE, nie feeder PRO.
 
