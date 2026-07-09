@@ -269,32 +269,46 @@ if _APPKIT_AVAILABLE:
             return True
 
         def drawRect_(self, _rect):
+            # Ported 1:1 from the geometry spec (port-appkit/06): viewBox 32×32.
+            # A node = radial glow (TYPE colour) + fixed #C24010 core r2.5 +
+            # #FAF3E2 centre r1; the bloom = gold radial r0×2.6 → #F4DD8E disc
+            # r0 → #FFFBF0 spark r0×0.4. Only strokes + node glow take the type
+            # colour; core and bloom are constant across types.
             b = self.bounds()
-            w, h = b.size.width, b.size.height
+            s = b.size.width / 32.0
 
             def pt(x, y):
-                return NSMakePoint(x / 32.0 * w, y / 32.0 * h)
+                return NSMakePoint(x * s, y * s)
 
             stroke = _hex(getattr(self, "stroke_hex", "#D9542A"))
-            node = _c(194, 64, 16)
-            bloom = _gold()
-            sw = max(1.0, 1.5 * w / 32.0)
             layout = getattr(self, "layout_key", "thread")
 
-            def line(a, z):
+            def _alpha(color, a):
+                return color.colorWithAlphaComponent_(a)
+
+            def line(a, z, alpha, w, dash=None):
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_(a)
                 p.lineToPoint_(z)
-                p.setLineWidth_(sw)
-                stroke.setStroke()
+                p.setLineWidth_(w * s)
+                p.setLineCapStyle_(1)  # round
+                if dash:
+                    p.setLineDash_count_phase_([d * s for d in dash], len(dash), 0.0)
+                _alpha(stroke, alpha).setStroke()
                 p.stroke()
 
-            def arc(a, z, ctrl):
+            def quad(a, q, z, alpha, w):
+                # Quadratic → cubic: c1 = a + 2/3(q−a), c2 = z + 2/3(q−z).
+                c1 = NSMakePoint(a.x + 2.0 / 3.0 * (q.x - a.x),
+                                 a.y + 2.0 / 3.0 * (q.y - a.y))
+                c2 = NSMakePoint(z.x + 2.0 / 3.0 * (q.x - z.x),
+                                 z.y + 2.0 / 3.0 * (q.y - z.y))
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_(a)
-                p.curveToPoint_controlPoint1_controlPoint2_(z, ctrl, ctrl)
-                p.setLineWidth_(sw)
-                stroke.setStroke()
+                p.curveToPoint_controlPoint1_controlPoint2_(z, c1, c2)
+                p.setLineWidth_(w * s)
+                p.setLineCapStyle_(1)
+                _alpha(stroke, alpha).setStroke()
                 p.stroke()
 
             def disc(center, r, color):
@@ -303,27 +317,53 @@ if _APPKIT_AVAILABLE:
                     NSMakeRect(center.x - r, center.y - r, 2 * r, 2 * r)
                 ).fill()
 
-            nr = max(1.6, 2.5 * w / 32.0)
-            br = max(2.0, 3.0 * w / 32.0)
+            def radial(center, radius, colors, locs):
+                grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
+                    colors, locs, NSColorSpace.sRGBColorSpace()
+                )
+                if grad is not None:
+                    grad.drawFromCenter_radius_toCenter_radius_options_(
+                        center, 0.0, center, radius, 0
+                    )
+
+            def node(x, y):
+                c = pt(x, y)
+                radial(c, 7.0 * s,
+                       [_alpha(stroke, 0.50), _alpha(stroke, 0.08), _alpha(stroke, 0.0)],
+                       [0.0, 0.6, 1.0])
+                disc(c, 2.5 * s, _c(194, 64, 16))    # core #C24010 (fixed)
+                disc(c, 1.0 * s, _c(250, 243, 226))  # centre #FAF3E2 (fixed)
+
+            def bloom(x, y, r0):
+                c = pt(x, y)
+                radial(c, r0 * 2.6 * s,
+                       [_c(244, 221, 142, 0.90), _c(214, 176, 51, 0.30),
+                        _c(214, 176, 51, 0.0)],
+                       [0.0, 0.55, 1.0])
+                disc(c, r0 * s, _c(244, 221, 142))        # #F4DD8E
+                disc(c, r0 * 0.4 * s, _c(255, 251, 240))  # spark #FFFBF0
 
             if layout == "contradiction":
-                arc(pt(8, 16), pt(24, 16), pt(16, 6))
-                arc(pt(8, 16), pt(24, 16), pt(16, 26))
-                disc(pt(16, 16), br, bloom)
-                disc(pt(8, 16), nr, node)
-                disc(pt(24, 16), nr, node)
+                # z-order: dashed baseline → arcs → bloom → nodes on top
+                line(pt(5, 16), pt(27, 16), 0.28, 1.0, dash=(2.0, 4.0))
+                quad(pt(8, 16), pt(16, 7), pt(24, 16), 0.85, 1.5)
+                quad(pt(8, 16), pt(16, 25), pt(24, 16), 0.85, 1.5)
+                bloom(16, 16, 2.4)
+                node(8, 16)
+                node(24, 16)
             elif layout == "triad":
+                # z-order: lines → nodes → bloom on top (centre)
                 for x, y in ((8, 9), (25, 12), (15, 26)):
-                    line(pt(16, 16), pt(x, y))
+                    line(pt(16, 16), pt(x, y), 0.55, 1.3)
                 for x, y in ((8, 9), (25, 12), (15, 26)):
-                    disc(pt(x, y), nr, node)
-                disc(pt(16, 16), br, bloom)
-            else:  # thread (shared) — convergence to an apex bloom
-                line(pt(9, 24), pt(16, 9))
-                line(pt(23, 24), pt(16, 9))
-                disc(pt(9, 24), nr, node)
-                disc(pt(23, 24), nr, node)
-                disc(pt(16, 9), br, bloom)
+                    node(x, y)
+                bloom(16, 16, 3.0)
+            else:  # thread (shared) — z-order: lines → nodes → bloom (apex)
+                line(pt(9, 24), pt(16, 9), 0.7, 1.4)
+                line(pt(23, 24), pt(16, 9), 0.7, 1.4)
+                node(9, 24)
+                node(23, 24)
+                bloom(16, 9, 3.0)
 
     class _FlashOverlay(NSView):
         """Micro-bloom + wash, shown briefly on keep/dismiss."""
