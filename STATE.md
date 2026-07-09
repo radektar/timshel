@@ -105,11 +105,12 @@ Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding
 
 ## Kontekst dla nowej sesji
 
-Branch: `feat/tester-build` (PR #66, baza `feat/magic-insights-prototype`) ·
-testy: **1028 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
+Branch: **`main`** (PR #67 zmergowany 2026-07-09 — tester build + port UI scalone
+do `main`, branch roboczy usunięty; pracuj od czystego `main`) ·
+testy: **1038 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
 mypy zielony (`./venv312/bin/python -m mypy src/`, 93 pliki).
-Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest) + **PR #66 (tester build)**,
-sesja "[Timshel - APP]" 2026-07-08.
+Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest) + PR #66 (tester build) +
+**PR #67 (merge do main + port UI)**, sesja "[Timshel - APP]" 2026-07-08/09.
 UWAGA: nazwy zmienione — app-support `Timshel`, sidecar `.timshel`, log `timshel.log`,
 env `TIMSHEL_TRANSCRIBE_DIR`, klasy `TimshelTranscriber/TimshelMenuApp`.
 Nowe pliki: `src/feedback_export.py`; testy `test_rename_guard`, `test_tester_mode`,
