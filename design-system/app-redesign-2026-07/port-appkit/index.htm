@@ -1,127 +1,479 @@
-<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1200x1000" name="Port AppKit — request" subtitle="Czego HTML-handoff nie oddaje 1:1 w AppKit. Worksheet do wypełnienia przez Claude Design: rampa typograficzna + inwentarz komponentów (blokery), resize/ruch/hairline'y (wysokie), sigile/marki (nice)." -->
+<!-- @dsCard group="Aplikacja / Redesign 2026-07" viewport="1560x1900" name="Port AppKit — worksheet 1:1" subtitle="Wypełniony worksheet portu na AppKit (PyObjC): rampa typograficzna, inwentarz komponentów custom/natywny, resize, ruch→CAAnimation, hairline'y, sygile CG, marki. Self-contained, linkuje tokens.css + redesign-spec.css." -->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Timshel — Port AppKit · request do Claude Design</title>
+<title>Timshel — Port AppKit · worksheet render 1:1</title>
 <link rel="stylesheet" href="../tokens.css">
 <link rel="stylesheet" href="../redesign-spec.css">
 <style>
-  /* Lokalne dodatki: priorytetowe plakietki + „?" do wypełnienia. */
-  .prio { display:inline-block; font-family:var(--font-mono); font-size:11px; font-weight:500;
-          letter-spacing:.02em; padding:2px 8px; border-radius:6px; margin-left:10px; vertical-align:middle; }
-  .prio.block { background:rgba(217,84,42,.14); color:#E0633A; border:1px solid rgba(217,84,42,.4); }
-  .prio.high  { background:rgba(214,176,51,.12); color:#D6B033; border:1px solid rgba(214,176,51,.4); }
-  .prio.nice  { background:rgba(70,177,126,.12); color:#46B17E; border:1px solid rgba(70,177,126,.4); }
-  table.redline td.q { color:#E0633A; font-weight:700; }        /* do wypełnienia */
-  table.redline td.k { color:var(--ink-soft); }                  /* znane z handoffu */
-  .askrow td:first-child { white-space:normal; }
-  ul.tight { margin:8px 0 0; padding-left:18px; } ul.tight li { margin:4px 0; }
+  a { color: var(--terracotta); }
+  a:hover { color: var(--terracotta-deep); }
+  .redline.wrap td:first-child { white-space: normal; }
+  .redline.tight th, .redline.tight td { padding-right: 12px; }
+  .grp { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); margin: 26px 0 6px; }
+  pre.code { background: #17161c; color: #EDE6D6; border-radius: var(--radius-md); padding: 16px 18px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; margin: 14px 0; max-width: 1050px; }
+  .r-terra { color: var(--terracotta); font-weight: 700; }
+  .r-gold  { color: #A9821A; font-weight: 700; }
+  .r-jade  { color: #1E7A52; font-weight: 700; }
+  .legend { display: inline-flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--ink-soft); }
+  .legend b { color: var(--ink); }
+  .conv { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px 34px; max-width: 1050px; margin: 12px 0; }
+  .conv .c { font-size: var(--text-sm); }
+  .conv .c b { font-weight: 700; }
+  .samp-dark { display:inline-block; background:#16141C; color:#FAF3E2; border-radius:5px; padding:2px 8px; }
+  .toc-strip { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 4px; }
+  .toc-strip a { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; border:1px solid var(--border-strong); border-radius:6px; padding:5px 10px; color:var(--ink); }
+  .toc-strip a:hover { background:var(--panel); text-decoration:none; }
+  .toc-strip a .b { font-family:var(--font-mono); font-size:10px; color:#FFF; background:var(--terracotta); border-radius:3px; padding:1px 5px; }
+  .toc-strip a.plain .b { background:var(--ink-soft); }
 </style>
+</head>
 <body class="spec">
 <div class="page">
 
-  <div class="eyebrow">Timshel · redesign 2026-07 · port AppKit/PyObjC · request do Claude Design</div>
-  <h1>Domknięcie handoffu do pixel-perfect portu (AppKit)</h1>
-  <p class="lede">Handoff jest mocny — redline'y per ekran, tokeny, pełne siatki stanów, plus wiążące „ograniczenie odwzorowalności" (layer/tint/wash). <b>Zaczynamy port na tym, co jest.</b> Poniżej to, czego HTML nie oddaje 1:1 w AppKit — nie blokuje startu, ale bez tego port będzie „blisko", nie „pixel-perfect". <b>Nie przeprojektowuj</b> — sformalizuj to, co handoff już implikuje, w formie do wklejenia w kod. <span class="prio block">🔴 bloker</span> <span class="prio high">🟡 wysokie</span> <span class="prio nice">🟢 nice</span>. Komórki <b style="color:#E0633A">na czerwono</b> = do wypełnienia; szare = znane z handoffu.</p>
+  <header>
+    <div class="eyebrow">Timshel · redesign 2026-07 · worksheet portu · warstwa 3b</div>
+    <h1>Port AppKit — render 1:1 (PyObjC)</h1>
+    <p class="lede">Worksheet <b>wypełniony</b> — zero komórek „?". Nie przeprojektowuje: formalizuje to, co handoff już implikuje, w formie do wklejenia w kod (Swift / AppKit). Źródło prawdy: <code>tokens.css</code> + <code>redesign-spec.css</code> (linkowane wyżej); gdzie worksheet podaje liczbę, której HTML nie ustalał (kern w pt, easing, dystans wsuwania, klasa hairline'a) — wygrywa worksheet.</p>
+    <div class="callout"><b>Ograniczenie odwzorowalności (wiążące):</b> każdy element = <code>layer</code> (bg / border / cornerRadius / shadow) · template-image tint · prosty wash-overlay · zmiana koloru tekstu. <b>Bez animowanych gradientów, bez efektów web-only.</b> Radialne tło okna i glow sygili są statyczne (rysowane raz). Ruch = <code>opacity</code> + <code>transform.translation.y</code>.</div>
+    <div class="toc-strip">
+      <a href="#s1"><span class="b">#1</span> Typografia</a>
+      <a href="#s2"><span class="b">#2</span> Komponenty</a>
+      <a href="#s3" class="plain"><span class="b">#3</span> Resize</a>
+      <a href="#s4" class="plain"><span class="b">#4</span> Ruch</a>
+      <a href="#s5" class="plain"><span class="b">#5</span> Hairline'y</a>
+      <a href="#s6" class="plain"><span class="b">#6</span> Sygile</a>
+      <a href="#s7" class="plain"><span class="b">#7</span> Marki</a>
+      <a href="#sc" class="plain"><span class="b">✓</span> Potwierdzenia</a>
+    </div>
+  </header>
 
-  <!-- #1 TYPE RAMP -->
-  <section class="sec" data-screen-label="#1 · Rampa typograficzna">
-    <div class="sec-bar"><span class="sec-id">#1</span><h2>Natywna rampa typograficzna <span class="prio block">🔴 bloker</span></h2></div>
-    <p>Pojedynczy najważniejszy artefakt. Rozstrzygnij jawnie: <b>(a)</b> Text czy Display per styl — SF Pro przełącza optykę na <b>20&nbsp;pt</b>; <b>(b)</b> czy redline'owe <code>px</code> = punkty @1x; <b>(c)</b> waga „500" = <code>.medium</code> czy <code>.semibold</code>; <b>(d)</b> tracking <code>-.012em</code>/<code>.1em</code> → NSKern w <b>pt</b> per rozmiar (bierze punkty, nie em); <b>(e)</b> lineHeight → <code>lineHeightMultiple</code>.</p>
-    <table class="redline">
-      <tr><th>Styl (selektor)</th><th>SF Pro Text/Display</th><th>pt</th><th>NSFontWeight</th><th>Tracking (pt)</th><th>lineHeightMult.</th><th>Token koloru</th></tr>
-      <tr><td>teza <code>.thesis</code></td><td class="q">? (24≥20→Display?)</td><td class="k">24</td><td class="q">? (500=.medium/.semibold)</td><td class="q">? (−.012em→pt)</td><td class="k">1.3</td><td class="k">window-hi #FAF3E2</td></tr>
-      <tr><td>pytanie-tytuł <code>.r-q</code></td><td class="q">?</td><td class="k">21–24</td><td class="q">?</td><td class="q">?</td><td class="k">1.25</td><td class="k">window-hi</td></tr>
-      <tr><td>eyebrow typu</td><td class="q">? (Text)</td><td class="k">10.5–11</td><td class="q">?</td><td class="q">? (.1em→pt)</td><td class="q">?</td><td class="k">gold #D6B033</td></tr>
-      <tr><td>szyna — tytuł <code>.rrow .tt</code></td><td class="q">?</td><td class="k">12.5</td><td class="k">700</td><td class="q">?</td><td class="q">?</td><td class="k">window-hi</td></tr>
-      <tr><td>szyna — skrót <code>.dd</code></td><td class="q">?</td><td class="k">11.5</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.55)</td></tr>
-      <tr><td>nagłówek-przełącznik <code>.collapsed-h</code></td><td class="q">?</td><td class="k">10.5</td><td class="q">?</td><td class="q">? (.1em)</td><td class="q">?</td><td class="k">rgba(hi,.55)</td></tr>
-      <tr><td>chip źródła <code>.nchip</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
-      <tr><td>przycisk <code>.btn</code></td><td class="q">?</td><td class="k">12.5</td><td class="k">500</td><td class="q">?</td><td class="q">—</td><td class="k">per wariant</td></tr>
-      <tr><td>data wyniku (mono)</td><td class="k">SF Mono</td><td class="k">11–12</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="k">gold #D6B033</td></tr>
-      <tr><td>tytuł wyniku</td><td class="q">?</td><td class="q">?</td><td class="k">700</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
-      <tr><td>cytat wyniku</td><td class="q">?</td><td class="k">12.5</td><td class="q">?</td><td class="q">?</td><td class="k">1.5</td><td class="k">rgba(hi,.66)</td></tr>
-      <tr><td>licznik stopki (mono)</td><td class="k">SF Mono</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="k">rgba(hi,.4)</td></tr>
-      <tr><td>menu — pozycja / skrót (mono)</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="q">?</td></tr>
-      <tr><td>ask-bar — pole / placeholder</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">—</td><td class="q">?</td></tr>
-      <tr><td>toast <code>.toastc</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td></tr>
-      <tr><td>ślad <code>.trace</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td></tr>
-      <tr><td>kierunek <code>.dirrow</code></td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="q">?</td><td class="k">rgba(hi,.9)</td></tr>
+  <!-- ═══════════ KONWENCJE ═══════════ -->
+  <section class="sec">
+    <div class="sec-bar"><span class="sec-id">§0</span><h2>Konwencje wspólne (obowiązują we wszystkich sekcjach)</h2>
+      <p>Cztery rozstrzygnięcia zdejmują dwuznaczność z redline'ów. Reszta worksheetu je zakłada.</p></div>
+    <div class="conv">
+      <div class="c"><b>1 · px = pt @1x.</b> Redline w CSS px czytamy jako <b>pt 1:1</b> — teza <span class="px">24 px</span> → <code>24 pt</code>, szyna <span class="px">236 px</span> → <code>236 pt</code>. Retina @2x skaluje automatycznie; ręcznie tylko hairline'y (#5).</div>
+      <div class="c"><b>2 · Wagi 400 / 500 / 700</b> → <code>.regular</code> / <code>.medium</code> / <code>.bold</code>. <b>„500" = <code>.medium</code></b> (nie <code>.semibold</code>). <code>600/.semibold</code> w projekcie <b>nie występuje</b> — nie wprowadzać.</div>
+      <div class="c"><b>3 · Fonty → SF systemowe.</b> Neue Montreal → <b>SF Pro</b> (Display), Neue Haas → <b>SF Pro Text</b>, mono → <b>SF Mono</b>. <code>NSFont.systemFont</code> sam przełącza optyk Display/Text na progu <b>20 pt</b> = nasz próg. Diakrytyki PL pełne.</div>
+      <div class="c"><b>4 · Terakota w oknie = <code>#C24010 / #D9542A / #9A3009</code></b>, nie <code>--terracotta #AC4B16</code> (to paper). Złoto i jadeit żyją tylko w oknie i w bloku Prywatności.</div>
+    </div>
+    <div class="grp">Rola akcentu (egzekwowana twardo — test na każdym elemencie)</div>
+    <table class="redline tight" style="max-width:1050px">
+      <thead><tr><th>Rola</th><th>Akcent</th><th>Na ciemnym (okno)</th><th>Gdzie</th></tr></thead>
+      <tbody>
+        <tr><td class="r-terra">Akcja użytkownika</td><td>Terakota</td><td><code>#C24010</code> · hover <code>#D9542A</code> · pressed <code>#9A3009</code> · tekst <code>#E0633A</code></td><td>CTA, split, checkbox on, aktywny wpis Pytania, fokus ask-bara, „↗ otwórz", „Zapisz do vaulta"</td></tr>
+        <tr><td class="r-jade">Zostaje lokalnie</td><td>Jadeit</td><td><code>#46B17E</code> · tekst <code>#8BE0B5</code></td><td>„Zachowaj", znacznik „lokalnie", banner indeksu, ślad zapisu, blok „Zawsze lokalnie"</td></tr>
+        <tr><td class="r-gold">Insight / do chmury</td><td>Złoto</td><td><code>#D6B033</code> · glow <code>#F4DD8E</code> · chmura <code>#E7B45C</code></td><td>sygile, pasek aktywnego insightu, eyebrow typu, daty wyników, „✦ do chmury", ślad handoffu, licznik nowych</td></tr>
+      </tbody>
     </table>
+    <pre class="code">// helper bazowy — pozostałe sekcje go zakładają
+enum TS {                                   // px(redline) == pt
+  static func font(_ pt: CGFloat, _ w: NSFont.Weight = .regular) -> NSFont {
+    NSFont.systemFont(ofSize: pt, weight: w)          // auto Display ≥20pt / Text <20pt
+  }
+  static func mono(_ pt: CGFloat, _ w: NSFont.Weight = .regular) -> NSFont {
+    NSFont.monospacedSystemFont(ofSize: pt, weight: w)
+  }
+  static func kern(_ em: CGFloat, _ pt: CGFloat) -> CGFloat { em * pt }  // kern(pt)=em×pt
+}
+enum TC {                                   // powierzchnia okna (dark)
+  static func h(_ r:Int,_ g:Int,_ b:Int,_ a:CGFloat=1)->NSColor{NSColor(srgbRed:CGFloat(r)/255,green:CGFloat(g)/255,blue:CGFloat(b)/255,alpha:a)}
+  static let hi=h(250,243,226), terra=h(194,64,16), terraLit=h(217,84,42), terraDeep=h(154,48,9)
+  static let terraTxt=h(224,99,58), gold=h(214,176,51), goldGlow=h(244,221,142)
+  static let cloud=h(231,180,92), jade=h(70,177,126), jadeTxt=h(139,224,181)
+  static func body(_ a:CGFloat)->NSColor{ h(250,243,226,a) }   // biały-ciepły α
+}</pre>
   </section>
 
-  <!-- #2 COMPONENT INVENTORY -->
-  <section class="sec" data-screen-label="#2 · Inwentarz komponentów">
-    <div class="sec-bar"><span class="sec-id">#2</span><h2>Inwentarz komponentów: custom vs natywny <span class="prio block">🔴 bloker</span></h2></div>
-    <p>Pixel-perfect stoi na tej granicy — <b>natywna kontrolka niesie własny padding, baseline, focus-ring i hit-area</b>, których nie nadpiszę. Dla każdego: layer-backed NSView rysowany ręcznie, czy natywny AppKit (jaki) z tintem?</p>
-    <table class="redline">
-      <tr><th>Komponent</th><th>Custom NSView / Natywny (jaki)</th><th>Uwaga</th></tr>
-      <tr><td>przyciski <code>.btn-jade/ghost/syn/terra</code></td><td class="q">?</td><td class="k">custom czy stylowany NSButton?</td></tr>
-      <tr><td>checkbox <code>.cbx</code> (16&nbsp;px)</td><td class="q">?</td><td class="k">custom czy NSButton typu checkbox?</td></tr>
-      <tr><td>filtr „Nowe 3 ⌄"</td><td class="q">? NSMenu</td><td class="k">trigger = custom view?</td></tr>
-      <tr><td>menu / popover <code>.menu</code></td><td class="q">?</td><td class="k">hover-terakota + padding 6×9 → custom NSPanel?</td></tr>
-      <tr><td>ask-bar <code>.ask</code></td><td class="k">NSPanel</td><td class="q">pole = NSTextField / NSTextView?</td></tr>
-      <tr><td>split-CTA „Kontynuuj w Claude ▾"</td><td class="q">?</td><td class="k">custom / NSButton+NSMenu / NSSegmented?</td></tr>
-      <tr><td>chip · wiersz wyniku · wiersz kierunku · ślad · toast</td><td class="q">? (custom)</td><td class="k">zakładam custom — potwierdź</td></tr>
-      <tr><td>title-bar</td><td class="q">?</td><td class="k">titlebarAppearsTransparent + accessory?</td></tr>
-      <tr><td>wizard / ustawienia <code>.nativewin</code></td><td class="q">?</td><td class="k">które kontrolki 100% stock vs tint?</td></tr>
+  <!-- ═══════════ #1 TYPOGRAFIA ═══════════ -->
+  <section class="sec" id="s1" data-screen-label="#1 Rampa typograficzna">
+    <div class="sec-bar"><span class="sec-id">#1</span><h2>Rampa typograficzna → SF Pro <span style="color:var(--terracotta)">[BLOKER]</span></h2>
+      <p>Per styl okna „Konstelacja" (+ powierzchnie natywne). Kolumny gotowe do <code>NSAttributedString</code>.</p></div>
+
+    <div class="grp">Rozstrzygnięcia jawne</div>
+    <table class="redline wrap tight" style="max-width:1050px">
+      <thead><tr><th>Pytanie</th><th>Rozstrzygnięcie</th></tr></thead>
+      <tbody>
+        <tr><td>(a) Display czy Text</td><td>Próg <b>20 pt</b> = auto-przełącznik <code>systemFont</code>. <b>Display:</b> teza (24), pytanie-tytuł (21–24) — jedyne dwa. <b>Text:</b> reszta (≤15). Pułapka: tytuł stanu pustego używa <i>rodziny</i> display przy 16 px → w SF optyk <b>Text</b> (rola nagłówka zostaje, optyk nie).</td></tr>
+        <tr><td>(b) px = pt @1x</td><td>Tak, 1:1 (§0.1). <span class="px">24 px</span> → <code>24 pt</code>.</td></tr>
+        <tr><td>(c) waga „500"</td><td><code>.medium</code>. <code>.semibold/600</code> nieużywane. 700 = <code>.bold</code>, 400 = <code>.regular</code>.</td></tr>
+        <tr><td>(d) tracking → kern (pt)</td><td><code>kern(pt) = tracking(em) × rozmiar(pt)</code>. SF ma własny optyczny tracking — te wartości nakładamy jako <b>dodatkowy</b> <code>.kern</code>; dla eyebrowów dodatni jest obowiązkowy. <b>Teza</b> −.012em@24 = <b>−0.29 pt</b>; <b>pytanie-tytuł</b> −.012em@21 = <b>−0.25 pt</b>; <b>eyebrow</b> +.1em@10.5 = <b>+1.05 pt</b> (@11 = +1.10); <b>data</b> +.04em@11.5 = <b>+0.46 pt</b>. <code>lineHeight</code> → <code>lineHeightMultiple</code> wprost (1.3 → 1.3).</td></tr>
+      </tbody>
     </table>
+
+    <div class="grp">Rampa — Display (SF Pro, ≥ 20 pt)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl (selektor)</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern (pt)</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Teza <code>.thesis</code></td><td>„Założenie o jakości…"</td><td>Display</td><td class="px">24</td><td><code>.medium</code></td><td>−0.29</td><td>1.30</td><td><code>hi #FAF3E2</code>; max 30em</td></tr>
+        <tr><td>Pytanie-tytuł <code>.r-q</code></td><td>„Co z dostawą okien?"</td><td>Display</td><td class="px">21</td><td><code>.medium</code></td><td>−0.25</td><td>1.25</td><td><code>hi #FAF3E2</code></td></tr>
+        <tr><td>Cytowanie <code>.cite</code> [n]</td><td>¹</td><td>Display</td><td class="px">14.4</td><td><code>.medium</code></td><td>0</td><td>—</td><td><span class="r-gold">gold #D6B033</span>; baseline +≈6</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Szyna (SF Pro Text)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Nagłówek szyny <code>.rail-h</code></td><td>PODSUNIĘTE</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><code>body .55</code> (lit .82); wersaliki</td></tr>
+        <tr><td>Przełącznik <code>.collapsed-h</code></td><td>ZAPYTAŁEŚ</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><code>body .55</code>; wersaliki</td></tr>
+        <tr><td>Licznik / filtr <code>.n</code></td><td>3</td><td>Mono</td><td class="px">10.5</td><td><code>.regular</code></td><td>0</td><td>—</td><td>nowe <span class="r-gold">gold</span>; inaczej <code>body .5</code></td></tr>
+        <tr><td>Wiersz — tytuł <code>.rrow .tt</code></td><td>„Sprzeczność w czasie"</td><td>Text</td><td class="px">12.5</td><td><code>.bold</code></td><td>0</td><td>1.30</td><td><code>hi</code> (quiet: .medium, body .78)</td></tr>
+        <tr><td>Wiersz — skrót <code>.rrow .dd</code></td><td>„Założenie przesunęło się…"</td><td>Text</td><td class="px">11.5</td><td><code>.regular</code></td><td>0</td><td>1.40</td><td><code>body .55</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Czytnik / karta (SF Pro Text)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Eyebrow typu <code>.r-eyebrow</code></td><td>SPRZECZNOŚĆ W CZASIE</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><span class="r-gold">gold #D6B033</span>; wersaliki</td></tr>
+        <tr><td>„✦ do chmury" <code>.cloud-chip</code></td><td>DIGEST 30.06 · Z CHMURY</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><code>cloud #E7B45C</code>; wersaliki</td></tr>
+        <tr><td>„lokalnie" <code>.jade-chip</code></td><td>LOKALNIE</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><span class="r-jade">jade-txt #8BE0B5</span>; wersaliki</td></tr>
+        <tr><td>Chip źródła <code>.nchip</code></td><td>„Haetta — rozmowa ↗"</td><td>Text</td><td class="px">11.5</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .8</code></td></tr>
+        <tr><td>Eyebrow „Kierunki"</td><td>KIERUNKI</td><td>Text</td><td class="px">10.5</td><td><code>.medium</code></td><td>+1.05</td><td>1.0</td><td><code>body .55</code>; wersaliki</td></tr>
+        <tr><td>Tekst kierunku <code>.dirrow</code></td><td>„Co wymusiło zmianę…?"</td><td>Text</td><td class="px">13</td><td><code>.regular</code></td><td>0</td><td>1.45</td><td><code>body .82</code> (on: hi)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Wiersz wyniku (tryb Pytanie, SF Pro Text)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Data <code>.res .dt</code></td><td>30.06</td><td>Mono</td><td class="px">11.5</td><td><code>.regular</code></td><td>+0.46</td><td>1.0</td><td><span class="r-gold">gold #D6B033</span></td></tr>
+        <tr><td>Tytuł <code>.res .ti</code></td><td>„okna-waskie-gardlo.md"</td><td>Text</td><td class="px">11.5</td><td><code>.bold</code></td><td>0</td><td>1.0</td><td><code>body .9</code></td></tr>
+        <tr><td>„↗ otwórz" <code>.res .op</code></td><td>↗ otwórz</td><td>Text</td><td class="px">11.5</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .45</code> → hover <span class="r-terra">#E0633A</span></td></tr>
+        <tr><td>Cytat <code>.res .qt</code></td><td>„…okna jako wąskie gardło…"</td><td>Text</td><td class="px">12.5</td><td><code>.regular</code></td><td>0</td><td>1.50</td><td><code>body .66</code></td></tr>
+        <tr><td><code>&lt;mark&gt;</code> w cytacie</td><td>„wąskie gardło"</td><td>Text</td><td class="px">12.5</td><td><code>.regular</code></td><td>0</td><td>1.50</td><td>tekst <code>#F4DD8E</code> · tło <code>rgba(214,176,51,.22)</code> (atrybut zakresu)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Chrome / stopka / przyciski (SF Pro Text)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Tytuł okna <code>.win-title</code></td><td>Timshel — <b>Konstelacja</b></td><td>Text</td><td class="px">12.5</td><td><code>.regular</code> (nazwa .bold)</td><td>0</td><td>1.0</td><td><code>body .75</code> (nazwa hi)</td></tr>
+        <tr><td>Przycisk <code>.btn</code> (ghost/syn)</td><td>„Odrzuć" / „Zsyntetyzuj"</td><td>Text</td><td class="px">12.5</td><td><code>.medium</code></td><td>0</td><td>1.0</td><td>ghost <code>body .7</code>; syn <code>#F4DD8E</code></td></tr>
+        <tr><td>Przycisk (jade/terra)</td><td>„Zachowaj" / „Zapisz do vaulta"</td><td>Text</td><td class="px">12.5</td><td><code>.bold</code></td><td>0</td><td>1.0</td><td>jade <span class="r-jade">#8BE0B5</span>; terra biel</td></tr>
+        <tr><td>Licznik stopki</td><td>1 z 3</td><td>Mono</td><td class="px">11</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .4</code></td></tr>
+        <tr><td>Status handoffu <code>.handoff</code></td><td>2 kierunki wybrane</td><td>Text</td><td class="px">12</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .6</code></td></tr>
+        <tr><td>Tytuł stanu pustego</td><td>„Wszystko przejrzane"</td><td>Text (rola nagł.)</td><td class="px">16</td><td><code>.medium</code></td><td>−0.19</td><td>1.2</td><td><code>hi</code></td></tr>
+        <tr><td>Opis stanu pustego</td><td>„Nowe połączenia…"</td><td>Text</td><td class="px">12</td><td><code>.regular</code></td><td>0</td><td>1.45</td><td><code>body .5</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Overlay / menu / feedback (SF Pro Text)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>kern</th><th>lhMult</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Pole ask-bara <code>.ask .q</code></td><td>„Co z dostawą okien…"</td><td>Text</td><td class="px">15</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>hi #FAF3E2</code></td></tr>
+        <tr><td>Placeholder <code>.ph</code></td><td>„Zapytaj swój korpus…"</td><td>Text</td><td class="px">15</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .4</code></td></tr>
+        <tr><td>Pozycja menu <code>.mi</code></td><td>„Utwórz zadanie"</td><td>Text</td><td class="px">13</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>hi</code> (hover biel na terakocie)</td></tr>
+        <tr><td>Skrót menu <code>.mi .sc</code></td><td>⌘⇧K</td><td>Mono</td><td class="px">11</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .4</code></td></tr>
+        <tr><td>Toast <code>.toastc</code></td><td>„Zachowano"</td><td>Text</td><td class="px">12.5</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>hi</code></td></tr>
+        <tr><td>Toast — Cofnij <code>.undo</code></td><td>„Cofnij"</td><td>Text</td><td class="px">12.5</td><td><code>.bold</code></td><td>0</td><td>1.0</td><td><span class="r-terra">#E0633A</span></td></tr>
+        <tr><td>Ślad <code>.trace</code></td><td>„Przekazano do Claude"</td><td>Text</td><td class="px">12</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .8</code></td></tr>
+        <tr><td>Ślad — plik <code>.f</code></td><td>okna-waskie-gardlo.md</td><td>Mono</td><td class="px">11.5</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><span class="r-jade">jade-txt #8BE0B5</span></td></tr>
+        <tr><td>Ślad — czas <code>.t</code></td><td>14:32</td><td>Mono</td><td class="px">11</td><td><code>.regular</code></td><td>0</td><td>1.0</td><td><code>body .4</code></td></tr>
+        <tr><td>Notyfikacja — tytuł <code>.nt</code></td><td>„3 nowe połączenia"</td><td>Text</td><td class="px">12.5</td><td><code>.bold</code></td><td>0</td><td>1.3</td><td><code>hi</code></td></tr>
+        <tr><td>Notyfikacja — body <code>.nb</code></td><td>„Digest z 42 notatek…"</td><td>Text</td><td class="px">12.5</td><td><code>.regular</code></td><td>0</td><td>1.4</td><td><code>body .65</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Rampa — Powierzchnie natywne (wizard / ustawienia, paper) — kontrolki niosą typografię systemową; poniżej dla parytetu</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Styl</th><th>Próbka</th><th>Face</th><th>pt</th><th>Waga</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>Przycisk <code>.nbtn</code></td><td>„Dalej"</td><td>Text</td><td class="px">13</td><td><code>.regular</code> (primary .medium)</td><td><code>#1A1A1A</code> (primary biel)</td></tr>
+        <tr><td>Pole <code>.nfield</code></td><td>ścieżka vaulta</td><td>Text</td><td class="px">13</td><td><code>.regular</code></td><td><code>#1A1A1A</code> (ph <code>#6E6A64</code>)</td></tr>
+        <tr><td>Zakładka aktywna</td><td>„Prywatność"</td><td>Text</td><td class="px">13</td><td><code>.medium</code></td><td>terakota + tło <code>rgba(194,64,16,.1)</code></td></tr>
+      </tbody>
+    </table>
+
+    <pre class="code">extension NSAttributedString {
+  static func ts(_ t:String, pt:CGFloat, weight:NSFont.Weight = .regular,
+                 em:CGFloat = 0, mult:CGFloat = 1.0, color:NSColor,
+                 upper:Bool = false, mono:Bool = false) -> NSAttributedString {
+    let f = mono ? TS.mono(pt,weight) : TS.font(pt,weight)
+    let p = NSMutableParagraphStyle(); p.lineHeightMultiple = mult
+    return NSAttributedString(string: upper ? t.uppercased() : t,
+      attributes: [.font:f, .foregroundColor:color, .paragraphStyle:p, .kern: em*pt])
+  }
+}
+// Teza:    .ts(text, pt:24, weight:.medium, em:-0.012, mult:1.30, color:TC.hi)
+// Eyebrow: .ts("Sprzeczność w czasie", pt:10.5, weight:.medium, em:0.10, color:TC.gold, upper:true)
+// &lt;mark&gt;: m.addAttributes([.foregroundColor:TC.goldGlow, .backgroundColor:TC.h(214,176,51,0.22)], range: r)</pre>
   </section>
 
-  <!-- #3 RESIZE -->
-  <section class="sec" data-screen-label="#3 · Resize">
-    <div class="sec-bar"><span class="sec-id">#3</span><h2>Reguły resize / reflow <span class="prio high">🟡 wysokie</span></h2></div>
-    <p>Redline'y są dla jednej szerokości; okno resizable (min <span class="kbd">740×460</span>, domyślnie ~62% ekranu).</p>
-    <ul class="tight">
-      <li><b>Szyna 236&nbsp;pt</b> — stała na każdym rozmiarze, czy min/collapse?</li>
-      <li><b>Reader (fluid)</b> — teza „max 30em": przy jakim pt się rozwiązuje i czy <b>cała kolumna ma max-width (wyśrodkowana)</b>, czy rośnie z oknem? Padding readera min vs szeroko?</li>
-      <li>Co <b>zawija</b>, a co <b>ucina</b> przy min szerokości: chipy, tekst kierunku, wiersze wyników, tytuł.</li>
-      <li>Zachowanie <b>stopki triażu</b> i <b>paska handoffu</b> przy resize; default ~62% vs zmaksymalizowane.</li>
-    </ul>
+  <!-- ═══════════ #2 KOMPONENTY ═══════════ -->
+  <section class="sec" id="s2" data-screen-label="#2 Inwentarz komponentów">
+    <div class="sec-bar"><span class="sec-id">#2</span><h2>Inwentarz komponentów — custom vs natywny <span style="color:var(--terracotta)">[BLOKER]</span></h2>
+      <p>Reguła: <b>natywne</b> gdy niesie standardową semantykę (edycja tekstu, menu, AX, notyfikacje, cała rama wizard/ustawień); <b>custom (layer-backed NSView)</b> gdy liczy się dokładny paint (rgba, radius 6, pressed translateY, niestandardowy highlight, wyrównanie do 1. linii); <b>hybryda</b> (preferowana dla przycisków i menu) = natywny szkielet + custom paint.</p></div>
+
+    <div class="grp">Powierzchnia okna „Konstelacja" (dark)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Komponent</th><th>Custom / Natywny</th><th>Klasa AppKit</th><th>Tint / rysowanie</th><th>Gotcha (padding · baseline · focus)</th></tr></thead>
+      <tbody>
+        <tr><td>Przycisk jade/ghost/syn/terra <code>.btn</code></td><td>Hybryda</td><td><code>NSButton</code> subkl., <code>isBordered=false</code>, <code>wantsLayer</code></td><td>bg/border/etykieta w <code>updateLayer()</code>; r6; pressed <code>ty +1</code></td><td>bezel niesie padding+focus-ring → wyłącz, rysuj <b>własny ring 3 pt</b>; zostaw keyEquivalent + spację</td></tr>
+        <tr><td>Checkbox <code>.cbx</code></td><td><b>Custom</b></td><td><code>NSButton .switch</code> subkl. (semantyka AX)</td><td>16 pt r4, border 1.5, on → fill terakota + biały ✓ (path)</td><td>natywny = zły kolor (systemowy akcent) + centrowanie do środka; my do <b>pierwszej linii</b> (+2 pt)</td></tr>
+        <tr><td>Filtr „Nowe 3 ⌄" (A3)</td><td>Hybryda</td><td>trigger <code>NSView</code> + <code>NSMenu</code></td><td>trigger: etykieta+złoty licznik+caret; <code>menu.popUp(...)</code></td><td>highlight NSMenu = systemowy niebieski → terakota wymaga <b>view-based item</b></td></tr>
+        <tr><td>Menu / popover <code>.menu</code></td><td>Natywne + custom item-view</td><td><code>NSMenu</code></td><td>pozycje jako <code>NSView</code> (terakotowy highlight + mono skrót)</td><td>tło = systemowy materiał vibrancy; exact <code>rgba(38,36,44,.97)</code> → zaakceptuj materiał <b>lub</b> host w NSPanel</td></tr>
+        <tr><td>Status-menu (F2, pasek postępu)</td><td>Natywne + custom header</td><td><code>NSMenu</code> + pierwszy item <code>NSView</code></td><td>widok statusu u góry (sygnet + pasek postępu = CALayer)</td><td>maks. 7 pozycji; pasek postępu rysowany sam (nie NSProgressIndicator — styl)</td></tr>
+        <tr><td>Ask-bar <code>.ask</code> (C)</td><td>Custom panel + natywne pole</td><td><code>NSPanel(.nonactivating,.borderless)</code> + <code>NSTextField</code> (borderless)</td><td>panel r10 dark, ring focus 3 pt terakota; mic = custom NSView</td><td>NSTextField niesie baseline/inset → wycentruj w 52 pt; ring na <b>kontenerze</b>, nie natywny (<code>focusRingType=.none</code>)</td></tr>
+        <tr><td>Split-CTA „Kontynuuj w Claude ▾" (E3)</td><td><b>Custom</b></td><td>2× <code>NSButton</code> + kontener + <code>NSMenu</code></td><td>terakota; divider 1 pt <code>rgba(255,255,255,.25)</code>; r6 zewn. rogi; marka template-image biel</td><td>split-button <b>nie jest natywny</b> na macOS; główny = akcja, caret = NSMenu (Claude/ChatGPT); zapamiętane globalnie</td></tr>
+        <tr><td>Chip źródła <code>.nchip</code></td><td>Custom</td><td><code>NSButton</code> subkl.</td><td>26 pt r6, border <code>rgba(255,255,255,.14)</code>, kropka 5 terakota, „↗"</td><td>klik = otwórz w appce; hover border terakota-lit</td></tr>
+        <tr><td>Wiersz wyniku <code>.res</code> (B)</td><td>Custom w liście natywnej</td><td><code>NSTableView/NSCollectionView</code> + custom <code>NSTableCellView</code></td><td>cały wiersz = jeden target; hover padding 13×2→13×10 + wash; „otwarto ✓" 2 s</td><td><b>wyłącz systemową selekcję</b> (<code>selectionHighlightStyle=.none</code>); data = mono; <code>&lt;mark&gt;</code> = atrybut zakresu</td></tr>
+        <tr><td>Wiersz kierunku <code>.dirrow</code> (E)</td><td>Custom</td><td><code>NSView</code> + custom checkbox + <code>NSTextField</code> (wrap)</td><td>r10, 11×12; on → tint <code>rgba(217,84,42,.09)</code> + border .55</td><td><b>cały wiersz</b> klikalny (toggle); tekst zawija, nie truncate</td></tr>
+        <tr><td>Trwały ślad <code>.trace</code></td><td>Custom</td><td><code>NSButton</code> subkl.</td><td>r8; wariant jadeit / złoto; plik = mono</td><td>klikalny; trwały — źródłem model, nie widok</td></tr>
+        <tr><td>Toast <code>.toastc</code> (I)</td><td>Custom</td><td><code>NSView</code> (child contentView) nad stopką</td><td>r8, bg #24222C, border 1 pt; Cofnij = NSButton subkl.</td><td><b>NIE NSPanel</b> — żyje w oknie, 10 pt nad stopką; 2 s, hover pauzuje, Esc; jeden naraz</td></tr>
+        <tr><td>Title-bar</td><td><b>Natywne</b></td><td><code>NSWindow</code> (titlebar transparentny) + <code>NSTitlebarAccessoryViewController</code></td><td>światła <b>systemowe (NIE rysuj)</b>; tytuł wyśrodkowany = accessory; ⌕ = prawy accessory (NSButton)</td><td>tło (radial) = contentView pod transparentnym title-barem; okno dark → <code>.darkAqua</code>; ~40 pt = standard</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Powierzchnie natywne (wizard / ustawienia — 100% stock + tint)</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Komponent</th><th>Stock / tint</th><th>Klasa</th><th>Uwaga</th></tr></thead>
+      <tbody>
+        <tr><td>Okno prefs / wizard</td><td>stock</td><td><code>NSWindow</code> (styl prefs)</td><td>tło ≈ <code>#F5F3EF</code>; titlebar <code>#ECEAE4</code></td></tr>
+        <tr><td>Przycisk wtórny <code>.nbtn</code></td><td>stock</td><td><code>NSButton</code> (push)</td><td>native bezel, r6 systemowy</td></tr>
+        <tr><td>Przycisk primary</td><td><b>tint</b></td><td><code>NSButton</code></td><td><code>bezelColor = terracotta</code> (nie systemowy niebieski)</td></tr>
+        <tr><td>Pole <code>.nfield</code></td><td>stock</td><td><code>NSTextField</code></td><td>native focus-ring OK (30 pt)</td></tr>
+        <tr><td>Opener (Obsidian/Pile/Finder)</td><td>stock</td><td><code>NSButton .radio</code></td><td>grupa</td></tr>
+        <tr><td>Model / narzędzie / rytm</td><td>stock</td><td><code>NSPopUpButton</code></td><td>—</td></tr>
+        <tr><td>Zakładki (jedyny custom w ramie)</td><td><b>tint</b></td><td>lekki pasek lub <code>NSSegmentedControl</code> tint</td><td>aktywna: tekst terakota + tło <code>rgba(194,64,16,.1)</code></td></tr>
+        <tr><td>Bloki Prywatności</td><td>tint</td><td><code>NSBox/NSView</code></td><td>„Zawsze lokalnie" jadeit · „✦ Do chmury" złoto</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grp">Powierzchnie systemowe</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Komponent</th><th>Natywne</th><th>Klasa</th><th>Uwaga</th></tr></thead>
+      <tbody>
+        <tr><td>Pasek menu (F)</td><td>natywne</td><td><code>NSStatusItem</code> + <code>NSMenu</code></td><td>ikona = mono sygnet template-image; stany: spoczynek · nagrywam (kropka #E0633A) · indeksuję (55%); status <b>tylko tu</b>; bez animacji</td></tr>
+        <tr><td>Notyfikacja (I3)</td><td>natywne</td><td><code>UNUserNotificationCenter</code></td><td><b>nie</b> custom NSView; ikona apki = sygnet mesh na #141414; klik → deep-link (userInfo)</td></tr>
+        <tr><td>Dialogi</td><td>natywne</td><td><code>NSAlert</code></td><td>tylko klasyczne; <b>błąd syntezy NIE NSAlert</b> — komunikat w miejscu karty</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout"><b>Focus-ring:</b> w oknie (dark) tłum natywny (<code>focusRingType=.none</code>) i rysuj własny <b>ring 3 pt</b> terakota (spójny z ask-barem: <code>0 0 0 3px rgba(217,84,42,.18)</code> + border <code>rgba(217,84,42,.65)</code>). Na powierzchniach natywnych — odwrotnie: zostaw natywny. <b>Highlight NSMenu:</b> domyślnie systemowy niebieski — terakota wymaga <b>view-based menu items</b> (obserwuj <code>isHighlighted</code>). <b>Każdy custom:</b> <code>wantsLayer=true</code>, <code>layer.contentsScale = backingScaleFactor</code>.</div>
   </section>
 
-  <!-- #4 MOTION -->
-  <section class="sec" data-screen-label="#4 · Ruch">
-    <div class="sec-bar"><span class="sec-id">#4</span><h2>Specyfikacja ruchu → CAAnimation <span class="prio high">🟡 wysokie</span></h2></div>
-    <p>Per animacja: <b>easing</b> (punkty cubic-bezier lub nazwa), <b>która właściwość</b> (<code>opacity</code> / <code>transform.translateY</code> o ile pt / oba) + from→to.</p>
-    <ul class="tight">
-      <li>Odsłonięcie <b>paska handoffu</b> (0→1 kierunek) · wsuwanie <b>karty syntezy</b> (D2) · <b>flash-ring</b> btn-jade (180&nbsp;ms) · wejście/wyjście <b>toastu</b> · wymiana <b>chrome</b> przy zmianie trybu (B5).</li>
-      <li><code>prefers-reduced-motion</code> → „cięcie zamiast wsuwania": potwierdź, że cięcie = natychmiastowa opacity (0&nbsp;ms).</li>
-    </ul>
+  <!-- ═══════════ #3 RESIZE ═══════════ -->
+  <section class="sec" id="s3" data-screen-label="#3 Resize">
+    <div class="sec-bar"><span class="sec-id">#3</span><h2>Reguły resize</h2>
+      <p>Okno resizable, min <b>740×460</b>, domyślnie <b>~62% ekranu</b>.</p></div>
+    <table class="redline wrap tight" style="max-width:1050px">
+      <thead><tr><th>Element</th><th>Rozstrzygnięcie</th></tr></thead>
+      <tbody>
+        <tr><td>Okno</td><td><code>contentMinSize = 740×460</code>; domyślnie <code>0.62 × visibleFrame</code> wyśrodkowane; <code>.resizable</code>. Tło radialne statyczne w contentView.</td></tr>
+        <tr><td>Szyna</td><td><b>Stała 236 pt — brak collapse</b> (<code>flex:none</code>, <code>_RAIL_W</code>). „Zwijanie" dotyczy sekcji <b>drugiego trybu</b>, nie szerokości szyny. Nie NSSplitView z suwakiem — leading NSView <code>width==236</code>, reader wypełnia resztę. border-right = device-hairline (#5).</td></tr>
+        <tr><td>Reader — max 30em</td><td>Treść <b>lewo-wyrównana, NIE centrowana</b>. Teza cap <b>30em = 720 pt</b> (30 × 24 pt), liczone od rozmiaru <b>tezy</b> (nie okna). Kierunki cap 640 pt. Nadmiar szerokości = <b>pusty prawy margines</b>. Padding czytnika: 24 pt @min → 32 pt @≥domyślnej.</td></tr>
+        <tr><td>Sanity @ min 740×460</td><td><code>740 − 236 − 48(padding) = 456 pt</code> treści. Teza (cap 720) i kierunki (640) > 456 → biorą pełne 456 i zawijają; cap uaktywnia się dopiero gdy okno rośnie.</td></tr>
+      </tbody>
+    </table>
+    <div class="grp">Co zawija, co ucina</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Element</th><th>Zachowanie</th><th>AppKit</th></tr></thead>
+      <tbody>
+        <tr><td>Wiersz szyny — tytuł</td><td>2 linie → tail</td><td><code>.byTruncatingTail</code>, maxLines 2</td></tr>
+        <tr><td>Wiersz szyny — skrót</td><td>1 linia → tail</td><td><code>.byTruncatingTail</code>, maxLines 1</td></tr>
+        <tr><td>Teza / pytanie-tytuł</td><td>zawija swobodnie, cap 720, <b>bez truncate</b></td><td><code>.byWordWrapping</code>, maxLines 0</td></tr>
+        <tr><td>Kierunek</td><td>zawija swobodnie, cap 640, <b>bez truncate</b></td><td><code>.byWordWrapping</code>, maxLines 0</td></tr>
+        <tr><td>Chipy źródeł</td><td>zbiór zawija (flow); chip nowrap → tail</td><td>flow + chip <code>.byTruncatingTail</code></td></tr>
+        <tr><td>Wynik — tytuł</td><td>tail</td><td><code>.byTruncatingTail</code>, maxLines 1</td></tr>
+        <tr><td>Wynik — „↗ otwórz"</td><td>przypięte prawo, <b>nigdy</b> nie ucina</td><td>trailing, hugging wysoki</td></tr>
+        <tr><td>Wynik — cytat</td><td>≤ 3 linie → tail</td><td><code>.byTruncatingTail</code>, maxLines 3</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b>Dolne belki:</b> stopka triażu (46 pt, <b>tylko Przegląd</b>): Odrzuć · „1 z 3" (<b>środek absolutny</b> do centerX okna) · Zachowaj. Pasek handoffu (48 pt, ≥1 kierunek): status+„✦" (leading, ucina tail) · ⋯+split-CTA (trailing, <b>nigdy</b> nie ucina). <b>Stackowanie</b> (jedyne miejsce współistnienia): w Przeglądzie handoff siada bezpośrednio <b>nad</b> stopką (48 nad 46); reader oddaje im wysokość. W Pytaniu stopki nie ma → handoff nad dolną krawędzią czytnika.</div>
   </section>
 
-  <!-- #5 HAIRLINES -->
-  <section class="sec" data-screen-label="#5 · Hairline'y">
-    <div class="sec-bar"><span class="sec-id">#5</span><h2>Hairline'y i sub-pixelowe obramowania <span class="prio high">🟡 wysokie</span></h2></div>
-    <p>Na Retinie „1px CSS" = 1 device px = <b>0.5&nbsp;pt</b> — łatwo pomylić wagę całego UI. Dla borderów <code>0.5 / 1 / 1.5 / 2.5px</code>:</p>
-    <ul class="tight">
-      <li>Które to <b>prawdziwe 1-device-px hairline'y</b> (render 0.5&nbsp;pt), a które <b>logiczne pt</b>?</li>
-      <li>Pionowy pasek aktywnego wiersza <code>2.5px</code> — 2.5&nbsp;pt logiczne czy device? Border checkboxa <code>1.5px</code>?</li>
-    </ul>
+  <!-- ═══════════ #4 RUCH ═══════════ -->
+  <section class="sec" id="s4" data-screen-label="#4 Ruch">
+    <div class="sec-bar"><span class="sec-id">#4</span><h2>Ruch → CAAnimation</h2>
+      <p>Formalizacja ruchu opisanego słownie (README: „wsuwanie 150–180 ms", „flash 180 ms", „toast 2 s"). Właściwości: <b>tylko</b> <code>opacity</code> + <code>transform.translation.y</code>.</p></div>
+    <div class="grp">Krzywe</div>
+    <table class="redline tight" style="max-width:900px">
+      <thead><tr><th>Nazwa</th><th>Punkty</th><th>Użycie</th></tr></thead>
+      <tbody>
+        <tr><td>standard</td><td><code>0.4, 0, 0.2, 1</code></td><td>odsłonięcia, karta syntezy, wymiana chrome (krzywa <code>--transition</code>)</td></tr>
+        <tr><td>decelerate</td><td><code>0, 0, 0.2, 1</code></td><td>wejście toastu, flash-ring</td></tr>
+        <tr><td>accelerate</td><td><code>0.4, 0, 1, 1</code></td><td>wyjście toastu, ukrycie paska</td></tr>
+      </tbody>
+    </table>
+    <table class="redline wrap tight">
+      <thead><tr><th>Animacja</th><th>Trigger</th><th>Właściwość (from → to)</th><th>Czas</th><th>Easing</th><th>reduce-motion</th></tr></thead>
+      <tbody>
+        <tr><td>Odsłonięcie paska handoffu</td><td>≥1 kierunek</td><td><code>opacity 0→1</code> + <code>ty +10→0</code></td><td>150 ms</td><td>standard</td><td>opacity natychmiast, bez translate</td></tr>
+        <tr><td>Ukrycie paska handoffu</td><td>0 kierunków</td><td><code>opacity 1→0</code> + <code>ty 0→+10</code></td><td>120 ms</td><td>accelerate</td><td>znika natychmiast</td></tr>
+        <tr><td>Wsuwanie karty syntezy (D2)</td><td>„Zsyntetyzuj" → stream</td><td><code>opacity 0→1</code> + <code>ty +16→0</code></td><td>180 ms</td><td>standard</td><td>natychmiast; wyniki reflow bez animacji</td></tr>
+        <tr><td>Flash-ring <code>btn-jade</code></td><td>klik „Zachowaj"</td><td>ring border 4 pt <code>rgba(70,177,126,.22)</code> <code>opacity 1→0</code> + bg <code>.16→.30→.16</code></td><td>180 ms</td><td>decelerate</td><td>bez ringu; „Zachowano ✓" + kolor natychmiast + toast</td></tr>
+        <tr><td>Toast — wejście</td><td>skutek lokalny</td><td><code>opacity 0→1</code> + <code>ty +8→0</code></td><td>150 ms</td><td>decelerate</td><td>opacity natychmiast</td></tr>
+        <tr><td>Toast — wyjście</td><td>2 s / Esc / nowy</td><td><code>opacity 1→0</code> + <code>ty 0→+4</code></td><td>150 ms</td><td>accelerate</td><td>znika natychmiast</td></tr>
+        <tr><td>Wymiana chrome (tryb)</td><td>klik zwiniętego nagłówka / Esc</td><td>crossfade: wych. <code>opacity 1→0</code> (120) → wch. <code>opacity 0→1</code> + <code>ty +4→0</code> (150)</td><td>120 + 150 ms</td><td>standard</td><td><b>natychmiastowa podmiana</b> (bez fade/translate)</td></tr>
+        <tr><td>„otwarto ✓" (B2)</td><td>klik wiersza</td><td>podmiana tekstu/koloru (bez ruchu), powrót po 2 s</td><td>—</td><td>—</td><td>identycznie</td></tr>
+        <tr><td>Ikona paska menu</td><td>nagrywam / indeksuję</td><td>podmiana koloru/opacity (bez animacji — „ikona nie teatralizuje")</td><td>—</td><td>—</td><td>identycznie</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b><code>prefers-reduced-motion</code> — potwierdzone:</b> „cięcie" = natychmiastowa <code>opacity</code>, <b>offset <code>ty</code> pomijany</b> (element od razu na docelowej pozycji), flash-ring → sama podmiana etykiety/koloru. Źródło: <code>NSWorkspace.shared.accessibilityDisplayShouldReduceMotion</code>.</div>
+    <pre class="code">enum Ease {
+  static let standard   = CAMediaTimingFunction(controlPoints: 0.4,0, 0.2,1)
+  static let decelerate = CAMediaTimingFunction(controlPoints: 0,  0, 0.2,1)
+  static let accelerate = CAMediaTimingFunction(controlPoints: 0.4,0, 1,  1)
+}
+func slideIn(_ l:CALayer, dy:CGFloat, dur:CFTimeInterval, timing:CAMediaTimingFunction) {
+  if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { l.opacity = 1; return }  // cięcie
+  let o = CABasicAnimation(keyPath:"opacity"); o.fromValue = 0; o.toValue = 1
+  let t = CABasicAnimation(keyPath:"transform.translation.y"); t.fromValue = dy; t.toValue = 0
+  let g = CAAnimationGroup(); g.animations = [o,t]; g.duration = dur
+  g.timingFunction = timing; g.fillMode = .backwards
+  l.add(g, forKey:"slideIn"); l.opacity = 1
+}
+// handoff: slideIn(bar, dy:10, dur:0.15, timing:.standard) · karta: dy:16,0.18 · toast: dy:8,0.15,.decelerate
+// UWAGA znak ty: +Y = w dół; przy layer.isGeometryFlipped zamień znak.</pre>
   </section>
 
-  <!-- #6 SIGILS -->
-  <section class="sec" data-screen-label="#6 · Sigile">
-    <div class="sec-bar"><span class="sec-id">#6</span><h2>Geometria sygili do Core Graphics <span class="prio nice">🟢 nice</span></h2></div>
-    <p><code>redesign-sigils.js</code> daje SVG. Do <code>_SigilView.drawRect_</code>: współrzędne węzłów per typ (contradiction/shared/emergent), gradient radialny poświaty i złotego rozbłysku (środek/promień/stopy), grubości/opacity łuków i linii. Jeśli JS jest źródłem prawdy — potwierdź. Port z JS zrobimy; to redukcja iteracji.</p>
+  <!-- ═══════════ #5 HAIRLINE ═══════════ -->
+  <section class="sec" id="s5" data-screen-label="#5 Hairline">
+    <div class="sec-bar"><span class="sec-id">#5</span><h2>Hairline'y — device-px vs logical pt</h2>
+      <p>Hairline = 1 fizyczny piksel: <code>1.0 / backingScaleFactor</code> (0.5 pt @2x, 1 pt @1x). Zasada: <b>separator strukturalny</b> (ledwie widoczny podział, biel .06–.10) → device-hairline; <b>krawędź kontrolki</b> → logical 1 pt; <b>celowy wskaźnik</b> (pasek 2.5, checkbox 1.5) → logical pt.</p></div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Border (element)</th><th>CSS</th><th>Klasa</th><th>AppKit</th><th>Uwaga</th></tr></thead>
+      <tbody>
+        <tr><td>border-right szyny <code>.06</code></td><td class="px">1px</td><td><b>device-hairline</b></td><td><code>1/scale</code></td><td>separator strukturalny</td></tr>
+        <tr><td>border-bottom title-bara <code>.07</code></td><td class="px">1px</td><td><b>device-hairline</b></td><td><code>1/scale</code></td><td>—</td></tr>
+        <tr><td>border-bottom wyniku <code>.res .07</code></td><td class="px">1px</td><td><b>device-hairline</b></td><td><code>1/scale</code></td><td>znika w hoverze</td></tr>
+        <tr><td>border-top stopki / handoffu <code>.08</code></td><td class="px">1px</td><td><b>device-hairline</b></td><td><code>1/scale</code></td><td>—</td></tr>
+        <tr><td>separator menu <code>.msep .10</code></td><td class="px">1px</td><td><b>device-hairline</b></td><td><code>1/scale</code></td><td>—</td></tr>
+        <tr><td>border chipa <code>.nchip .14</code></td><td class="px">1px</td><td>logical</td><td><b>1 pt</b></td><td>krawędź kontrolki</td></tr>
+        <tr><td>border przycisku (ghost/syn/jade)</td><td class="px">1px</td><td>logical</td><td><b>1 pt</b></td><td>krawędź kontrolki</td></tr>
+        <tr><td>border kierunku <code>.dirrow</code></td><td class="px">1px</td><td>logical</td><td><b>1 pt</b></td><td>krawędź kontrolki</td></tr>
+        <tr><td>ramka menu / ask / toast / popover</td><td class="px">1px</td><td>logical</td><td><b>1 pt</b></td><td>ramka pływająca</td></tr>
+        <tr><td>divider split-CTA <code>.25</code></td><td class="px">1px</td><td>logical</td><td><b>1 pt</b></td><td>rozdziela główny/caret</td></tr>
+        <tr><td><b>border checkboxa <code>.cbx</code></b></td><td class="px">1.5px</td><td>logical</td><td><b>1.5 pt</b></td><td>+ ✓ 1.8 pt; align do 1. linii +2 pt</td></tr>
+        <tr><td><b>pasek aktywnego wiersza <code>::before</code></b></td><td class="px">2.5px</td><td>logical</td><td><b>2.5 pt</b></td><td>r2, inset 8 pt; <span class="r-gold">złoto #D6B033</span> (insight) / <span class="r-terra">terakota #D9542A</span> (zapytanie)</td></tr>
+      </tbody>
+    </table>
+    <pre class="code">extension NSView { var hairline: CGFloat { 1.0 / (window?.backingScaleFactor ?? 2) } }
+override func viewDidChangeBackingProperties() {
+  super.viewDidChangeBackingProperties()
+  layer?.contentsScale = window?.backingScaleFactor ?? 2; updateSeparators()
+}
+// separator = 1-device-px prostokąt (nie borderWidth sub-punktowy — rozmaz), frame do siatki:
+sep.frame = backingAlignedRect(NSRect(x: bounds.maxX-hairline, y:0, width:hairline, height:bounds.height),
+                               options: .alignAllEdgesNearest)
+// pasek aktywnego wiersza (logical 2.5):
+bar.frame = NSRect(x:0, y:8, width:2.5, height:bounds.height-16); bar.cornerRadius = 2
+bar.backgroundColor = (row.kind == .insight ? TC.gold : TC.terraLit).cgColor</pre>
   </section>
 
-  <!-- #7 BRANDS -->
-  <section class="sec" data-screen-label="#7 · Marki">
-    <div class="sec-bar"><span class="sec-id">#7</span><h2>Znaki marek (brands) <span class="prio nice">🟢 nice</span></h2></div>
-    <p>Handoff: <code>brands/claude.svg</code> + <code>openai.svg</code> „do dostarczenia" jako tintowane template-image. <b>Oba już mamy w repo</b> — potwierdź, że odpowiadają docelowym glifom (szczególnie <b>Claude</b> — w prototypie placeholder <code>mIco('claude')</code>), albo dostarcz kanoniczne jednokolorowe SVG w rozmiarach 16&nbsp;px (UI) i ~20&nbsp;px (CTA).</p>
+  <!-- ═══════════ #6 SYGILE ═══════════ -->
+  <section class="sec" id="s6" data-screen-label="#6 Sygile">
+    <div class="sec-bar"><span class="sec-id">#6</span><h2>Sygile → Core Graphics (<code>_SigilView.drawRect_</code>)</h2>
+      <p><b>Potwierdzenie: <code>redesign-sigils.js</code> JEST źródłem prawdy kształtu.</b> Port do CG musi trafić te współrzędne 1:1. Przestrzeń <code>viewBox 0 0 32 32</code>; skaluj przez <code>size/32</code>. Kolor typu barwi <b>tylko łuki/linie i glow węzła</b>; rdzeń/środek węzła i cały bloom są <b>stałe</b>.</p></div>
+    <div class="grp">Węzeł (identyczny we wszystkich typach) · Bloom (złoty, stały)</div>
+    <table class="redline tight" style="max-width:1000px">
+      <thead><tr><th>Warstwa</th><th>Promień</th><th>Wypełnienie</th></tr></thead>
+      <tbody>
+        <tr><td>węzeł · glow</td><td>7</td><td>radial (0%: kolor@.5 · 60%: kolor@.08 · 100%: kolor@0)</td></tr>
+        <tr><td>węzeł · rdzeń</td><td>2.5</td><td><code>#C24010</code> (stały)</td></tr>
+        <tr><td>węzeł · środek</td><td>1</td><td><code>#FAF3E2</code> (stały)</td></tr>
+        <tr><td>bloom · glow</td><td><code>r0 × 2.6</code></td><td>radial (0%: <code>#F4DD8E</code>@.9 · 55%: <code>#D6B033</code>@.3 · 100%: <code>#D6B033</code>@0)</td></tr>
+        <tr><td>bloom · dysk</td><td><code>r0</code></td><td><code>#F4DD8E</code></td></tr>
+        <tr><td>bloom · iskra</td><td><code>r0 × 0.4</code></td><td><code>#FFFBF0</code></td></tr>
+      </tbody>
+    </table>
+    <div class="grp">Typy — współrzędne, łuki, kolejność</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Typ · kolor</th><th>Geometria (32-space)</th><th>Stroke</th><th>Bloom · węzły · z-order</th></tr></thead>
+      <tbody>
+        <tr><td><b>contradiction</b> · <code>#D9542A</code></td><td>linia bazowa (5,16)→(27,16); łuk górny <code>M8,16 Q16,7 24,16</code>; łuk dolny <code>M8,16 Q16,25 24,16</code></td><td>baza α.28 w1 dash[2,4]; łuki α.85 w1.5 round</td><td>bloom (16,16) r0=2.4; węzły (8,16),(24,16). <b>z:</b> baza→łuki→bloom→węzły</td></tr>
+        <tr><td><b>shared</b> · <code>#D6B033</code></td><td>linia (9,24)→(16,9); linia (23,24)→(16,9)</td><td>α.7 w1.4 round</td><td>węzły (9,24),(23,24); bloom (16,9) r0=3. <b>z:</b> linie→węzły→bloom</td></tr>
+        <tr><td><b>emergent</b> · <code>#E3C16B</code></td><td>3 linie z (16,16) do (8,9),(25,12),(15,26)</td><td>α.55 w1.3 round</td><td>węzły w 3 pkt.; bloom (16,16) r0=3. <b>z:</b> linie→węzły→bloom</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:var(--text-sm);color:var(--ink-soft);margin-top:8px">Rozmiary: szyna <b>18–26</b> · eyebrow czytnika <b>24–30</b> · stan pusty <b>34–46</b>. Sygnet aplikacji (<code>--logo-sygnet</code>, fala/pasek menu) to <b>osobny</b> motyw — nie sygil połączenia (#7).</p>
+    <pre class="code">override func draw(_ dirty: NSRect) {
+  guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+  ctx.saveGState(); ctx.scaleBy(x: bounds.width/32, y: bounds.width/32)   // 32×32
+  switch kind {
+  case .contradiction: let c = TC.terraLit
+    dashed(ctx,(5,16),(27,16), c,.28,1,[2,4]); arc(ctx,(8,16),(16,7),(24,16), c,.85,1.5)
+    arc(ctx,(8,16),(16,25),(24,16), c,.85,1.5); bloom(ctx,(16,16),2.4)
+    node(ctx,(8,16),c); node(ctx,(24,16),c)
+  case .shared: let c = TC.gold
+    line(ctx,(9,24),(16,9), c,.7,1.4); line(ctx,(23,24),(16,9), c,.7,1.4)
+    node(ctx,(9,24),c); node(ctx,(23,24),c); bloom(ctx,(16,9),3)
+  case .emergent: let c = TC.h(227,193,107)
+    let nd = [(8.0,9.0),(25.0,12.0),(15.0,26.0)]
+    for p in nd { line(ctx,(16,16),p, c,.55,1.3) }; for p in nd { node(ctx,p,c) }; bloom(ctx,(16,16),3)
+  }
+  ctx.restoreGState()
+}
+// node: radial glow (r7, loc[0,.6,1], α[.5,.08,0]) + r2.5 #C24010 + r1 #FAF3E2
+// bloom: radial (r0×2.6, loc[0,.55,1], #F4DD8E@.9/#D6B033@.3/@0) + r0 #F4DD8E + r0×.4 #FFFBF0
+// arc = addQuadCurve; dashed = setLineDash([2,4]); wszystkie cap .round; gradient statyczny.</pre>
   </section>
 
-  <!-- CONFIRMATIONS -->
-  <section class="sec" data-screen-label="Potwierdzenia">
-    <div class="sec-bar"><span class="sec-id">✓</span><h2>Potwierdzenia — cele portu (obecny build beta.17 się rozjeżdża)</h2></div>
-    <ul class="tight">
-      <li>Pasek aktywnego <b>insightu</b> = <b>złoto <code>#D6B033</code></b> (§7). <i>Build używa terakoty.</i></li>
-      <li>Title-bar po prawej = <b>tylko ⌕</b>. <i>Build pokazuje pager „N z N".</i></li>
-      <li>Stopka triażu ze środkowym <b>„1 z 3"</b>, tylko w trybie Przegląd.</li>
-      <li>Wycięte: <b>stały ask-bar</b> w oknie, <b>„OSTATNIE TRANSKRYPTY"</b> w szynie, <b>segment triażu</b> 3-przyciskowy.</li>
-    </ul>
-    <p class="lede" style="margin-top:22px">Priorytet, gdyby był czas tylko na jedno: <b>#1 (rampa) + #2 (inwentarz)</b> — dwie rzeczy nie do wyprowadzenia z CSS bez zgadywania, decydujące o „pixel-perfect vs blisko". Reszta jest w handoffie; port ruszamy na tym.</p>
+  <!-- ═══════════ #7 MARKI ═══════════ -->
+  <section class="sec" id="s7" data-screen-label="#7 Marki">
+    <div class="sec-bar"><span class="sec-id">#7</span><h2>Znaki marek LLM — spec osadzenia</h2>
+      <p>Tylko Claude + ChatGPT (Gemini odpada — brak prefill-URL).</p></div>
+    <div class="callout"><b>Potwierdzenie:</b> glif w prototypie (<code>mIco('claude')</code>, gwiazdka) to <b>placeholder</b>, <b>nie</b> kanoniczny znak. W paczce <b>nie ma</b> <code>claude.svg</code> / <code>openai.svg</code> — README §13 oznacza je „do dostarczenia". <b>Nie odtwarzam znaków Claude/OpenAI</b> (znaki towarowe stron trzecich) — kanoniczne monochromatyczne pliki pobierz z oficjalnych brand-kitów Anthropic / OpenAI. Poniżej kanoniczna spec <b>osadzenia</b> + checklist, którą dostarczone pliki muszą spełnić.</div>
+    <table class="redline wrap tight" style="max-width:1050px">
+      <thead><tr><th>Wymóg / kontekst</th><th>Wartość</th></tr></thead>
+      <tbody>
+        <tr><td>Format pliku</td><td>SVG, path/kształt (bez tekstu, bez <code>&lt;image&gt;</code>), <b>jednokolorowy</b>, tło przezroczyste</td></tr>
+        <tr><td>viewBox</td><td>kwadrat (<code>0 0 16 16</code> + <code>0 0 20 20</code>, lub skalowalny <code>0 0 24 24</code>); zerowy padding poza optycznym</td></tr>
+        <tr><td>Rozmiar — split-CTA (E5) / menu</td><td><b>16 pt</b> (gap 7 do etykiety)</td></tr>
+        <tr><td>Rozmiar — większe CTA (rezerwa)</td><td>~20 pt (README §5); domyślnie 16 pt za redline E5</td></tr>
+        <tr><td>Tint</td><td>template-image (<code>isTemplate=true</code>): <b>biel</b> na terakotowym CTA; kolor tekstu pozycji w menu; systemowy w pasku menu</td></tr>
+      </tbody>
+    </table>
+    <pre class="code">func brandImage(_ name:String, pt:CGFloat) -> NSImage {
+  let img = NSImage(named:name)!; img.isTemplate = true       // tint z contentTintColor
+  img.size = NSSize(width:pt, height:pt); return img
+}
+let iv = NSImageView(image: brandImage("claude", pt:16)); iv.contentTintColor = .white
+// checklist odbioru: [ ] isTemplate daje czysty tint (1 kanał alpha) [ ] wyśrodkowany w kwadracie
+//                    [ ] czytelny @16pt [ ] biel na terakocie ma kontrast [ ] zgodny z brand-kitem</pre>
+    <p style="font-size:var(--text-sm);color:var(--ink-soft);margin-top:8px"><b>Sygnet aplikacji ≠ znak marki LLM.</b> <code>--logo-sygnet</code> (fala, 6 słupków) = znak Timshel z maski w tokens.css. Ikona apki = gradientowy sygnet (<code>--logo-mesh</code>) na czarnym kaflu <code>#141414</code>; pasek menu = mono sygnet template-image (indeksuję → 55%); notyfikacja = sygnet mesh 34 pt r8. Statyczny obraz/warstwa, nie animowany gradient.</p>
   </section>
+
+  <!-- ═══════════ POTWIERDZENIA ═══════════ -->
+  <section class="sec" id="sc" data-screen-label="Potwierdzenia">
+    <div class="sec-bar"><span class="sec-id">✓</span><h2>Potwierdzenia — cele portu (rozbieżności beta.17)</h2>
+      <p>Kryteria akceptacji: co build beta.17 robi inaczej i co port ma odtworzyć.</p></div>
+    <table class="redline wrap tight" style="max-width:1050px">
+      <thead><tr><th>Cel</th><th>Potwierdzenie</th></tr></thead>
+      <tbody>
+        <tr><td>Pasek aktywnego wiersza</td><td><b>Insight = <span class="r-gold">złoto #D6B033</span></b> (<code>.rrow.active.au</code>); <b>zapytanie = <span class="r-terra">terakota #D9542A</span></b> (<code>.rrow.active</code>). beta.17 ma terakotę wszędzie → zmień insight na złoto. 2.5 pt, r2, inset 8.</td></tr>
+        <tr><td>Title-bar po prawej</td><td><b>Tylko ⌕</b> (hover pełna biel → ask-bar). Bez pagera/licznika pozycji (→ stopka „1 z 3"), bez „✦ Nowy insight" (→ menu paska menu).</td></tr>
+        <tr><td>Stopka „1 z 3"</td><td><b>Tylko w Przeglądzie.</b> W Pytaniu jej nie ma — gwarancja architektury, nie <code>if</code>.</td></tr>
+        <tr><td>Wycięte z okna</td><td>(a) stały ask-bar 56 px → overlay ⌥Space/⌕ (pytanie = tytuł); (b) „OSTATNIE TRANSKRYPTY" w szynie → usunięte (historia zwinięta); (c) 3-przyciskowy segment triażu → filtr „Nowe 3 ⌄" (NSMenu).</td></tr>
+      </tbody>
+    </table>
+    <div class="grp">Changelog beta.17 → redesign</div>
+    <table class="redline wrap tight">
+      <thead><tr><th>Było (beta.17)</th><th>Jest (redesign)</th><th>Ekran</th></tr></thead>
+      <tbody>
+        <tr><td>Stały ask-bar 56 px w oknie</td><td>Overlay ⌥Space / ⌕; pytanie = tytuł</td><td>C1 · B3</td></tr>
+        <tr><td>Segment triażu (3 przyciski)</td><td>Filtr w nagłówku szyny → NSMenu</td><td>A3</td></tr>
+        <tr><td>Stopka zawsze widoczna</td><td>Tylko w Przeglądzie (znika z architektury)</td><td>A4 · B1</td></tr>
+        <tr><td>3 akcje pod wynikami</td><td>Jedna („Zsyntetyzuj"); „poszerz/przekaż" tylko w abstynencji</td><td>B1 · B4</td></tr>
+        <tr><td>Handoff: klaster 3 ikon zawsze</td><td>Menu ⋯ + jeden split-CTA; przy ≥1 kierunku</td><td>E2 · E3</td></tr>
+        <tr><td>Brak oznaczeń lokalne/chmura</td><td>Jadeit „lokalnie" / złoto „✦ do chmury"</td><td>B1 · H3</td></tr>
+        <tr><td>„✦ Nowy insight" + licznik w title-barze</td><td>Do menu paska menu / do stopki</td><td>F2 · A1</td></tr>
+        <tr><td>Pasek aktywnego insightu terakotowy</td><td><span class="r-gold">Złoto #D6B033</span></td><td>A2 · §7</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b>Wymiary bez zmian:</b> szyna 236 · stopka 46 · handoff 48 · przyciski 30–32 · title-bar 40 · okno ~62% · min 740×460 · rodzina promieni 6 pt. &nbsp; <b>Niezmienniki:</b> jedno okno / dwa wykluczające się tryby (chrome należy do trybu) · jedna główna akcja na widok · granica lokalne/chmura zawsze jawna (3 gesty do chmury) · role akcentów twardo · jedna powierzchnia customowa (Konstelacja + ask-bar) · copy PL z diakrytykami.</div>
+  </section>
+
+  <div class="foot"><b>Poza zakresem:</b> wcześniejsze iteracje okna (insights-*, recall-*) — zastąpione A–I · Reader notatek (3. tryb) — Faza 6 · teaser-v2-* — nie ekrany apki. &nbsp; <b>Kolejność portu:</b> Potwierdzenia → #1+#2 (fundament) → #3–#5 (zachowanie) → #6+#7 (assety). &nbsp; Ten worksheet konsoliduje 9 dokumentów <code>.md</code> z tego folderu; oba źródła 1:1.</div>
 
 </div>
 </body>

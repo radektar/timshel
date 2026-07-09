@@ -58,31 +58,43 @@ def _ns_weight(key: str):
 # Sizes/leading/tracking are the handoff §8 window values.
 # --------------------------------------------------------------------------- #
 SPEC: Dict[str, dict] = {
-    # Reader
+    # Reader (Display ≥ 20pt — systemFont auto-selects the SF Pro Display cut)
     "thesis":        dict(size=24.0, weight="medium",  track=-0.012, lh=1.30, color=("window_hi", 1.0)),
-    "question_title":dict(size=23.0, weight="medium",  track=-0.012, lh=1.25, color=("window_hi", 1.0)),
-    "eyebrow":       dict(size=11.0, weight="medium",  track=0.10,   lh=1.0,  color=("gold", 1.0), upper=True),
+    "question_title":dict(size=21.0, weight="medium",  track=-0.012, lh=1.25, color=("window_hi", 1.0)),
+    "eyebrow":       dict(size=10.5, weight="medium",  track=0.10,   lh=1.0,  color=("gold", 1.0), upper=True),
+    "cloud_chip":    dict(size=10.5, weight="medium",  track=0.10,   lh=1.0,  color=("gold_cloud", 1.0), upper=True),
+    "jade_chip":     dict(size=10.5, weight="medium",  track=0.10,   lh=1.0,  color=("jade_text", 1.0), upper=True),
     # Rail
-    "rail_title":    dict(size=12.5, weight="bold",    track=0.0,    lh=1.15, color=("window_hi", 1.0)),
-    "rail_snippet":  dict(size=11.5, weight="regular", track=0.0,    lh=1.25, color=("window_hi", 0.55)),
+    "rail_header":   dict(size=10.5, weight="medium",  track=0.10,   lh=1.0,  color=("window_hi", 0.55), upper=True),
     "collapsed_h":   dict(size=10.5, weight="medium",  track=0.10,   lh=1.0,  color=("window_hi", 0.55), upper=True),
+    "rail_count":    dict(size=10.5, weight="regular", track=0.0,    lh=1.0,  color=("gold", 1.0), mono=True),
+    "rail_title":    dict(size=12.5, weight="bold",    track=0.0,    lh=1.30, color=("window_hi", 1.0)),
+    "rail_title_quiet":dict(size=12.5, weight="medium",track=0.0,    lh=1.30, color=("window_hi", 0.78)),
+    "rail_snippet":  dict(size=11.5, weight="regular", track=0.0,    lh=1.40, color=("window_hi", 0.55)),
     # Chips / buttons
-    "chip":          dict(size=12.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.90)),
-    "button":        dict(size=12.5, weight="medium",  track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
+    "chip":          dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.80)),
+    "button":        dict(size=12.5, weight="medium",  track=0.0,    lh=1.0,  color=("window_hi", 0.70)),
+    "button_bold":   dict(size=12.5, weight="bold",    track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
     # Pull results
-    "result_date":   dict(size=11.5, weight="medium",  track=0.0,    lh=1.0,  color=("gold", 1.0), mono=True),
-    "result_title":  dict(size=13.0, weight="bold",    track=0.0,    lh=1.3,  color=("window_hi", 0.90)),
+    "result_date":   dict(size=11.5, weight="regular", track=0.04,   lh=1.0,  color=("gold", 1.0), mono=True),
+    "result_title":  dict(size=11.5, weight="bold",    track=0.0,    lh=1.0,  color=("window_hi", 0.90)),
     "result_quote":  dict(size=12.5, weight="regular", track=0.0,    lh=1.5,  color=("window_hi", 0.66)),
     # Footer / menu / mono
-    "footer_counter":dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.40), mono=True),
+    "footer_counter":dict(size=11.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.40), mono=True),
     "menu_item":     dict(size=13.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.90)),
-    "menu_shortcut": dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.40), mono=True),
+    "menu_shortcut": dict(size=11.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.40), mono=True),
     # Ask-bar / overlays
-    "ask_field":     dict(size=15.0, weight="regular", track=0.0,    lh=1.2,  color=("window_hi", 1.0)),
-    "ask_placeholder":dict(size=15.0, weight="regular",track=0.0,    lh=1.2,  color=("window_hi", 0.45)),
-    "toast":         dict(size=12.5, weight="medium",  track=0.0,    lh=1.0,  color=("window_hi", 0.90)),
-    "trace":         dict(size=12.0, weight="regular", track=0.0,    lh=1.0,  color=("jade_text", 1.0), mono=True),
-    "direction":     dict(size=13.0, weight="regular", track=0.0,    lh=1.4,  color=("window_hi", 0.90)),
+    "ask_field":     dict(size=15.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
+    "ask_placeholder":dict(size=15.0, weight="regular",track=0.0,    lh=1.0,  color=("window_hi", 0.40)),
+    "toast":         dict(size=12.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
+    "trace":         dict(size=12.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.80)),
+    "trace_file":    dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("jade_text", 1.0), mono=True),
+    "direction":     dict(size=13.0, weight="regular", track=0.0,    lh=1.45, color=("window_hi", 0.82)),
+    # Empty state
+    "empty_title":   dict(size=16.0, weight="medium",  track=-0.012, lh=1.2,  color=("window_hi", 1.0)),
+    "empty_desc":    dict(size=12.0, weight="regular", track=0.0,    lh=1.45, color=("window_hi", 0.50)),
+    # Window chrome
+    "win_title":     dict(size=12.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.75)),
 }
 
 

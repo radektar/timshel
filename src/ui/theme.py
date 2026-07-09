@@ -47,6 +47,7 @@ HEX = {
     "terracotta":         "#C24010",  # base (dark/native action)
     "terracotta_hover":   "#D9542A",  # hover / lit
     "terracotta_pressed": "#9A3009",  # pressed
+    "terra_txt":          "#E0633A",  # lit terracotta for text (hover, Cofnij)
     "terracotta_paper":   "#AC4B16",  # Poppy — paper/marketing only
     # Accent — jade (local).
     "jade":       "#46B17E",  # dark surface
