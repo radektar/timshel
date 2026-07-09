@@ -210,6 +210,56 @@ if _APPKIT_AVAILABLE:
                     center, 0.0, center, b.size.height * 1.25, 0
                 )
 
+    class _FilterItemView(NSView):
+        """View-based NSMenuItem for the rail filter (redesign A3).
+
+        Native NSMenu highlight is the system accent (blue); the redesign wants
+        terracotta (§02 gotcha). A view-based item paints its own terracotta bg
+        when its enclosing item is highlighted, plus a checkmark on the current
+        view and a right-aligned count (gold for 'Nowe').
+        """
+
+        def isFlipped(self):
+            return True
+
+        def drawRect_(self, _rect):
+            from AppKit import (
+                NSAttributedString,
+                NSFontAttributeName,
+                NSForegroundColorAttributeName,
+            )
+
+            b = self.bounds()
+            spec = getattr(self, "_spec", {})
+            item = self.enclosingMenuItem()
+            hot = item is not None and item.isHighlighted()
+
+            if hot:
+                _c(194, 64, 16).setFill()  # terracotta #C24010
+                NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    NSMakeRect(4, 3, b.size.width - 8, b.size.height - 6), 5.0, 5.0
+                ).fill()
+
+            def _draw(s, x, color, font, right=None):
+                a = NSAttributedString.alloc().initWithString_attributes_(
+                    s, {NSFontAttributeName: font, NSForegroundColorAttributeName: color}
+                )
+                px = x if right is None else right - a.size().width
+                a.drawAtPoint_(NSMakePoint(px, (b.size.height - a.size().height) / 2.0))
+
+            body = _c(255, 255, 255) if hot else _c(201, 187, 166)
+            if spec.get("checked"):
+                _draw("✓", 12.0, body, NSFont.systemFontOfSize_weight_(11.0, 0.0))
+            _draw(spec.get("label", ""), 28.0, body,
+                  NSFont.systemFontOfSize_weight_(12.5, 0.0))
+            n = spec.get("count", 0)
+            cnt_color = _c(255, 255, 255) if hot else (
+                _gold() if spec.get("is_new") else _c(140, 130, 115)
+            )
+            _draw(str(n), 0.0, cnt_color,
+                  NSFont.monospacedDigitSystemFontOfSize_weight_(11.0, 0.0),
+                  right=b.size.width - 14.0)
+
     class _SigilView(NSView):
         """The demoted constellation: a small static mark whose *shape* encodes
         the connection type (axis = contradiction, convergence = shared thread,
@@ -757,22 +807,8 @@ if _APPKIT_AVAILABLE:
             backdrop = _DarkBackground.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             bg.addSubview_(backdrop)
 
-            vis = self._deck.visible()
-            if self._deck.is_empty:
-                nav = "0 połączeń"
-            elif not vis:
-                nav = "—"
-            else:
-                pos = next(
-                    (k for k, (i, _conn) in enumerate(vis) if i == self._deck.active_index),
-                    -1,
-                )
-                nav = f"{pos + 1} z {len(vis)}" if pos >= 0 else f"{len(vis)} w widoku"
-            nav_label = _label(nav, 11.5, _muted())
-            nav_label.setFrame_(NSMakeRect(w - 200, 11, 180, 18))
-            nav_label.setAlignment_(2)
-            bg.addSubview_(nav_label)
-
+            # Position counter moved to the footer; the title-bar keeps only ⌕
+            # (redesign). ⌕ accessory is the next increment (title-bar rebuild).
             rail_h = h - _HEADER_H
             rail = self._build_rail(NSMakeRect(0, 0, _RAIL_W, rail_h))
             rail.setFrameOrigin_(NSMakePoint(0, _HEADER_H))
@@ -798,13 +834,14 @@ if _APPKIT_AVAILABLE:
 
             pad = 12.0
             cy = 13.0
-            head = _eyebrow("Połączenia", _muted())
-            head.setFrame_(NSMakeRect(pad, cy, 120, 14))
+            # Header row: "Podsunięte" (lit — active section) + "Nowe N ⌄" filter
+            # trigger (redesign A3: the triage segment becomes a header filter).
+            head = _typo_label(
+                "Podsunięte", "rail_header", NSMakeRect(pad, cy, 120, 14), wrapping=False
+            )
             view.addSubview_(head)
-            cy += 22
-
-            # Triage segmented control: Nowe / Zachowane / Odrzucone (+ counts).
-            cy = self._build_rail_segments(view, frame, cy) + 10
+            self._build_rail_filter(view, frame, cy)
+            cy += 30
 
             vis = self._deck.visible()
             if not vis:
@@ -824,7 +861,65 @@ if _APPKIT_AVAILABLE:
             self._recent_paths = []
             return view
 
+        _FILTER_LABELS = (("new", "Nowe"), ("kept", "Zachowane"), ("dismissed", "Odrzucone"))
+
         @objc.python_method
+        def _build_rail_filter(self, view, frame, cy):
+            """The 'Nowe N ⌄' trigger in the rail header → view-based NSMenu (A3)."""
+            from src.ui.hover import make_hover_button
+
+            cur = self._deck.view
+            label = dict(self._FILTER_LABELS).get(cur, "Nowe")
+            n = self._deck.counts().get(cur, 0)
+            tw = 100.0
+            tx = frame.size.width - 12.0 - tw
+            trig = make_hover_button(NSMakeRect(tx, cy - 3, tw, 20)) or (
+                NSButton.alloc().initWithFrame_(NSMakeRect(tx, cy - 3, tw, 20))
+            )
+            trig.setTitle_("")
+            trig.setBordered_(False)
+            trig.setTarget_(self)
+            trig.setAction_("railFilterClicked:")
+            lab = _typo_label(label, "collapsed_h", NSMakeRect(0, 3, 58, 14), wrapping=False)
+            trig.addSubview_(lab)
+            lw = _text_width(label.upper(), 10.5) + 6.0
+            cnt_style = "rail_count" if cur == "new" else "menu_shortcut"
+            cnt = _typo_label(str(n), cnt_style, NSMakeRect(lw, 3, 22, 14), wrapping=False)
+            trig.addSubview_(cnt)
+            car = _label("⌄", 11.0, _muted())
+            car.setFrame_(NSMakeRect(tw - 16, 1, 14, 14))
+            trig.addSubview_(car)
+            view.addSubview_(trig)
+
+        def railFilterClicked_(self, sender):
+            from AppKit import NSMenu, NSMenuItem
+
+            counts = self._deck.counts()
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+            for key, label in self._FILTER_LABELS:
+                it = NSMenuItem.alloc().init()
+                it.setTarget_(self)
+                it.setAction_("railFilterPicked:")
+                it.setRepresentedObject_(key)
+                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 210, 28))
+                v._spec = dict(
+                    label=label, count=counts.get(key, 0),
+                    checked=(key == self._deck.view), is_new=(key == "new"),
+                )
+                it.setView_(v)
+                menu.addItem_(it)
+            menu.popUpMenuPositioningItem_atLocation_inView_(
+                None, NSMakePoint(0, sender.frame().size.height + 2), sender
+            )
+
+        def railFilterPicked_(self, sender):
+            key = sender.representedObject()
+            if key:
+                self._deck.set_view(key)
+                self._reset_card_state()
+                self._render()
+
         def _build_rail_segments(self, view, frame, cy):
             """Hybrid triage segmented control (Claude Design redesign C1).
 
@@ -2014,6 +2109,22 @@ if _APPKIT_AVAILABLE:
             foot.addSubview_(tdiv)
 
             from src.ui import style
+
+            # Center position counter "N z M" (redesign: lives in the footer, not
+            # the title-bar, which keeps only ⌕).
+            vis = self._deck.visible()
+            if vis:
+                pos = next(
+                    (k for k, (i, _cn) in enumerate(vis) if i == self._deck.active_index),
+                    -1,
+                )
+                if pos >= 0:
+                    ctr = _typo_label(
+                        f"{pos + 1} z {len(vis)}", "footer_counter",
+                        NSMakeRect(frame.size.width / 2 - 50, 15, 100, 16), wrapping=False,
+                    )
+                    ctr.setAlignment_(1)
+                    foot.addSubview_(ctr)
 
             # Dismiss = ghost (hover brightens the label); Keep = jade pill, the
             # design's local/private affirmative.
