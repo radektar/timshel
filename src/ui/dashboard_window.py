@@ -1905,13 +1905,13 @@ if _APPKIT_AVAILABLE:
 
             selected = index in self._selected
             # Design C3: padding 12/14, cols [18px chk] 11 [text], radius 12.
-            PADX = 14.0
-            PADTOP = 12.0
-            BOX = 18.0
+            PADX = 12.0
+            PADTOP = 11.0
+            BOX = 16.0
             COLGAP = 11.0
-            text_x = PADX + BOX + COLGAP  # 43
+            text_x = PADX + BOX + COLGAP  # 39
             text_w = inner_w - text_x - PADX
-            th = _measure_height(text, 15.0, text_w)
+            th = _typo_measure(text, "direction", text_w)
             row_h = max(46.0, PADTOP * 2 + th)
             frame = NSMakeRect(_READER_PAD_X, cy, inner_w, row_h)
             btn = make_hover_button(frame) or NSButton.alloc().initWithFrame_(frame)
@@ -1951,12 +1951,22 @@ if _APPKIT_AVAILABLE:
                 chk.setAlignment_(1)
                 btn.addSubview_(chk)
 
-            line = _wrapping_label(
-                text,
-                15.0,
-                _c(250, 243, 226) if selected else _c(201, 187, 166),
+            line = _typo_label(
+                text, "direction",
                 NSMakeRect(text_x, PADTOP, text_w, row_h - PADTOP * 2 + 4),
             )
+            if selected:  # 'on' → lit to full white
+                from AppKit import (
+                    NSAttributedString,
+                    NSFontAttributeName,
+                    NSForegroundColorAttributeName,
+                    NSParagraphStyleAttributeName,
+                )
+                from src.ui import typography as _T
+                at = _T.attributes("direction", color_alpha=1.0)
+                line.setAttributedStringValue_(
+                    NSAttributedString.alloc().initWithString_attributes_(text, at)
+                )
             btn.addSubview_(line)
             doc.addSubview_(btn)
             return cy + row_h + 9
@@ -2221,13 +2231,14 @@ if _APPKIT_AVAILABLE:
             btn.setTag_(int(index))
             btn.setWantsLayer_(True)
             if btn.layer() is not None:
-                btn.layer().setCornerRadius_(13)
+                # radius 6 (native macOS feel — NOT a pill) per the redline.
+                btn.layer().setCornerRadius_(_R_CONTROL)
                 btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
                 btn.layer().setBorderWidth_(1.0)
-                btn.layer().setBorderColor_(_c(255, 255, 255, 0.12).CGColor())
+                btn.layer().setBorderColor_(_c(255, 255, 255, 0.14).CGColor())
             btn.setAttributedTitle_(
                 NSAttributedString.alloc().initWithString_attributes_(
-                    "◇ " + text + "  ↗", {NSForegroundColorAttributeName: _c(216, 203, 180)}
+                    "◇ " + text + "  ↗", {NSForegroundColorAttributeName: _c(224, 213, 191)}
                 )
             )
             btn.setFont_(NSFont.systemFontOfSize_(11.5))
