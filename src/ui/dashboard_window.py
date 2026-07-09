@@ -1006,15 +1006,15 @@ if _APPKIT_AVAILABLE:
                 div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
             view.addSubview_(div)
 
-            # The ask-bar occupies the top strip in every state; content scrolls below.
-            top = _ASKBAR_H
+            # Stały ask-bar cut per redesign (changelog): the pull entry moves to
+            # the ⌥Space overlay (ekran C) + ⌕ in the title-bar; the reader
+            # content now starts directly under the native titlebar. In Pytanie
+            # the question becomes the reader title, not a field.
+            top = 0.0
             if self._mode == "recall":
                 self._build_recall_reader(view, frame, top)
             else:
                 self._build_insight_reader(view, frame, top)
-
-            # Added last so the ask-bar stays on top and clickable in every state.
-            self._build_askbar(view, NSMakeRect(0, 0, frame.size.width, top))
             return view
 
         @objc.python_method
