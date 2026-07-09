@@ -1749,19 +1749,89 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def focusRecall(self, prefill=None):
-            """The hotkey entry: bring the window forward and focus the ask-bar (and,
-            if given, run a query straight away). Reuses the always-present ask-bar
-            rather than a separate spotlight panel."""
-            self._ensure_window()
+            """Recall entry (⌃⌥Space / ⌕): show the ask-bar overlay (screen C).
+
+            The persistent in-window strip was cut in the redesign; the pull entry
+            is now a floating NSPanel overlay. A prefill runs the query straight
+            away (the 'Zapytaj o to' path) instead of opening the field.
+            """
             if prefill:
+                self._ensure_window()
                 self._run_recall(prefill)
-            self.showWindow()
-            fld = getattr(self, "_ask_field", None)
-            if fld is not None and self._window is not None:
-                try:
-                    self._window.makeFirstResponder_(fld)
-                except Exception:  # pragma: no cover - defensive
-                    pass
+                self.showWindow()
+                return
+            self.showAskOverlay()
+
+        @objc.python_method
+        def showAskOverlay(self):
+            """Present the ask-bar overlay (redesign C): a borderless floating
+            NSPanel with a dark rounded field + terracotta focus ring."""
+            from AppKit import (
+                NSPanel, NSColor, NSTextField, NSFloatingWindowLevel,
+                NSBackingStoreBuffered, NSAttributedString,
+                NSForegroundColorAttributeName, NSFontAttributeName,
+            )
+
+            self._ensure_window()  # results land in the window; keep it realised
+            W, FLD_H = 560.0, 52.0
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, W, FLD_H + 24), 1 << 7, NSBackingStoreBuffered, False
+            )
+            panel.setLevel_(NSFloatingWindowLevel)
+            panel.setOpaque_(False)
+            panel.setBackgroundColor_(NSColor.clearColor())
+            panel.setHasShadow_(True)
+            panel.setHidesOnDeactivate_(True)
+
+            container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, FLD_H + 24))
+            container.setWantsLayer_(True)
+            if container.layer() is not None:
+                container.layer().setCornerRadius_(10.0)
+                container.layer().setBackgroundColor_(_c(32, 30, 40, 0.98).CGColor())
+                container.layer().setBorderWidth_(3.0)
+                container.layer().setBorderColor_(_c(217, 84, 42, 0.18).CGColor())
+            panel.setContentView_(container)
+
+            fld = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(18, 12, W - 36, FLD_H)
+            )
+            fld.setBordered_(False)
+            fld.setBezeled_(False)
+            fld.setDrawsBackground_(False)
+            fld.setFocusRingType_(1)  # NSFocusRingTypeNone — the ring is on the container
+            fld.setTextColor_(_c(250, 243, 226))
+            ph = NSAttributedString.alloc().initWithString_attributes_(
+                "Zapytaj swój korpus…",
+                {
+                    NSForegroundColorAttributeName: _c(250, 243, 226, 0.4),
+                    NSFontAttributeName: NSFont.systemFontOfSize_weight_(15.0, 0.0),
+                },
+            )
+            fld.setPlaceholderAttributedString_(ph)
+            fld.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.0))
+            fld.setTarget_(self)
+            fld.setAction_("askOverlaySubmitted:")
+            container.addSubview_(fld)
+            self._ask_overlay = panel
+            self._ask_overlay_field = fld
+
+            panel.center()
+            panel.makeKeyAndOrderFront_(None)
+            panel.makeFirstResponder_(fld)
+
+        def askOverlaySubmitted_(self, sender):
+            try:
+                text = str(sender.stringValue()).strip()
+            except Exception:  # pragma: no cover - defensive
+                text = ""
+            panel = getattr(self, "_ask_overlay", None)
+            if panel is not None:
+                panel.orderOut_(None)
+                self._ask_overlay = None
+            if text:
+                self._ensure_window()
+                self._run_recall(text)
+                self.showWindow()
 
         @objc.python_method
         def _build_reader_content(self, reader_w, conn):
