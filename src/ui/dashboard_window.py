@@ -1837,9 +1837,12 @@ if _APPKIT_AVAILABLE:
                 wrapping=False,
             )
             doc.addSubview_(tlabel)
+            # Right-side marker (A6): "digest dd.mm · z chmury" — the to-cloud
+            # provenance chip, NOT the beta.17 "✦ Nowy insight" badge.
+            marker = getattr(self._deck, "digest_label", None) or "z chmury"
             eye = _typo_label(
-                "✦ Nowy insight", "eyebrow",
-                NSMakeRect(reader_w - 190, cy + 12, 166, 14), wrapping=False,
+                "✦ " + marker, "cloud_chip",
+                NSMakeRect(reader_w - 230, cy + 12, 206, 14), wrapping=False,
             )
             eye.setAlignment_(2)
             doc.addSubview_(eye)
@@ -2272,7 +2275,9 @@ if _APPKIT_AVAILABLE:
         def _chip(self, text, origin, index):
             from AppKit import NSAttributedString, NSForegroundColorAttributeName
 
-            w = min(240.0, 22.0 + 7.0 * len(text))
+            # dot inset (~20) + glyphs + trailing " ↗" (~18); cap keeps long
+            # basenames truncating instead of eating the row.
+            w = min(260.0, 38.0 + 7.0 * len(text))
             btn = NSButton.alloc().initWithFrame_(
                 NSMakeRect(origin.x, origin.y, w, 26)
             )
@@ -2287,12 +2292,25 @@ if _APPKIT_AVAILABLE:
                 btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
                 btn.layer().setBorderWidth_(1.0)
                 btn.layer().setBorderColor_(_c(255, 255, 255, 0.14).CGColor())
+            # Redline .nchip: 5pt terracotta dot (not the beta.17 ◇ glyph),
+            # label body .8, trailing ↗.
+            dot = NSView.alloc().initWithFrame_(NSMakeRect(9, 10.5, 5, 5))
+            dot.setWantsLayer_(True)
+            if dot.layer() is not None:
+                dot.layer().setCornerRadius_(2.5)
+                dot.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
+            btn.addSubview_(dot)
             btn.setAttributedTitle_(
                 NSAttributedString.alloc().initWithString_attributes_(
-                    "◇ " + text + "  ↗", {NSForegroundColorAttributeName: _c(224, 213, 191)}
+                    "      " + text + "  ↗",
+                    {NSForegroundColorAttributeName: _c(224, 213, 191)},
                 )
             )
             btn.setFont_(NSFont.systemFontOfSize_(11.5))
+            try:  # left-align so the label sits right of the 5pt dot (redline)
+                btn.cell().setAlignment_(0)
+            except Exception:  # pragma: no cover - defensive
+                pass
             btn.setToolTip_("Otwórz w Obsidian: " + text)
             return btn
 

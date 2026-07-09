@@ -181,7 +181,11 @@ class InsightDeck:
         connections: Optional[List[InsightConnection]] = None,
         *,
         triage: Optional[Dict[str, str]] = None,
+        digest_label: Optional[str] = None,
     ) -> None:
+        #: Right-side eyebrow marker, e.g. "digest 09.07 · z chmury" (redesign
+        #: A6). None → the window falls back to a generic cloud marker.
+        self.digest_label = digest_label
         self._items: List[InsightConnection] = list(connections or [])
         self._state: List[str] = []
         for conn in self._items:

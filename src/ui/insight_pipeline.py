@@ -120,4 +120,13 @@ def latest_deck() -> Optional[im.InsightDeck]:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("could not seed triage state: %s", exc)
     deck = deck_from_dicts(conns, triage=triage)
+    # Eyebrow marker (A6): "digest dd.mm · z chmury", date parsed from the
+    # digest note filename ("YYYY-MM-DD Synthesis[…].md").
+    digest_name = data.get("digest", "") if isinstance(data, dict) else ""
+    label = None
+    if digest_name[:10].count("-") == 2:
+        y, m, d = digest_name[:10].split("-")
+        if m.isdigit() and d.isdigit():
+            label = f"digest {d}.{m} · z chmury"
+    deck.digest_label = label or "z chmury"
     return deck if not deck.is_empty else None
