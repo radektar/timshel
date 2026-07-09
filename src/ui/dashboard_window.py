@@ -445,6 +445,55 @@ if _APPKIT_AVAILABLE:
         field.setFrame_(frame)
         return field
 
+    def _hairline():
+        """1 physical device pixel (spec §05): 0.5pt on Retina, 1pt @1x."""
+        try:
+            from AppKit import NSScreen
+
+            scr = NSScreen.mainScreen()
+            return 1.0 / (scr.backingScaleFactor() if scr else 2.0)
+        except Exception:  # pragma: no cover - defensive
+            return 0.5
+
+    def _reduce_motion():
+        """prefers-reduced-motion (spec §04): cuts instead of slides."""
+        try:
+            from AppKit import NSWorkspace
+
+            return bool(
+                NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+            )
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    def _slide_in(view, dy, dur, ease_pts=(0.4, 0.0, 0.2, 1.0)):
+        """opacity 0→1 + translation.y dy→0 (spec §04). Reduce-motion → cut."""
+        layer = view.layer() if view.wantsLayer() else None
+        if layer is None or _reduce_motion():
+            return  # state is already final — the cut
+        try:
+            from Quartz import (
+                CAAnimationGroup,
+                CABasicAnimation,
+                CAMediaTimingFunction,
+            )
+
+            o = CABasicAnimation.animationWithKeyPath_("opacity")
+            o.setFromValue_(0.0)
+            o.setToValue_(1.0)
+            t = CABasicAnimation.animationWithKeyPath_("transform.translation.y")
+            t.setFromValue_(dy)
+            t.setToValue_(0.0)
+            g = CAAnimationGroup.animation()
+            g.setAnimations_([o, t])
+            g.setDuration_(dur)
+            g.setTimingFunction_(
+                CAMediaTimingFunction.functionWithControlPoints____(*ease_pts)
+            )
+            layer.addAnimation_forKey_(g, "slideIn")
+        except Exception:  # pragma: no cover - animation is decoration
+            pass
+
     def _typo_width(text, style):
         """Rendered width of ``text`` in ``style`` (kern-aware)."""
         from AppKit import NSAttributedString
@@ -982,7 +1031,7 @@ if _APPKIT_AVAILABLE:
                     tbar.setWantsLayer_(True)
                     if tbar.layer() is not None:
                         tbar.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
-                        tbar.layer().setCornerRadius_(1.25)
+                        tbar.layer().setCornerRadius_(2.0)
                     row.addSubview_(tbar)
                     q = _typo_label(
                         self._query, "rail_title",
@@ -1124,12 +1173,12 @@ if _APPKIT_AVAILABLE:
             if active:
                 # Gold bar = the insight role; the TITLE stays full white.
                 bar = NSView.alloc().initWithFrame_(
-                    NSMakeRect(1, 11, 2.5, frame.size.height - 22)
+                    NSMakeRect(1, 8, 2.5, frame.size.height - 16)
                 )
                 bar.setWantsLayer_(True)
                 if bar.layer() is not None:
                     bar.layer().setBackgroundColor_(_gold().CGColor())
-                    bar.layer().setCornerRadius_(1.25)
+                    bar.layer().setCornerRadius_(2.0)
                 btn.addSubview_(bar)
 
             # Redline: padding 9×8, sigil 18, title 12.5/700 (1 line, truncated),
@@ -1178,7 +1227,7 @@ if _APPKIT_AVAILABLE:
         @objc.python_method
         def _build_reader(self, frame):
             view = _DashFlippedView.alloc().initWithFrame_(frame)
-            div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 1, frame.size.height))
+            div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, _hairline(), frame.size.height))
             div.setWantsLayer_(True)
             if div.layer() is not None:
                 div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
@@ -1213,6 +1262,8 @@ if _APPKIT_AVAILABLE:
                 return
 
             has_sel = bool(self._selected)
+            if not has_sel:
+                self._handoff_bar_shown = False  # next reveal animates again
             bar_h = _BAR_H if has_sel else 0.0
             scroll_h = frame.size.height - _FOOTER_H - bar_h - top
 
@@ -1429,7 +1480,7 @@ if _APPKIT_AVAILABLE:
                 doc.addSubview_(meta)
                 cy += 22
 
-            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 1))
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
                 rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
@@ -1484,7 +1535,7 @@ if _APPKIT_AVAILABLE:
         def _build_escalation(self, doc, cy, inner_w, reader_w):
             # The one LLM door: explicit, gold, and honest that excerpts leave the Mac.
             cy += 8
-            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 1))
+            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
                 rule.layer().setBackgroundColor_(_c(214, 176, 51, 0.22).CGColor())
@@ -1500,7 +1551,7 @@ if _APPKIT_AVAILABLE:
                 return cy
             btn = _pill_button(
                 "✦ Zsyntetyzuj te wyniki", NSMakeRect(_READER_PAD_X, cy, 214, 30),
-                _gold(), _c(214, 176, 51, 0.14), _c(214, 176, 51, 0.55),
+                _c(244, 221, 142), _c(214, 176, 51, 0.08), _c(214, 176, 51, 0.5),
                 self, "synthesizeClicked:", 13.0)
             doc.addSubview_(btn)
             note = _label("Tylko teraz fragmenty świadomie opuszczają Maca.", 11.5, _c(140, 130, 115))
@@ -1553,7 +1604,7 @@ if _APPKIT_AVAILABLE:
 
             save = _pill_button(
                 "⤓ Zapisz do notatek", NSMakeRect(_READER_PAD_X, cy + 6, 170, 28),
-                _cream(), _terra_deep(), _terra_deep(), self, "saveAnswerClicked:", 12.5)
+                _c(255, 255, 255), _terra_deep(), _terra_deep(), self, "saveAnswerClicked:", 12.5)
             doc.addSubview_(save)
             cy += 46
             return cy
@@ -1634,7 +1685,7 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(ql)
             cy += qh + 12
 
-            sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, 1))
+            sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, _hairline()))
             sep.setWantsLayer_(True)
             if sep.layer() is not None:
                 sep.layer().setBackgroundColor_(_c(255, 255, 255, 0.055).CGColor())
@@ -2023,7 +2074,7 @@ if _APPKIT_AVAILABLE:
 
             # divider
             rule = NSView.alloc().initWithFrame_(
-                NSMakeRect(_READER_PAD_X, cy, inner_w, 1)
+                NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline())
             )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
@@ -2154,11 +2205,13 @@ if _APPKIT_AVAILABLE:
             bar = _DashFlippedView.alloc().initWithFrame_(frame)
             bar.setWantsLayer_(True)
             if bar.layer() is not None:
-                bar.layer().setBackgroundColor_(_c(40, 22, 16, 0.62).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, 1))
+                # Redline E: bg rgba(0,0,0,.22) + white .08 hairline on top (the
+                # old terracotta-tinted strip was beta.17).
+                bar.layer().setBackgroundColor_(_c(0, 0, 0, 0.22).CGColor())
+            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
-                tdiv.layer().setBackgroundColor_(_c(224, 99, 58, 0.24).CGColor())
+                tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
             bar.addSubview_(tdiv)
 
             from src.ui import style
@@ -2173,18 +2226,12 @@ if _APPKIT_AVAILABLE:
                 tool = "claude"
             name = ho.tool_name(tool)
 
-            # Secondary actions: compact, icon-only with tooltips (a quiet cluster
-            # set apart from the one strong CTA by silence, not size).
-            secondary = (
-                ("checklist", "Utwórz zadanie", "taskClicked:"),
-                ("calendar", "Dodaj do kalendarza", "calendarClicked:"),
-                ("doc.on.doc", "Kopiuj do schowka", "copyClicked:"),
-            )
+            # Secondary actions live behind ONE ⋯ menu (redesign changelog cut:
+            # 'klaster 3 ikon zawsze → menu ⋯ + jeden split-CTA').
             ICON_W = 34.0
-            ICON_GAP = 6.0
             CARET_W = 28.0
             GAP_CLUSTER = 16.0
-            sec_w = len(secondary) * ICON_W + (len(secondary) - 1) * ICON_GAP
+            sec_w = ICON_W
 
             def _cta_width(label):
                 # lead pad + white brand chip + gap + measured text + trail pad
@@ -2196,8 +2243,15 @@ if _APPKIT_AVAILABLE:
             # Measured, right-anchored layout; degrade so the actions never clip:
             # drop the provider name from the CTA, then drop the status label.
             avail = frame.size.width - 2 * pad
-            cnt = "1 kierunek wybrany" if n == 1 else f"{n} kierunki wybrane"
-            label_w = _text_width(cnt, 12.5)
+            # PL plurals per the redline: 1 kierunek · 2–4 kierunki · 5+ kierunków.
+            if n == 1:
+                cnt = "1 kierunek wybrany"
+            elif 2 <= n <= 4:
+                cnt = f"{n} kierunki wybrane"
+            else:
+                cnt = f"{n} kierunków wybranych"
+            cnt_cloud = "   ✦ do chmury"
+            label_w = _text_width(cnt, 12.5) + _text_width(cnt_cloud, 10.5) + 10
             cta_label = "Kontynuuj w " + name
             cta_w = _cta_width(cta_label)
             show_label = True
@@ -2208,11 +2262,18 @@ if _APPKIT_AVAILABLE:
                 show_label = False
 
             if show_label:
-                lab = _label(cnt, 12.5, _c(240, 224, 200))
+                lab = _label(cnt, 12.0, _c(250, 243, 226, 0.6))
+                cw_ = _text_width(cnt, 12.0) + 6
                 lab.setFrame_(
-                    NSMakeRect(pad, frame.size.height / 2 - 8, label_w + 4, 16)
+                    NSMakeRect(pad, frame.size.height / 2 - 8, cw_, 16)
                 )
                 bar.addSubview_(lab)
+                cloud = _typo_label(
+                    "✦ do chmury", "cloud_chip",
+                    NSMakeRect(pad + cw_ + 10, frame.size.height / 2 - 7, 140, 14),
+                    wrapping=False,
+                )
+                bar.addSubview_(cloud)
 
             x = max(pad, frame.size.width - pad - _cluster_width(cta_w))
 
@@ -2271,18 +2332,21 @@ if _APPKIT_AVAILABLE:
             bar.addSubview_(caret)
             bar.addSubview_(seam)
 
+            # ⋯ menu = the former 3-icon cluster (task · calendar · clipboard).
             sx = x + cta_w + CARET_W + GAP_CLUSTER
-            for symbol, tip, sel in secondary:
-                b = _icon_button(
-                    style.sf_symbol(symbol, point=15.0, weight="regular"),
-                    tip,
-                    NSMakeRect(sx, BTN_Y, ICON_W, CTA_H),
-                    _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                    self, sel,
-                )
-                bar.addSubview_(b)
-                sx += ICON_W + ICON_GAP
+            more = _icon_button(
+                style.sf_symbol("ellipsis", point=15.0, weight="regular"),
+                "Akcje wtórne (zadanie · kalendarz · schowek)",
+                NSMakeRect(sx, BTN_Y, ICON_W, CTA_H),
+                _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                self, "handoffMoreClicked:",
+            )
+            bar.addSubview_(more)
             view.addSubview_(bar)
+            # Reveal slide (spec §04): only on the 0→≥1 transition, not rebuilds.
+            if not getattr(self, "_handoff_bar_shown", False):
+                _slide_in(bar, 10.0, 0.15)
+            self._handoff_bar_shown = True
 
         @objc.python_method
         def _build_footer(self, view, frame):
@@ -2290,7 +2354,7 @@ if _APPKIT_AVAILABLE:
             foot.setWantsLayer_(True)
             if foot.layer() is not None:
                 foot.layer().setBackgroundColor_(_c(16, 14, 21, 0.86).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, 1))
+            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
                 tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
@@ -2469,6 +2533,29 @@ if _APPKIT_AVAILABLE:
 
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
+
+        def handoffMoreClicked_(self, sender):
+            """⋯ menu — the secondary handoff actions (redesign E3)."""
+            from AppKit import NSMenu, NSMenuItem
+
+            items = (
+                ("Utwórz zadanie", "taskClicked:"),
+                ("Dodaj do kalendarza", "calendarClicked:"),
+                ("Kopiuj do schowka", "copyClicked:"),
+            )
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+            for label, sel in items:
+                it = NSMenuItem.alloc().init()
+                it.setTarget_(self)
+                it.setAction_(sel)
+                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 28))
+                v._spec = dict(label=label, count="", checked=False, is_new=False)
+                it.setView_(v)
+                menu.addItem_(it)
+            menu.popUpMenuPositioningItem_atLocation_inView_(
+                None, NSMakePoint(0, sender.frame().size.height + 2), sender
+            )
 
         def taskClicked_(self, sender):
             self._do_handoff(ho.TASK)
