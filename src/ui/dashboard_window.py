@@ -801,6 +801,39 @@ if _APPKIT_AVAILABLE:
                 )
             except Exception:  # pragma: no cover - cosmetic
                 pass
+            # Title-bar keeps ONLY ⌕ on the right (redesign): a native accessory
+            # button that opens the ask-bar overlay (screen C).
+            try:
+                from AppKit import (
+                    NSTitlebarAccessoryViewController,
+                    NSLayoutAttributeRight,
+                )
+                from src.ui import style as _style
+
+                acc_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 36, 28))
+                btn = NSButton.alloc().initWithFrame_(NSMakeRect(4, 4, 26, 20))
+                btn.setBordered_(False)
+                btn.setTitle_("")
+                img = _style.sf_symbol("magnifyingglass", point=13.0, weight="regular")
+                if img is not None:
+                    btn.setImage_(img)
+                    try:
+                        btn.setContentTintColor_(_c(250, 243, 226, 0.55))
+                    except Exception:  # pragma: no cover
+                        pass
+                else:  # pragma: no cover - symbol fallback
+                    btn.setTitle_("⌕")
+                btn.setTarget_(self)
+                btn.setAction_("titlebarAskClicked:")
+                btn.setToolTip_("Zapytaj swój korpus (⌃⌥Space)")
+                acc_view.addSubview_(btn)
+                acc = NSTitlebarAccessoryViewController.alloc().init()
+                acc.setView_(acc_view)
+                acc.setLayoutAttribute_(NSLayoutAttributeRight)
+                win.addTitlebarAccessoryViewController_(acc)
+            except Exception as exc:  # pragma: no cover - cosmetic
+                logger.debug("titlebar ⌕ accessory skipped: %s", exc)
+
             win.center()
             self._window = win
             self._render()
@@ -888,32 +921,115 @@ if _APPKIT_AVAILABLE:
 
             pad = 12.0
             cy = 13.0
-            # Header row: "Podsunięte" (lit — active section) + "Nowe N ⌄" filter
-            # trigger (redesign A3: the triage segment becomes a header filter).
-            head = _typo_label(
-                "Podsunięte", "rail_header", NSMakeRect(pad, cy, 120, 14), wrapping=False
-            )
-            view.addSubview_(head)
-            self._build_rail_filter(view, frame, cy)
-            cy += 30
+            in_recall = self._mode == "recall"
 
-            vis = self._deck.visible()
-            if not vis:
-                empty = _label("—", 11, _c(111, 102, 90))
-                empty.setFrame_(NSMakeRect(pad + 2, cy + 2, frame.size.width - 2 * pad, 14))
-                view.addSubview_(empty)
-                cy += _ROW_H
-            for i, conn in vis:
-                self._add_rail_row(
-                    view, conn, i, NSMakeRect(8, cy, frame.size.width - 16, _ROW_H - 6)
+            if not in_recall:
+                # Przegląd: "Podsunięte" lit + "Nowe N ⌄" filter; rows; the
+                # collapsed "Zapytałeś ›" switcher at the bottom (B5 — section
+                # headers ARE the mode switch).
+                head = _typo_label(
+                    "Podsunięte", "rail_header", NSMakeRect(pad, cy, 120, 14),
+                    wrapping=False,
                 )
-                cy += _ROW_H
+                view.addSubview_(head)
+                self._build_rail_filter(view, frame, cy)
+                cy += 30
 
-            # "Ostatnie transkrypty" cut per redesign (redesign-changelog):
-            # the rail holds Podsunięte + collapsed Zapytałeś only; recents move
-            # out of the window. Handler kept as a no-op via an empty path list.
-            self._recent_paths = []
+                vis = self._deck.visible()
+                if not vis:
+                    empty = _label("—", 11, _c(111, 102, 90))
+                    empty.setFrame_(
+                        NSMakeRect(pad + 2, cy + 2, frame.size.width - 2 * pad, 14)
+                    )
+                    view.addSubview_(empty)
+                    cy += _ROW_H
+                for i, conn in vis:
+                    self._add_rail_row(
+                        view, conn, i,
+                        NSMakeRect(8, cy, frame.size.width - 16, _ROW_H - 6),
+                    )
+                    cy += _ROW_H
+
+                self._add_collapsed_header(
+                    view, frame, frame.size.height - 40, "Zapytałeś",
+                    "collapsedAskClicked:",
+                )
+            else:
+                # Pytanie: collapsed "Podsunięte N ›" on top (click → back to
+                # Przegląd), then the lit "Zapytałeś" section with the current
+                # query as the active entry (terracotta bar — the user's action).
+                n = self._deck.counts().get("new", 0)
+                self._add_collapsed_header(
+                    view, frame, cy - 4, f"Podsunięte   {n}",
+                    "backToInsightsClicked:",
+                )
+                cy += 30
+                head = _typo_label(
+                    "Zapytałeś", "rail_header", NSMakeRect(pad, cy, 140, 14),
+                    wrapping=False,
+                )
+                view.addSubview_(head)
+                cy += 24
+                if self._query:
+                    row = NSView.alloc().initWithFrame_(
+                        NSMakeRect(8, cy, frame.size.width - 16, 40)
+                    )
+                    row.setWantsLayer_(True)
+                    if row.layer() is not None:
+                        row.layer().setCornerRadius_(8.0)
+                        row.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                    tbar = NSView.alloc().initWithFrame_(NSMakeRect(1, 8, 2.5, 24))
+                    tbar.setWantsLayer_(True)
+                    if tbar.layer() is not None:
+                        tbar.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
+                        tbar.layer().setCornerRadius_(1.25)
+                    row.addSubview_(tbar)
+                    q = _typo_label(
+                        self._query, "rail_title",
+                        NSMakeRect(12, 5, frame.size.width - 16 - 20, 30),
+                    )
+                    q.setMaximumNumberOfLines_(2)
+                    try:
+                        q.cell().setTruncatesLastVisibleLine_(True)
+                    except Exception:  # pragma: no cover
+                        pass
+                    row.addSubview_(q)
+                    view.addSubview_(row)
+
+            self._recent_paths = []  # recents cut per redesign; handler no-ops
             return view
+
+        @objc.python_method
+        def _add_collapsed_header(self, view, frame, y, label, action):
+            """Collapsed section header '{LABEL} ›' — the mode switch (B5)."""
+            from src.ui.hover import make_hover_button
+
+            btn = make_hover_button(NSMakeRect(8, y, frame.size.width - 16, 24)) or (
+                NSButton.alloc().initWithFrame_(
+                    NSMakeRect(8, y, frame.size.width - 16, 24)
+                )
+            )
+            btn.setTitle_("")
+            btn.setBordered_(False)
+            btn.setTarget_(self)
+            btn.setAction_(action)
+            if btn.layer() is not None:
+                btn.layer().setCornerRadius_(5.0)
+            lab = _typo_label(
+                label, "collapsed_h",
+                NSMakeRect(6, 5, frame.size.width - 44, 14), wrapping=False,
+            )
+            btn.addSubview_(lab)
+            car = _label("›", 11.0, _muted())
+            car.setFrame_(NSMakeRect(frame.size.width - 34, 4, 14, 15))
+            btn.addSubview_(car)
+            view.addSubview_(btn)
+
+        def collapsedAskClicked_(self, _sender):
+            # Enter Pytanie via the rail switcher: no query yet → the reader
+            # shows the ask prompt state; the overlay is the typing surface.
+            self._mode = "recall"
+            self._render()
 
         _FILTER_LABELS = (("new", "Nowe"), ("kept", "Zachowane"), ("dismissed", "Odrzucone"))
 
@@ -1138,7 +1254,10 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_recall_reader(self, view, frame, top):
-            scroll_h = frame.size.height - _FOOTER_H - top
+            # The triage footer DOES NOT EXIST in Pytanie mode (redesign B) —
+            # the mistake disappears from the architecture, not behind an `if`
+            # on the buttons: the reader owns the full height here.
+            scroll_h = frame.size.height - top
             scroll = NSScrollView.alloc().initWithFrame_(
                 NSMakeRect(0, top, frame.size.width, scroll_h)
             )
@@ -1151,9 +1270,6 @@ if _APPKIT_AVAILABLE:
             scroll.setDocumentView_(doc)
             self._scroll = scroll
             view.addSubview_(scroll)
-            self._build_footer(
-                view, NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H)
-            )
 
         # -- ask-bar (pull entry) + recall results (no LLM) ------------------ #
 
@@ -1288,7 +1404,8 @@ if _APPKIT_AVAILABLE:
 
             if vm is None:
                 lbl = _wrapping_label(
-                    "Zadaj pytanie powyżej — przeszukam Twoje notatki lokalnie.",
+                    "Zapytaj swój korpus — ⌃⌥Space albo ⌕ w pasku tytułu. "
+                    "Przeszukam Twoje notatki lokalnie.",
                     15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 26))
                 doc.addSubview_(lbl)
                 cy += 34
@@ -1803,6 +1920,9 @@ if _APPKIT_AVAILABLE:
             panel.center()
             panel.makeKeyAndOrderFront_(None)
             panel.makeFirstResponder_(fld)
+
+        def titlebarAskClicked_(self, _sender):
+            self.showAskOverlay()
 
         def askOverlaySubmitted_(self, sender):
             try:
