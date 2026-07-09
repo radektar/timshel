@@ -88,7 +88,7 @@ _READER_PAD_X = 24.0
 # Thesis reading measure — handoff ".thesis max 30em" (em = the 24pt font-size).
 # Tunable pending the Claude Design redline; caps the line length on wide windows.
 _THESIS_MEASURE = 30.0 * 24.0
-_ROW_H = 58.0
+_ROW_H = 78.0  # rail row step: 72pt row (9+16+2 + snippet 2 lines + 9) + 6 gap
 _FOOTER_H = 46.0
 _BAR_H = 48.0
 _ASKBAR_H = 56.0  # pull entry strip under the header (recall — Faza 3)
@@ -404,6 +404,20 @@ if _APPKIT_AVAILABLE:
         field.setSelectable_(False)
         field.setFrame_(frame)
         return field
+
+    def _typo_width(text, style):
+        """Rendered width of ``text`` in ``style`` (kern-aware)."""
+        from AppKit import NSAttributedString
+        from src.ui import typography as _T
+
+        s = (text or "")
+        if _T.is_upper(style):
+            s = s.upper()
+        attrs = _T.attributes(style)
+        if attrs is None:
+            return 7.0 * len(s)
+        a = NSAttributedString.alloc().initWithString_attributes_(s, attrs)
+        return float(a.size().width)
 
     def _typo_measure(text, style, width):
         """Wrap height for ``text`` in ``style`` at ``width`` (kern+leading aware)."""
@@ -871,23 +885,35 @@ if _APPKIT_AVAILABLE:
             cur = self._deck.view
             label = dict(self._FILTER_LABELS).get(cur, "Nowe")
             n = self._deck.counts().get(cur, 0)
-            tw = 100.0
+            cnt_style = "rail_count" if cur == "new" else "menu_shortcut"
+            # Kern-aware measured layout: [label] 6 [count] 5 [⌄], padded 6 each
+            # side; trigger 22pt tall, radius 5 (redline).
+            # NSTextField draws with ~2pt internal inset per side — measured
+            # widths get +5 slack so the label never truncates ("NOWE"→"NOW").
+            SLACK = 5.0
+            lw = _typo_width(label, "collapsed_h") + SLACK
+            cw = _typo_width(str(n), cnt_style) + SLACK
+            PADS, GAP1, GAP2, CARW = 6.0, 5.0, 4.0, 12.0
+            tw = PADS + lw + GAP1 + cw + GAP2 + CARW + PADS
             tx = frame.size.width - 12.0 - tw
-            trig = make_hover_button(NSMakeRect(tx, cy - 3, tw, 20)) or (
-                NSButton.alloc().initWithFrame_(NSMakeRect(tx, cy - 3, tw, 20))
+            trig = make_hover_button(NSMakeRect(tx, cy - 4, tw, 22)) or (
+                NSButton.alloc().initWithFrame_(NSMakeRect(tx, cy - 4, tw, 22))
             )
             trig.setTitle_("")
             trig.setBordered_(False)
             trig.setTarget_(self)
             trig.setAction_("railFilterClicked:")
-            lab = _typo_label(label, "collapsed_h", NSMakeRect(0, 3, 58, 14), wrapping=False)
+            if trig.layer() is not None:
+                trig.layer().setCornerRadius_(5.0)
+            x = PADS
+            lab = _typo_label(label, "collapsed_h", NSMakeRect(x, 4, lw, 14), wrapping=False)
             trig.addSubview_(lab)
-            lw = _text_width(label.upper(), 10.5) + 6.0
-            cnt_style = "rail_count" if cur == "new" else "menu_shortcut"
-            cnt = _typo_label(str(n), cnt_style, NSMakeRect(lw, 3, 22, 14), wrapping=False)
+            x += lw + GAP1
+            cnt = _typo_label(str(n), cnt_style, NSMakeRect(x, 4, cw, 14), wrapping=False)
             trig.addSubview_(cnt)
-            car = _label("⌄", 11.0, _muted())
-            car.setFrame_(NSMakeRect(tw - 16, 1, 14, 14))
+            x += cw + GAP2
+            car = _label("⌄", 10.0, _muted())
+            car.setFrame_(NSMakeRect(x, 4, CARW, 14))
             trig.addSubview_(car)
             view.addSubview_(trig)
 
@@ -920,113 +946,6 @@ if _APPKIT_AVAILABLE:
                 self._reset_card_state()
                 self._render()
 
-        def _build_rail_segments(self, view, frame, cy):
-            """Hybrid triage segmented control (Claude Design redesign C1).
-
-            Active segment = icon + label + count, fills the free width; inactive
-            segments collapse to icon + count. The full nav fits the 236px rail
-            without widening it. Track is one NSView (layer fill + border); each
-            segment is a hover button with icon/label/count subviews.
-            """
-            from src.ui.hover import make_hover_button
-            from src.ui import style
-
-            segs = (
-                ("new", "Nowe", "sparkles"),
-                ("kept", "Zachowane", "bookmark"),
-                ("dismissed", "Odrzucone", "archivebox"),
-            )
-            counts = self._deck.counts()
-            cur = self._deck.view
-            pad = 12.0
-            track_pad = 3.0
-            seg_gap = 3.0
-            track_h = 30.0
-            item_h = track_h - 2 * track_pad  # 24
-            track_w = frame.size.width - 2 * pad
-
-            track = NSView.alloc().initWithFrame_(NSMakeRect(pad, cy, track_w, track_h))
-            track.setWantsLayer_(True)
-            if track.layer() is not None:
-                track.layer().setCornerRadius_(_R_CONTROL)
-                track.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
-                track.layer().setBorderWidth_(1.0)
-                track.layer().setBorderColor_(_c(255, 255, 255, 0.10).CGColor())
-
-            def _count_w(n):
-                return max(8.0, _text_width(str(n), 10.0))
-
-            # Inactive items take their natural width (icon + count); the active
-            # one absorbs the remainder so the longest label always fits.
-            inactive_w = {}
-            for key, _lab, _ic in segs:
-                if key != cur:
-                    inactive_w[key] = 8.0 + 14.0 + 5.0 + _count_w(counts.get(key, 0)) + 8.0
-            inner = track_w - 2 * track_pad - seg_gap * (len(segs) - 1)
-            active_w = inner - sum(inactive_w.values())
-
-            sx = track_pad
-            for tag, (key, label, symbol) in enumerate(segs):
-                active = key == cur
-                n = counts.get(key, 0)
-                empty = n == 0 and not active
-                iw = active_w if active else inactive_w[key]
-                item = make_hover_button(NSMakeRect(sx, track_pad, iw, item_h))
-                item.setTitle_("")
-                item.setBordered_(False)
-                item.setTarget_(self)
-                item.setAction_("viewSegmentClicked:")
-                item.setTag_(tag)
-                item.setToolTip_(f"{label} — {n}")
-                if item.layer() is not None:
-                    item.layer().setCornerRadius_(4.0)
-                    if active:
-                        item.layer().setBackgroundColor_(_c(217, 84, 42, 0.16).CGColor())
-                        item.layer().setBorderWidth_(1.0)
-                        item.layer().setBorderColor_(_c(217, 84, 42, 0.55).CGColor())
-
-                # icon (tinted to the segment's text colour)
-                if active:
-                    icon_tint = _c(250, 243, 226)
-                elif empty:
-                    icon_tint = _c(140, 130, 115)
-                else:
-                    icon_tint = _c(176, 162, 141)
-                img = style.sf_symbol(symbol, point=12.0, weight="regular")
-                if img is not None:
-                    iv = NSImageView.alloc().initWithFrame_(
-                        NSMakeRect(8.0, (item_h - 14) / 2.0, 14.0, 14.0)
-                    )
-                    iv.setImage_(img)
-                    try:
-                        iv.setContentTintColor_(icon_tint)
-                    except Exception:  # pragma: no cover
-                        pass
-                    item.addSubview_(iv)
-
-                cx = 8.0 + 14.0 + 5.0
-                if active:
-                    lab = _label(label, 11.0, _c(250, 243, 226), bold=True)
-                    lw = _text_width(label, 11.0) + 2.0
-                    lab.setFrame_(NSMakeRect(cx, (item_h - 14) / 2.0, lw, 14.0))
-                    item.addSubview_(lab)
-                    cx += lw + 6.0
-
-                cnt_color = (
-                    _terracotta() if active else (_c(90, 82, 73) if empty else _c(111, 102, 90))
-                )
-                cnt = _label(str(n), 10.0, cnt_color)
-                cnt.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10.0, 0.0))
-                cnt.setFrame_(NSMakeRect(cx, (item_h - 13) / 2.0, _count_w(n) + 2.0, 13.0))
-                item.addSubview_(cnt)
-
-                track.addSubview_(item)
-                sx += iw + seg_gap
-
-            view.addSubview_(track)
-            return cy + track_h
-
-        @objc.python_method
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
 
@@ -1041,11 +960,13 @@ if _APPKIT_AVAILABLE:
             active = index == self._deck.active_index
             kept = self._deck.is_kept(index)
             if btn.layer() is not None:
-                btn.layer().setCornerRadius_(_R_ROW)
+                # radius 8 per the row redline (cards keep _R_ROW).
+                btn.layer().setCornerRadius_(8.0)
                 if active:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
 
             if active:
+                # Gold bar = the insight role; the TITLE stays full white.
                 bar = NSView.alloc().initWithFrame_(
                     NSMakeRect(1, 11, 2.5, frame.size.height - 22)
                 )
@@ -1055,24 +976,30 @@ if _APPKIT_AVAILABLE:
                     bar.layer().setCornerRadius_(1.25)
                 btn.addSubview_(bar)
 
-            btn.addSubview_(_sigil(NSMakeRect(8, 6, 26, 26), conn.layout(), conn.resolved_tcolor()))
+            # Redline: padding 9×8, sigil 18, title 12.5/700 (1 line, truncated),
+            # snippet 11.5 clamped to 2 lines with an ellipsis — never clipped.
+            btn.addSubview_(_sigil(NSMakeRect(8, 9, 18, 18), conn.layout(), conn.resolved_tcolor()))
 
-            lab = _label(
+            text_x = 34.0
+            text_w = frame.size.width - text_x - 8.0
+            lab = _typo_label(
                 conn.resolved_label(),
-                12.5,
-                _gold() if active else _c(201, 187, 166),
-                bold=True,
+                "rail_title" if active else "rail_title_quiet",
+                NSMakeRect(text_x, 9, text_w, 16),
+                wrapping=False,
             )
-            lab.setFrame_(NSMakeRect(42, 7, frame.size.width - 60, 15))
-            lab.setLineBreakMode_(4)
+            lab.setLineBreakMode_(4)  # truncate tail
             btn.addSubview_(lab)
 
-            snip = _wrapping_label(
-                conn.snippet,
-                12,
-                _c(176, 162, 141) if active else _c(140, 130, 115),
-                NSMakeRect(42, 24, frame.size.width - 50, 30),
+            snip = _typo_label(
+                conn.snippet, "rail_snippet",
+                NSMakeRect(text_x, 27, text_w, frame.size.height - 27 - 8),
             )
+            snip.setMaximumNumberOfLines_(2)
+            try:
+                snip.cell().setTruncatesLastVisibleLine_(True)
+            except Exception:  # pragma: no cover - older AppKit
+                pass
             btn.addSubview_(snip)
 
             if kept:
@@ -2018,9 +1945,11 @@ if _APPKIT_AVAILABLE:
                 else:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.018).CGColor())
 
-            # Checkbox: margin-top 3px lands the box on the first line's optical
-            # centre for 15px text at line-height 1.5 (per the design redline).
-            box_y = PADTOP + 3.0
+            # Checkbox centred on the FIRST text line (redesign E). The ramp now
+            # uses lineSpacing (between lines only), so the first line's glyph
+            # box starts exactly at PADTOP: centre = PADTOP + lineHeight/2
+            # (≈15.5/2 for 13pt) → box_y for a 16pt box ≈ PADTOP + 1.
+            box_y = PADTOP + 1.0
             box = NSView.alloc().initWithFrame_(NSMakeRect(PADX, box_y, BOX, BOX))
             box.setWantsLayer_(True)
             if box.layer() is not None:
@@ -2224,27 +2153,22 @@ if _APPKIT_AVAILABLE:
                     ctr.setAlignment_(1)
                     foot.addSubview_(ctr)
 
-            # Dismiss = ghost (hover brightens the label); Keep = jade pill, the
-            # design's local/private affirmative.
+            # Redline A4: buttons 31pt / radius 6. Odrzuć = ghost WITH a border
+            # (rgba .16, text .7); Zachowaj = jade (bg .16, border .45, text
+            # #8BE0B5 bold) — text-only: an NSImage on the button forces a white
+            # bezel draw, which is what washed the old Zachowaj out.
             dismiss = _pill_button(
-                "Odrzuć", NSMakeRect(frame.size.width - 240, 8, 86, 30),
-                _c(140, 130, 115), None, None, self, "dismissClicked:",
+                "Odrzuć", NSMakeRect(frame.size.width - 226, 8, 86, 31),
+                _c(255, 255, 255, 0.7), None, _c(255, 255, 255, 0.16),
+                self, "dismissClicked:", 12.5,
             )
             foot.addSubview_(dismiss)
             keep = _pill_button(
-                "Zachowaj", NSMakeRect(frame.size.width - 138, 8, 122, 30),
-                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(91, 196, 149, 0.5),
-                self, "keepClicked:",
+                "Zachowaj", NSMakeRect(frame.size.width - 128, 8, 112, 31),
+                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(70, 177, 126, 0.45),
+                self, "keepClicked:", 12.5,
             )
-            kmark = style.sf_symbol("bookmark", point=12.0, weight="regular")
-            if kmark is not None:
-                keep.setImage_(kmark)
-                keep.setImagePosition_(NSImageLeft)
-                try:
-                    keep.setImageHugsTitle_(True)
-                    keep.setContentTintColor_(_c(139, 224, 181))
-                except Exception:  # pragma: no cover - older AppKit
-                    pass
+            keep.setFont_(NSFont.boldSystemFontOfSize_(12.5))
             foot.addSubview_(keep)
             view.addSubview_(foot)
 
@@ -2340,14 +2264,6 @@ if _APPKIT_AVAILABLE:
             self._deck.select(int(sender.tag()))
             self._reset_card_state()
             self._render()
-
-        def viewSegmentClicked_(self, sender):
-            views = ("new", "kept", "dismissed")
-            tag = int(sender.tag())
-            if 0 <= tag < len(views):
-                self._deck.set_view(views[tag])
-                self._reset_card_state()
-                self._render()
 
         def directionClicked_(self, sender):
             i = int(sender.tag())

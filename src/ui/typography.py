@@ -70,7 +70,7 @@ SPEC: Dict[str, dict] = {
     "rail_count":    dict(size=10.5, weight="regular", track=0.0,    lh=1.0,  color=("gold", 1.0), mono=True),
     "rail_title":    dict(size=12.5, weight="bold",    track=0.0,    lh=1.30, color=("window_hi", 1.0)),
     "rail_title_quiet":dict(size=12.5, weight="medium",track=0.0,    lh=1.30, color=("window_hi", 0.78)),
-    "rail_snippet":  dict(size=11.5, weight="regular", track=0.0,    lh=1.40, color=("window_hi", 0.55)),
+    "rail_snippet":  dict(size=11.5, weight="regular", track=0.0,    lh=1.30, color=("window_hi", 0.55)),
     # Chips / buttons
     "chip":          dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.80)),
     "button":        dict(size=12.5, weight="medium",  track=0.0,    lh=1.0,  color=("window_hi", 0.70)),
@@ -133,7 +133,13 @@ def attributes(style: str, *, color_alpha: Optional[float] = None) -> Optional[d
         return None
     s = SPEC[style]
     para = NSMutableParagraphStyle.alloc().init()
-    para.setLineHeightMultiple_(s["lh"])
+    # Leading via lineSpacing (BETWEEN lines), not lineHeightMultiple: the
+    # multiple pads ABOVE the first line too, which drifts the first baseline
+    # and breaks alignment against fixed marks (checkboxes, sigils).
+    f = font(style)
+    if s["lh"] > 1.0 and f is not None:
+        line_h = float(f.ascender() - f.descender() + f.leading())
+        para.setLineSpacing_(max(0.0, (s["lh"] - 1.0) * line_h))
     token, alpha = s["color"]
     attrs = {
         NSFontAttributeName: font(style),
