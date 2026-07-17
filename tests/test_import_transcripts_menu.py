@@ -22,7 +22,8 @@ def _app(transcriber):
 
 def test_batch_counts_ok_and_failed():
     transcriber = MagicMock()
-    # file 1 ok, file 2 duplicate (True), file 3 fails (False)
+    # file 1 ok, file 2 ok, file 3 fails (False). The MagicMock leaves the
+    # status dict untouched, so both successes count as freshly-written.
     transcriber.import_text_file.side_effect = [True, True, False]
     app = _app(transcriber)
 
@@ -30,10 +31,30 @@ def test_batch_counts_ok_and_failed():
         app._run_text_import([Path("a.md"), Path("b.txt"), Path("c.vtt")])
 
     assert transcriber.import_text_file.call_count == 3
-    # Final notification summarises the batch.
+    # Final notification summarises the batch: new / skipped, plus destination.
     final = notify.call_args_list[-1].args
-    assert "Imported 2 of 3" in final[2]
+    assert "2 new" in final[2]
     assert "1 skipped" in final[2]
+
+
+def test_batch_reports_duplicates_separately():
+    transcriber = MagicMock()
+
+    def _imp(path, status=None):
+        # b.txt is an already-indexed duplicate; the others are new.
+        if status is not None:
+            status["duplicate"] = path.name == "b.txt"
+        return True
+
+    transcriber.import_text_file.side_effect = _imp
+    app = _app(transcriber)
+
+    with patch("src.menu_app.send_notification") as notify:
+        app._run_text_import([Path("a.md"), Path("b.txt"), Path("c.vtt")])
+
+    final = notify.call_args_list[-1].args
+    assert "2 new" in final[2]
+    assert "1 already in vault" in final[2]
 
 
 def test_per_file_exception_does_not_abort_batch():

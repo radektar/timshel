@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Generate DMG installer background — aztec earth gradient with step-fret border.
+"""Generate DMG installer background — redesign language (paper surface).
 
 Output:
   assets/dmg_background.png   — 600×400 PNG used by scripts/create_dmg.sh
 
-Design:
-  • Background: warm cream (#F5E9CE) with horizontal terracotta band
-  • Top + bottom step-fret friezes in jade
-  • Centered subtitle "Drag Malinche → Applications" rendered as a thin guide
+Design (matches the app-redesign system, not the legacy aztec look):
+  • Field: light paper gradient (theme panel family) — Finder draws icon
+    labels in the SYSTEM appearance colour (black in light mode), so the
+    background must be light; a dark field makes labels unreadable.
+  • §05 hairlines top/bottom in ink at low alpha
+  • A quiet ink chevron between the app icon (175,190) and Applications
+    (425,190). No sigil — the app icon already carries the mark.
 """
 
 from __future__ import annotations
@@ -15,20 +18,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 
-# Sync with theme.py
-TERRACOTTA = (194, 64, 16, 255)
-OBSIDIAN = (26, 26, 31, 255)
-JADE = (5, 120, 87, 255)
-GOLD = (214, 176, 51, 255)
-CREAM_LIGHT = (250, 240, 215, 255)
-CREAM_DARK = (235, 218, 184, 255)
-
 WIDTH, HEIGHT = 600, 400
+SS = 2  # supersample for crisp lines
+
+# theme.py paper family
+PANEL_TOP = (0xF7, 0xF4, 0xEC, 255)
+PANEL_BOTTOM = (0xEC, 0xEA, 0xE3, 255)
+INK = (0x1A, 0x1A, 0x1A)
 
 
 def lerp(a, b, t):
@@ -47,57 +48,36 @@ def vertical_gradient(size, top, bottom):
     return img
 
 
-def draw_step_fret_band(draw: ImageDraw.ImageDraw, y: int, height: int, color, *, count: int = 24):
-    """Stylized aztec step-fret repeated horizontally as a thin band.
-
-    Each tile is a stepped-square (3 nested concentric squares).
-    """
-    tile_w = WIDTH / count
-    for i in range(count):
-        cx = int(i * tile_w + tile_w / 2)
-        cy = y + height // 2
-        unit = int(min(tile_w, height) * 0.45)
-        for k in range(3):
-            s = unit - k * (unit // 3)
-            if s <= 0:
-                continue
-            draw.rectangle(
-                (cx - s, cy - s, cx + s, cy + s),
-                outline=color,
-                width=max(2, unit // 14),
-            )
-
-
-def add_terracotta_band(img: Image.Image) -> Image.Image:
-    """Soft horizontal terracotta haze through the middle."""
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    band_top = HEIGHT // 2 - 70
-    band_bottom = HEIGHT // 2 + 70
-    for y in range(band_top, band_bottom):
-        # Bell-shaped alpha distribution
-        rel = (y - HEIGHT / 2) / 70
-        alpha = int(70 * (1 - min(1, abs(rel))) ** 2)
-        draw.line((0, y, WIDTH, y), fill=(*TERRACOTTA[:3], alpha))
-    overlay = overlay.filter(ImageFilter.GaussianBlur(radius=8))
-    return Image.alpha_composite(img, overlay)
+def draw_arrow(draw: ImageDraw.ImageDraw, cx: int, cy: int, length: int, color, width: int):
+    """The standard DMG drag arrow: a horizontal shaft with a solid head."""
+    head_l = int(length * 0.38)
+    head_h = int(head_l * 0.9)
+    x0 = cx - length // 2
+    x1 = cx + length // 2
+    shaft_end = x1 - head_l
+    draw.line((x0, cy, shaft_end, cy), fill=color, width=width)
+    draw.polygon(
+        [(shaft_end, cy - head_h // 2), (x1, cy), (shaft_end, cy + head_h // 2)],
+        fill=color,
+    )
 
 
 def main() -> int:
-    base = vertical_gradient((WIDTH, HEIGHT), CREAM_LIGHT, CREAM_DARK)
-    base = add_terracotta_band(base)
-
+    w, h = WIDTH * SS, HEIGHT * SS
+    base = vertical_gradient((w, h), PANEL_TOP, PANEL_BOTTOM)
     draw = ImageDraw.Draw(base)
-    draw_step_fret_band(draw, y=8, height=24, color=JADE, count=22)
-    draw_step_fret_band(draw, y=HEIGHT - 32, height=24, color=JADE, count=22)
 
-    # Thin terracotta hairlines just below/above the friezes
-    draw.line((20, 36, WIDTH - 20, 36), fill=TERRACOTTA, width=1)
-    draw.line((20, HEIGHT - 36, WIDTH - 20, HEIGHT - 36), fill=TERRACOTTA, width=1)
+    # The one conventional cue: an arrow on the drag path (icons at 175/425,
+    # y=190). Nothing else — a plain, standard macOS installer window.
+    # ImageDraw pisze RGBA wprost (bez blendu) — kolor podajemy już zmieszany
+    # z tłem: ink @ ~35% nad panelem ≈ neutralny szary.
+    draw_arrow(draw, w // 2, 190 * SS, 70 * SS, (168, 165, 158, 255), 7 * SS)
 
     out = ASSETS / "dmg_background.png"
-    base.convert("RGB").save(out, format="PNG", optimize=True)
-    print(f"  wrote {out} ({WIDTH}×{HEIGHT})")
+    base.resize((WIDTH, HEIGHT), Image.LANCZOS).convert("RGB").save(
+        out, format="PNG", optimize=True
+    )
+    print(f"  wrote {out} ({WIDTH}x{HEIGHT})")
     return 0
 
 

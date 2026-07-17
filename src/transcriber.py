@@ -272,6 +272,23 @@ class Transcriber:
             self.tagger is not None,
         )
 
+    def reload_paths(self) -> None:
+        """Re-point the vault index at the current output folder.
+
+        ``vault_index`` is bound to ``TRANSCRIBE_DIR`` at construction. When the
+        user changes the output folder in Settings, note *writes* follow the new
+        folder live (via the config proxy), but dedup/lookup would keep reading
+        the OLD folder's index — new notes wouldn't be deduped and the digest
+        would read the wrong vault. Rebuild the index on the new path so write
+        and index never diverge. Call *after* ``reload_config()``.
+        """
+        new_dir = self.config.TRANSCRIBE_DIR
+        if str(getattr(self.vault_index, "vault_dir", "")) == str(new_dir):
+            return
+        self.vault_index = VaultIndex(new_dir)
+        self.vault_index.load()
+        logger.info("🔄 Vault index re-pointed at %s", new_dir)
+
     def _run_index_migration_if_needed(self) -> None:
         """Run one-time migration of legacy markdown metadata to index."""
         try:
@@ -2326,7 +2343,9 @@ Brak podsumowania AI. Możliwe przyczyny:
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
 
-    def import_text_file(self, source: Path) -> bool:
+    def import_text_file(
+        self, source: Path, status: Optional[dict] = None
+    ) -> bool:
         """Import an already-transcribed text file (txt/md/vtt) as a note.
 
         Skips whisper entirely: parses the source via :mod:`src.ingest`, then
@@ -2337,6 +2356,13 @@ Brak podsumowania AI. Możliwe przyczyny:
 
         Takes the same workflow + process locks as audio import so it can't run
         concurrently with a transcription (CPU/vault-index safety).
+
+        Args:
+            status: optional dict filled with ``{"duplicate": bool}`` so a caller
+                can tell a freshly-written note from an already-indexed one. A
+                re-import of the same text is a no-op (fingerprint dedup); without
+                this signal the UI reports "Imported N" for pure duplicates and
+                the user hunts for notes that were never re-written.
 
         Returns:
             True on success (or a duplicate already imported), False on failure.
@@ -2371,7 +2397,11 @@ Brak podsumowania AI. Możliwe przyczyny:
 
             if self.vault_index.lookup(fingerprint):
                 logger.info("✓ Already imported (fingerprint exists): %s", doc.source_name)
+                if status is not None:
+                    status["duplicate"] = True
                 return True
+            if status is not None:
+                status["duplicate"] = False
 
             metadata = {
                 "source_file": doc.source_name,

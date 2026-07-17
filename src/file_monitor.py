@@ -36,6 +36,45 @@ DECISION_NONE = "none"
 # z wartości powyżej.
 UnknownVolumeCallback = Callable[[Path, str], str]
 
+def is_disk_image_volume(volume_path: Path) -> bool:
+    """True gdy wolumen pochodzi z zamontowanego obrazu dysku (DMG).
+
+    Bez tego filtra apka pyta „czy to rejestrator?" o KAŻDY zamontowany
+    instalator — łącznie z własnym DMG Timshela, co widzi każdy świeży tester.
+    ``hdiutil info`` zna mount-pointy wszystkich podpiętych obrazów; przy
+    błędzie zwracamy False (lepiej zapytać o dysk raz za dużo niż przeoczyć
+    prawdziwy rejestrator).
+    """
+    import plistlib
+    import subprocess
+
+    # Prawdziwe wolumeny montują się wyłącznie pod /Volumes — dla innych
+    # ścieżek (testowe tmp-dir'y, katalogi robocze) nie odpalamy hdiutil.
+    if not str(volume_path).startswith("/Volumes/"):
+        return False
+
+    try:
+        result = subprocess.run(
+            ["hdiutil", "info", "-plist"],
+            capture_output=True,
+            timeout=10.0,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        data = plistlib.loads(result.stdout)
+    except Exception as exc:  # noqa: BLE001 - defensive: never block detection
+        logger.debug("hdiutil info failed: %s", exc)
+        return False
+
+    for image in data.get("images", []):
+        for entity in image.get("system-entities", []):
+            mount_point = entity.get("mount-point")
+            if mount_point and Path(mount_point) == volume_path:
+                return True
+    return False
+
+
 # Per-UUID guard: FSEvents (on_change) i periodic checker (scan_unknown_volumes)
 # działają na osobnych wątkach — bez tego ten sam nieznany dysk potrafił
 # dostać DWA dialogi naraz (drugi wątek mijał stale'owy snapshot ustawień,
@@ -228,6 +267,14 @@ class FileMonitor:
         user wybrał Nie/Raz-bez-decyzji).
         """
         if volume_path.name in defaults.SYSTEM_VOLUMES:
+            return False
+
+        # Zamontowane obrazy dysku (DMG — instalatory, w tym nasz własny)
+        # nigdy nie są rejestratorami; nie pytaj o nie użytkownika.
+        if is_disk_image_volume(volume_path):
+            logger.info(
+                "Volume %s is a mounted disk image — ignoring", volume_path.name
+            )
             return False
 
         # Najpierw sprawdź whitelist po UUID (pomijając ścieżkę dialogu).

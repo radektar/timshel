@@ -96,7 +96,12 @@ if _APPKIT_AVAILABLE:
             self.window.orderOut_(None)
 
     def _app_icon():
-        """The app icon as an NSImage, or None."""
+        """The app icon as an NSImage, or None.
+
+        The dev-tree assets path does not exist inside the py2app bundle —
+        there the icon comes from the running app itself, so the Welcome
+        screen shows the mark for testers too.
+        """
         for base in (
             Path(__file__).resolve().parent.parent.parent / "assets" / "icon.icns",
         ):
@@ -104,6 +109,12 @@ if _APPKIT_AVAILABLE:
                 img = NSImage.alloc().initWithContentsOfFile_(str(base))
                 if img is not None:
                     return img
+        try:
+            img = NSApp.applicationIconImage()
+            if img is not None:
+                return img
+        except Exception:  # pragma: no cover - cosmetic
+            pass
         return None
 
     def _label(text, font_style, secondary=False, center=True):
@@ -256,29 +267,26 @@ def show_onboarding_screen(
         content.addSubview_(dots)
 
     def _button(label, action, x, width, accent=False):
+        # Native glass buttons, one size for every action — the primary gets
+        # the system accent through the Return key equivalent (as in NSAlert),
+        # not a custom tint/size (which made the row look misaligned).
         btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, buttons_y, width, 32))
         btn.setTitle_(label)
         btn.setBezelStyle_(1)
         if accent:
             btn.setKeyEquivalent_("\r")
-            try:
-                import AppKit
-
-                btn.setControlSize_(AppKit.NSControlSizeLarge)
-                btn.setBezelColor_(style.accent_color())
-            except Exception:
-                pass
         btn.setTarget_(delegate)
         btn.setAction_(action)
         content.addSubview_(btn)
         return btn
 
-    right = _WIDTH - _PAD - 120
-    _button(primary, "primaryClicked:", right, 120, accent=True)
+    btn_w = 120.0
+    right = _WIDTH - _PAD - btn_w
+    _button(primary, "primaryClicked:", right, btn_w, accent=True)
     if secondary is not None:
-        _button(secondary, "secondaryClicked:", right - 12 - 110, 110)
+        _button(secondary, "secondaryClicked:", right - 12 - btn_w, btn_w)
     if tertiary is not None:
-        _button(tertiary, "tertiaryClicked:", _PAD, 110)
+        _button(tertiary, "tertiaryClicked:", _PAD, btn_w)
 
     _RETAINED.clear()
     _RETAINED.append((win, delegate, acc_view))

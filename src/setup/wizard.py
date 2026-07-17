@@ -432,8 +432,15 @@ class SetupWizard:
         state = {"folder": str(self.settings.output_dir)}
         refs: dict = {}
 
-        def _short(path: str) -> str:
-            return path if len(path) <= 58 else "..." + path[-55:]
+        from AppKit import NSLineBreakByTruncatingMiddle
+
+        def _configure_path_field(field, path: str) -> None:
+            """Show a full path, truncated in the MIDDLE natively (keeps root +
+            leaf visible), full value on hover."""
+            field.setStringValue_(path)
+            field.setUsesSingleLineMode_(True)
+            field.cell().setLineBreakMode_(NSLineBreakByTruncatingMiddle)
+            field.setToolTip_(path)
 
         def _plain_label(text, x, y, w, h):
             field = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
@@ -453,11 +460,12 @@ class SetupWizard:
             folder_value = NSTextField.alloc().initWithFrame_(
                 NSMakeRect(0, 104, width - 188, 20)
             )
-            folder_value.setStringValue_(_short(state["folder"]))
             folder_value.setBezeled_(False)
             folder_value.setDrawsBackground_(False)
             folder_value.setEditable_(False)
             folder_value.setSelectable_(True)
+            _configure_path_field(folder_value, state["folder"])
+            refs["folder_field"] = folder_value
             view.addSubview_(folder_value)
             refs["folder_field"] = folder_value
 
@@ -511,12 +519,16 @@ class SetupWizard:
                 state["folder"] = picked
                 field = refs.get("folder_field")
                 if field is not None:
-                    field.setStringValue_(_short(picked))
+                    _configure_path_field(field, picked)
 
         idx = self.STEPS_ORDER.index(WizardStep.BASIC_CONFIG)
         response = show_onboarding_screen(
             title="Output & language",
-            body="Choose where transcripts are saved, plus the language and model.",
+            body=(
+                "Choose where transcripts are saved. The engine understands "
+                "~99 languages from one model — Auto-detect picks the language "
+                "per recording, or pin one for consistency."
+            ),
             primary="Next",
             secondary="Back",
             tertiary="Cancel",
@@ -534,14 +546,18 @@ class SetupWizard:
 
         selected_language = language_codes[refs["lang"].indexOfSelectedItem()]
         selected_model = model_codes[refs["model"].indexOfSelectedItem()]
-        apply_basic_settings(
+        if apply_basic_settings(
             self.settings,
             selected_folder=state["folder"],
             selected_language=selected_language,
             selected_model=selected_model,
             supported_languages=SUPPORTED_LANGUAGES,
             supported_models=SUPPORTED_MODELS,
-        )
+        ):
+            # Persist the folder now, not only at the FINISH step — the daemon
+            # and any config reload between here and finish must see the chosen
+            # folder, not the stale default.
+            self.settings.save()
         return "next"
 
     def _basic_config_legacy(self) -> str:

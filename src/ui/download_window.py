@@ -91,6 +91,12 @@ class DownloadWindow:
                 self._appkit["NSBackingStoreBuffered"],
                 False,
             )
+            # Crash-safe teardown (same pattern as the Settings/onboarding
+            # windows): titled NSWindows default to releasedWhenClosed=YES, so
+            # close() deallocates the window while the PyObjC proxy still owns
+            # a retain it sends on GC — release-to-deallocated-instance, the
+            # SIGSEGV every tester hit seconds after the download finished.
+            self._window.setReleasedWhenClosed_(False)
             self._window.setTitle_(self.state.title)
 
             content = self._window.contentView()
@@ -142,7 +148,7 @@ class DownloadWindow:
         def _close():
             if window is not None:
                 try:
-                    window.close()
+                    window.orderOut_(None)
                 except Exception:
                     pass
 

@@ -17,6 +17,13 @@ try:
 except ImportError:
     RUMPS_AVAILABLE = False
 
+if RUMPS_AVAILABLE:
+    # rumps.alert over-releases on macOS 26 (deprecated NSAlert factory) —
+    # swap in the crash-safe implementation before anything can show a dialog.
+    from src.ui.native_alert import install as _install_native_alert
+
+    _install_native_alert()
+
 try:
     from PyObjCTools import AppHelper
     _APPHELPER_AVAILABLE = True
@@ -178,19 +185,26 @@ class TimshelMenuApp(rumps.App):
         # dialog/picker before it completes. So only "Import audio…" (file
         # picker) and "Settings…" (config window) keep it; everything else acts
         # immediately or opens a submenu and stays ellipsis-free.
+        # Group 1 — the insight loop (consume): generate → read → rate.
         self.insights_item = rumps.MenuItem(
             "Insights",
             callback=self._open_insights,
         )
         self.menu.add(self.insights_item)
+        self.gen_digest_item = rumps.MenuItem(
+            "Generate digest now",
+            callback=self._generate_digest_now,
+        )
+        self.menu.add(self.gen_digest_item)
+        # Synthesis — open the latest connection digest note in the vault.
+        self.digest_item = rumps.MenuItem(
+            "Open latest digest",
+            callback=self._open_latest_digest,
+        )
+        self.menu.add(self.digest_item)
         self.menu.add(rumps.separator)
 
-        self.open_logs_item = rumps.MenuItem(
-            "Open logs",
-            callback=self._open_logs,
-        )
-        self.menu.add(self.open_logs_item)
-
+        # Group 2 — feeding the vault (input).
         # Manual import — fallback when auto-detection misses a disk/file.
         self.import_item = rumps.MenuItem(
             "Import audio…",
@@ -204,18 +218,12 @@ class TimshelMenuApp(rumps.App):
             callback=self._import_transcripts_clicked,
         )
         self.menu.add(self.import_text_item)
+        # Retranscribe submenu (lazy populated by refresh timer)
+        self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
+        self.menu.add(self.retranscribe_menu)
+        self.menu.add(rumps.separator)
 
-        # Synthesis — open the latest connection digest note in the vault.
-        self.digest_item = rumps.MenuItem(
-            "Open latest digest",
-            callback=self._open_latest_digest,
-        )
-        self.menu.add(self.digest_item)
-        self.gen_digest_item = rumps.MenuItem(
-            "Generate digest now",
-            callback=self._generate_digest_now,
-        )
-        self.menu.add(self.gen_digest_item)
+        # Group 3 — tester meta + diagnostics ("send me something to debug").
         # Package the H1 feedback (signal/metrics + digests) into a zip on the
         # Desktop for the tester to email back.
         self.export_feedback_item = rumps.MenuItem(
@@ -223,10 +231,11 @@ class TimshelMenuApp(rumps.App):
             callback=self._export_feedback_clicked,
         )
         self.menu.add(self.export_feedback_item)
-
-        # Retranscribe submenu (lazy populated by refresh timer)
-        self.retranscribe_menu = rumps.MenuItem("Retranscribe file")
-        self.menu.add(self.retranscribe_menu)
+        self.open_logs_item = rumps.MenuItem(
+            "Open logs",
+            callback=self._open_logs,
+        )
+        self.menu.add(self.open_logs_item)
 
         self.menu.add(rumps.separator)
 
@@ -656,13 +665,19 @@ class TimshelMenuApp(rumps.App):
             pass
 
         imported = 0
+        duplicates = 0
         failed = 0
         for path in paths:
             try:
-                # import_text_file returns True on success OR an already-imported
-                # duplicate; either way the file is accounted for.
-                if self.transcriber.import_text_file(path):
-                    imported += 1
+                # status tells a freshly-written note from an already-indexed
+                # duplicate — otherwise a re-import reports "Imported N" while
+                # writing nothing, and the user hunts for missing notes.
+                st: dict = {}
+                if self.transcriber.import_text_file(path, status=st):
+                    if st.get("duplicate"):
+                        duplicates += 1
+                    else:
+                        imported += 1
                 else:
                     failed += 1
             except RetranscribeLockBusyError:
@@ -690,10 +705,21 @@ class TimshelMenuApp(rumps.App):
                 logger.error("Text import failed for %s: %s", path, exc, exc_info=True)
                 failed += 1
 
-        logger.info("✓ Text import complete: %d ok, %d failed of %d", imported, failed, total)
-        summary = f"Imported {imported} of {total}"
+        logger.info(
+            "✓ Text import complete: %d new, %d duplicate, %d failed of %d",
+            imported, duplicates, failed, total,
+        )
+        # Lead with what actually changed. "0 new, 10 already in vault" is the
+        # honest message when everything was a re-import — not "Imported 10".
+        summary = f"{imported} new"
+        if duplicates:
+            summary += f", {duplicates} already in vault"
         if failed:
-            summary += f" — {failed} skipped"
+            summary += f", {failed} skipped"
+        # Name the destination so a tester never hunts for "missing" notes —
+        # they land in the current output folder, not necessarily where the
+        # picker started or what Settings was later changed to.
+        summary += f" → {config.TRANSCRIBE_DIR.name}"
         try:
             send_notification("Timshel", "Import done", summary)
         except Exception:  # noqa: BLE001
@@ -870,15 +896,15 @@ class TimshelMenuApp(rumps.App):
             model = config.WHISPER_MODEL
             size_mb = status.total_missing_size / 1_000_000
             response = rumps.alert(
-                title="📥 Download dependencies",
+                title="📥 Transcription engine required",
                 message=(
-                    f"Selected model: {model}\n"
-                    f"Missing data: ~{size_mb:.0f} MB.\n\n"
-                    "Download now?\n\n"
-                    "Downloads run in the background — the app stays responsive."
+                    f"Timshel needs the speech engine to transcribe "
+                    f"(model “{model}”, ~{size_mb:.0f} MB, one-time).\n\n"
+                    "The download runs in the background — the app stays "
+                    "responsive. You can switch models later in Settings."
                 ),
                 ok="Download now",
-                cancel="Skip",
+                cancel="Not now",
             )
 
             if response == 1:  # OK clicked
@@ -1617,10 +1643,13 @@ class TimshelMenuApp(rumps.App):
             "insights_item": "sparkles",
             "open_logs_item": "doc.plaintext",
             "import_item": "square.and.arrow.down",
+            "import_text_item": "doc.badge.plus",
             "digest_item": "doc.richtext",
             "gen_digest_item": "wand.and.stars",
+            "export_feedback_item": "square.and.arrow.up",
             "retranscribe_menu": "arrow.triangle.2.circlepath",
             "settings_item": "gearshape",
+            "quit_item": "power",
         }
         for attr, symbol in icons.items():
             item = getattr(self, attr, None)
@@ -1715,12 +1744,44 @@ class TimshelMenuApp(rumps.App):
             "review_volumes": self._manage_volumes_clicked,
             "forget_all_volumes": self._forget_all_volumes,
         }
+        prior_dir = Path(config.TRANSCRIBE_DIR)
         saved = show_settings_window(callbacks)
         if saved and getattr(self, "transcriber", None) is not None:
             # show_settings_window() already rebuilt the global config; refresh
             # the live daemon's summarizer/tagger and clear any AI circuit-breaker
             # trip so a fixed API key takes effect immediately — no restart.
             self.transcriber.reload_ai_config()
+            # And re-point the vault index if the output folder moved, so writes
+            # and dedup/lookup never diverge (new folder writes, old folder index).
+            self.transcriber.reload_paths()
+            new_dir = Path(config.TRANSCRIBE_DIR)
+            if new_dir != prior_dir:
+                self._warn_folder_changed(prior_dir, new_dir)
+
+    def _warn_folder_changed(self, prior_dir: Path, new_dir: Path) -> None:
+        """Tell the user existing notes stay in the old folder after a change.
+
+        Changing the output folder only redirects *future* notes; the ones
+        already written keep living in the previous folder. Without this a user
+        changes the folder, looks at the new (empty) one, and thinks the notes
+        vanished — exactly the tester confusion this addresses.
+        """
+        try:
+            existing = len(list(prior_dir.glob("*.md"))) if prior_dir.exists() else 0
+        except OSError:
+            existing = 0
+        if existing == 0:
+            return
+        rumps.alert(
+            title="Output folder changed",
+            message=(
+                f"New transcripts will be saved to “{new_dir.name}”.\n\n"
+                f"Your {existing} existing note(s) stay in the previous folder "
+                f"(“{prior_dir.name}”) — they are not moved. To keep everything "
+                "together, move them there in Finder, or point the folder back."
+            ),
+            ok="OK",
+        )
 
     def _forget_all_volumes(self, _):
         """Clear the trusted volume whitelist; user will be re-prompted on next mount."""
@@ -2038,7 +2099,18 @@ class TimshelMenuApp(rumps.App):
         """Uruchom daemon transcribera w tle."""
         if self._running:
             return  # Already running
-        
+
+        # The Config singleton is built at app launch, BEFORE the wizard (or
+        # any other pre-start flow) persists the user's choices — a daemon
+        # started from that stale singleton writes to the default folder, not
+        # the one the user just picked. Refreshing at this single choke point
+        # makes every path that saved UserSettings beforehand (wizard,
+        # dependency download, future restarts) take effect without each of
+        # them having to remember to reload.
+        from src.config.config import reload_config
+
+        reload_config()
+
         logger.info("Uruchamianie daemona transcribera...")
         self._running = True
         self.daemon_thread = threading.Thread(
@@ -2050,8 +2122,11 @@ class TimshelMenuApp(rumps.App):
 
     def run(self):
         """Start the menu bar application."""
+        from src.bootstrap import bundle_build_stamp
+
         logger.info("=" * 60)
         logger.info("🚀 Timshel Menu App starting...")
+        logger.info("Build: %s", bundle_build_stamp() or "dev (no bundle)")
         logger.info("=" * 60)
 
         # If wizard is not needed, start daemon immediately

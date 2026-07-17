@@ -181,6 +181,23 @@ def _remove_legacy_launch_agent(home: Path) -> None:
         pass
 
 
+def bundle_build_stamp() -> str:
+    """The build stamp baked into Info.plist (``TimshelBuildStamp``).
+
+    Returns "" in a dev/CLI run (no bundle / PyObjC missing) — callers log
+    something like "dev (no bundle)" instead.
+    """
+    try:
+        from Foundation import NSBundle
+
+        value = NSBundle.mainBundle().objectForInfoDictionaryKey_(
+            "TimshelBuildStamp"
+        )
+        return str(value) if value else ""
+    except Exception:  # noqa: BLE001 - not a bundle / PyObjC missing
+        return ""
+
+
 def _bundle_tester_flag() -> bool:
     """True when running from a tester DMG (Info.plist ``TimshelTesterBuild``).
 

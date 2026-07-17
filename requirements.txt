@@ -13,6 +13,8 @@ click>=8.1.0
 
 # macOS Menu Bar App
 rumps>=0.4.0
+# Renders the menu-bar wave sigil (src/menu_app.py) — must ship in the bundle
+Pillow>=10.0
 
 # LLM/Summarization
 # >=0.40 for native structured outputs (Pydantic response_format) used by the

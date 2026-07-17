@@ -33,13 +33,15 @@ DEFAULT_WATCH_MODE = "manual"
 # Alias used across code/tests
 WATCH_MODE = DEFAULT_WATCH_MODE
 
-# Języki
+# Języki. Model whispera jest wielojęzyczny (jeden plik, ~99 języków) —
+# to ustawienie to tylko hint `-l` per transkrypcja, nic się nie doinstalowuje.
+# "auto" = detekcja per nagranie (pierwsze ~30 s pliku decyduje o całości).
 SUPPORTED_LANGUAGES = {
+    "auto": "Auto-detect (per recording)",
     "pl": "Polski",
     "en": "English",
-    "auto": "Automatyczne wykrywanie",
 }
-DEFAULT_LANGUAGE = "pl"
+DEFAULT_LANGUAGE = "auto"
 
 # Modele Whisper
 SUPPORTED_MODELS = {

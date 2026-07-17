@@ -74,6 +74,11 @@ def _pip_install(spec: str, target: Path) -> bool:
     return True
 
 
+def _is_bundled_app() -> bool:
+    """True inside the py2app bundle (its bootstrap sets ``sys.frozen``)."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def ensure_importable(module_name: str) -> bool:
     """Ensure module can be imported, installing best-effort if needed."""
     _ensure_runtime_dir_on_path()
@@ -87,6 +92,15 @@ def ensure_importable(module_name: str) -> bool:
     spec = SAFEGUARDED_PACKAGES.get(module_name)
     if not spec:
         logger.warning("No install spec registered for %s", module_name)
+        return False
+
+    if _is_bundled_app():
+        # The bundled interpreter ships without pip — `python -m pip` can only
+        # fail (and used to log an ERROR on every launch). Optional deps stay
+        # unavailable in the bundle until they ship inside it.
+        logger.debug(
+            "Skipping pip auto-install for %s — bundled app has no pip", spec
+        )
         return False
 
     if not _pip_install(spec, RUNTIME_DEPS_DIR):
