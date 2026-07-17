@@ -47,6 +47,12 @@ class DependencyDownloader:
                                Przyjmuje (name: str, progress: float 0.0-1.0)
         """
         self.progress_callback = progress_callback
+        # Aggregate-progress plan (set by download_all): when total > 0, the
+        # callback reports OVERALL bytes across every missing file, not the
+        # current file — a per-file 0→1 ramp hits "100%" after each small file
+        # (whisper-cli, ffmpeg) while the ~700 MB model is still ahead.
+        self._plan_total_bytes = 0
+        self._plan_done_bytes = 0
         self.support_dir = (
             Path.home() / "Library" / "Application Support" / "Timshel"
         )
@@ -457,6 +463,7 @@ class DependencyDownloader:
                     temp_path.rename(dest)
                     dest.chmod(0o755)
                     logger.info(f"✓ Pobrano {name}")
+                    self._plan_done_bytes += dest.stat().st_size
                     return
                 else:
                     # Uszkodzony, usuń i zacznij od nowa
@@ -523,7 +530,17 @@ class DependencyDownloader:
                                 current_percent = int(downloaded * 100 / total_size)
                                 if current_percent != last_reported_percent:
                                     last_reported_percent = current_percent
-                                    progress = downloaded / total_size
+                                    if self._plan_total_bytes > 0:
+                                        # Aggregate across the whole plan; cap
+                                        # below 1.0 — only download_all reports
+                                        # the true 100% when everything is in.
+                                        progress = min(
+                                            (self._plan_done_bytes + downloaded)
+                                            / self._plan_total_bytes,
+                                            0.99,
+                                        )
+                                    else:
+                                        progress = downloaded / total_size
                                     self.progress_callback(name, progress)
 
                 # Przenieś do docelowej lokalizacji
@@ -540,6 +557,8 @@ class DependencyDownloader:
                         )
 
                 logger.info(f"✓ Pobrano {name}")
+                # Zamknij ten plik w planie zbiorczym (patrz __init__).
+                self._plan_done_bytes += max(total_size, 0)
                 return
 
             except httpx.HTTPStatusError as e:
@@ -776,6 +795,11 @@ class DependencyDownloader:
                 )
             self.check_disk_space(total_size)
 
+            # Włącz progress zbiorczy: callback raportuje postęp CAŁEGO planu
+            # (bajty wszystkich brakujących plików), nie bieżącego pliku.
+            self._plan_total_bytes = total_size
+            self._plan_done_bytes = 0
+
             # Pobierz brakujące zależności
             if not self.is_whisper_installed():
                 self.download_whisper()
@@ -792,9 +816,15 @@ class DependencyDownloader:
                 self.download_model_encoder(selected_model)
 
             logger.info("✓ Wszystkie zależności zainstalowane")
+            # Prawdziwe 100% — dopiero gdy wszystko jest na dysku.
+            if self.progress_callback:
+                self.progress_callback("Complete", 1.0)
             return True
 
         except (NetworkError, DiskSpaceError, DownloadError) as e:
             logger.error(f"Błąd podczas pobierania zależności: {e}")
             raise
+        finally:
+            self._plan_total_bytes = 0
+            self._plan_done_bytes = 0
 

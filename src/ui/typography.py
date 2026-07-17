@@ -101,7 +101,7 @@ SPEC: Dict[str, dict] = {
 def kern_pt(style: str) -> float:
     """Letter-spacing in points (CSS em × size) — 0 when negligible."""
     s = SPEC[style]
-    return round(s["size"] * s["track"], 3)
+    return float(round(s["size"] * s["track"], 3))
 
 
 def is_upper(style: str) -> bool:

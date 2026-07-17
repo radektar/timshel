@@ -1,6 +1,6 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-09 · Faza: design
+Data: 2026-07-17 · Faza: test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
 ## Kolejna faza: redesign UI (design → kod)
@@ -29,11 +29,30 @@ Assety: handoff wpięty `design-system/app-redesign-2026-07/`; tokeny w `src/ui/
 (rodziny akcentów + MESH_STOPS + SIGIL_BARS); nowa ikona (mesh sygnet na #141414,
 `assets/gen_icon.py`) — Radek zatwierdził kierunek; znak menu-bar mono
 (`assets/menu_bar/sigil.png` +@2x, wpięcie do menu_app = faza 3). Tester DMG
-przebudowany z nową ikoną. Fonty handoffu NIE wdrożone (→ SF Pro).
+**przebudowany po rundzie 2 poprawek 2026-07-17** (beta.17, build stamp
+`7da21ae`, sha256 `3c7eb1c8…`); kopia na iCloud Drive `Timshel/` (+ test-assets:
+10 tekstów Helios/Nordfab/Vantage + 2 audio TTS PL/EN). Fonty handoffu NIE
+wdrożone (→ SF Pro).
 NIE ruszać w assetach: fonty Neue Haas/Montreal (mapują na SF Pro); port ekranów A–I
 (osobna faza kodu po testach).
 
 ## Ostatnia decyzja + dlaczego
+
+**Runda 2 weryfikacji testerskiej (2026-07-16/17, drugi Mac) — naprawiona i
+domknięta.** Bugi znalezione TYLKO w bundlu, niewidoczne dla pytest: (1) crash
+"apka gaśnie po instalacji" = NSWindow bez `setReleasedWhenClosed_(False)`
+(DownloadWindow, potwierdzone NSZombie); (2) **folder z wizarda nie docierał do
+daemona** — singleton Config budowany przy starcie apki, przed zapisem wizarda;
+fix u źródła: `reload_config()` w `_start_daemon()` (jedyne przewężenie startu);
+(3) wrapper `TimshelTranscriber` nie forwardował `status=` (10/10 failed);
+(4) dedup po cichu skipował re-import a UI kłamało "Imported N". Plus: natywne
+alerty (rumps.alert deprecated na macOS 26), pip-guard w bundlu, ignorowanie
+wolumenu własnego instalatora, PIL w bundlu (ikony SF-style, nie emoji), jasne
+tło DMG ze standardową strzałką, auto-język (multilingual small, research
+potwierdzony), pełna ścieżka folderu w Settings/wizardzie.
+**DevX przeciw kolejnym 10 iteracjom:** build stamp w Info.plist (log mówi,
+który build naprawdę działa), `make smoke-bundle` (binarka z bundla pod świeżym
+$HOME na dev Macu — PASS), CI na GitHub Actions (pytest+mypy na PR).
 
 **Tester Build ZMERGOWANY (PR #66 → `feat/magic-insights-prototype`, merge
 `4beac40`).** 7 faz + 2 tury multi-agent code review (7 realnych bugów
@@ -61,10 +80,12 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 ## Następny krok
 
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
-2. **Weryfikacja buildu na czystym środowisku** wg
-   `Docs/TESTER-BUILD-VERIFY.md` (Gatekeeper right-click→Open, wizard, FDA+restart,
-   700 MB download, import, digest, export) — to jedyne kroki niemożliwe do
-   zautomatyzowania tu.
+2. **Weryfikacja buildu na czystym środowisku** wg `Docs/TESTER-BUILD-VERIFY.md`
+   — w toku na drugim Macu (DMG `3c7eb1c8…` z iCloud). Zrobione: instalacja,
+   wizard, download, import tekstów. Do dokończenia: **folder z wizarda po
+   fixie**, audio PL/EN (auto-detect), digest+metrics, Insights triage → signal,
+   Export feedback, quit/relaunch. Gatekeeper wymaga transferu realnym kanałem
+   (iCloud nie ustawia quarantine!).
 3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit; potwierdzić
    że `checksums.py` release URL-e (`radektar/malinche`) rozwiązują się przez
    redirect po rename repo; lista 3–5 testerów P1 z gęstym vaultem.

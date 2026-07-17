@@ -216,6 +216,10 @@ class LogViewerWindow:
             NSBackingStoreBuffered,
             False,
         )
+        # Crash-safe teardown: without this, close() deallocates the window
+        # while the PyObjC proxy still owns a retain (release-on-deallocated
+        # SIGSEGV — the DownloadWindow bug, same mechanism).
+        self._window.setReleasedWhenClosed_(False)
         self._window.setTitle_("Timshel logs")
         self._window.center()
 

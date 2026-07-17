@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester eval-synthesis signal-report magic-digest recall-eval
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester smoke-bundle eval-synthesis signal-report magic-digest recall-eval
 
 help:
 	@echo "Timshel - Development Commands"
@@ -23,6 +23,7 @@ help:
 	@echo "  make build-app     - Build .app bundle"
 	@echo "  make build-dmg     - Create DMG installer"
 	@echo "  make release       - Full release pipeline (app + dmg + checksums)"
+	@echo "  make smoke-bundle  - Build tester .app and smoke-test the bundle under a fresh HOME"
 	@echo ""
 	@echo "Daemon Control:"
 	@echo "  make stop-daemon   - Stop LaunchAgent"
@@ -168,6 +169,10 @@ release:
 release-tester:
 	@echo "Running TESTER release pipeline (H1 instrumentation on)..."
 	TESTER_BUILD=1 bash scripts/build_release.sh
+
+smoke-bundle:
+	@echo "Smoke-testing the built bundle under a fresh HOME..."
+	bash scripts/smoke_bundle.sh
 
 verify-tester:
 	@echo "Running the autonomous tester-build acceptance harness (A1-A8)..."

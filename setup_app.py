@@ -1,11 +1,36 @@
 """Setup configuration for py2app to build Timshel.app bundle."""
 
 import os
+import subprocess
+from datetime import datetime
 from setuptools import setup
 import py2app
 from pathlib import Path
 
 APP_VERSION = "2.0.0-beta.17"
+
+
+def _build_stamp() -> str:
+    """git SHA (+dirty) and build time, baked into Info.plist.
+
+    The app logs this on startup, so "which build am I actually running" is
+    answered by the first lines of the log instead of guesswork.
+    """
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True
+        ).strip()
+        dirty = subprocess.run(
+            ["git", "diff", "--quiet", "HEAD"], check=False
+        ).returncode != 0
+        if dirty:
+            sha += "+dirty"
+    except Exception:
+        sha = "unknown"
+    return f"{sha} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+
+BUILD_STAMP = _build_stamp()
 
 # Tester build: `make build-app-tester` / `release-tester` export TESTER_BUILD=1,
 # which stamps an Info.plist marker the app reads on first launch to turn on H1
@@ -54,6 +79,7 @@ OPTIONS = {
             'external recorders and SD cards for transcription.'
         ),
         'TimshelTesterBuild': TESTER_BUILD,
+        'TimshelBuildStamp': BUILD_STAMP,
     },
     'packages': [
         'rumps',
@@ -62,6 +88,7 @@ OPTIONS = {
         'anthropic',
         'dotenv',
         'click',
+        'PIL',  # Pillow — renders the menu-bar wave sigil (menu_app)
         'src',  # Include entire src package
     ],
     'includes': [
@@ -90,7 +117,6 @@ OPTIONS = {
     'excludes': [
         'tkinter',  # GUI not used
         'matplotlib',  # Graphics not used
-        'PIL',  # Image processing not used
         'numpy',  # Scientific computing not used
         'scipy',  # Scientific computing not used
         'pandas',  # Data analysis not used

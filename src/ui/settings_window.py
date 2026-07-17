@@ -117,9 +117,19 @@ _RETAINED_SETTINGS_WINDOWS: list = []
 
 
 def _truncate_path(path: str, max_length: int = 60) -> str:
+    """Middle-ellipsis: keep the start (root) AND the end (leaf folder).
+
+    Tail-only truncation hid the drive/root; a folder set deep under
+    ``~/Library/Mobile Documents/…`` showed as an unreadable ``…Documents/``.
+    Splitting the budget between head and tail keeps both ends legible; the
+    full path still lives in the field's tooltip.
+    """
     if len(path) <= max_length:
         return path
-    return "..." + path[-(max_length - 3) :]
+    keep = max_length - 3
+    head = keep // 2
+    tail = keep - head
+    return path[:head] + "..." + path[-tail:]
 
 
 def _resolve_api_key_input(raw: str) -> Optional[str]:
@@ -239,7 +249,8 @@ try:
                 self.state["selected_folder"] = picked
                 field = self.state.get("folder_value_field")
                 if field is not None:
-                    field.setStringValue_(_truncate_path(picked))
+                    field.setStringValue_(picked)
+                    field.setToolTip_(picked)
 
         # Maintenance
         def resetMemoryClicked_(self, sender):
@@ -388,16 +399,22 @@ def _secondary_hint(text):
 
 
 def _build_general_section(state, delegate):
-    from AppKit import NSButton, NSTextField
+    from AppKit import NSButton, NSLineBreakByTruncatingMiddle, NSTextField
     from Foundation import NSMakeRect
 
-    value = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 20))
-    value.setStringValue_(_truncate_path(state["selected_folder"]))
+    value = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 360, 20))
+    value.setStringValue_(state["selected_folder"])
     value.setBezeled_(False)
     value.setDrawsBackground_(False)
     value.setEditable_(False)
     value.setSelectable_(True)
     value.setAlignment_(2)  # right
+    # Let AppKit truncate the MIDDLE natively so both the drive root and the
+    # leaf folder stay visible ("/Users/…/Timshel"); pre-truncating a string
+    # fought the field's own clipping and hid the end. Full path on hover.
+    value.setUsesSingleLineMode_(True)
+    value.cell().setLineBreakMode_(NSLineBreakByTruncatingMiddle)
+    value.setToolTip_(state["selected_folder"])
     state["folder_value_field"] = value
 
     pick_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 160, 28))
@@ -414,7 +431,7 @@ def _build_general_section(state, delegate):
 
     location_card, lh = _build_card(
         [
-            _field_row("Output folder", value, 300, 20),
+            _field_row("Output folder", value, 620, 20),
             _action_row(pick_btn, 160, 28, None),
         ]
     )

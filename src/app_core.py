@@ -74,15 +74,16 @@ class TimshelTranscriber:
             raise RuntimeError("Transcriber not started yet")
         return self.transcriber.import_audio_file(source)
 
-    def import_text_file(self, source) -> bool:
+    def import_text_file(self, source, status=None) -> bool:
         """Import an already-transcribed text file (txt/md/vtt) as a note.
 
-        Forwards to the underlying :class:`Transcriber`. Raises if the daemon
-        has not finished starting (no transcriber yet).
+        Forwards to the underlying :class:`Transcriber` (including the optional
+        ``status`` dict that reports duplicate vs freshly-written). Raises if the
+        daemon has not finished starting (no transcriber yet).
         """
         if self.transcriber is None:
             raise RuntimeError("Transcriber not started yet")
-        return self.transcriber.import_text_file(source)
+        return self.transcriber.import_text_file(source, status=status)
 
     def reload_ai_config(self) -> None:
         """Re-read AI config live after a settings change.
@@ -95,6 +96,16 @@ class TimshelTranscriber:
         """
         if self.transcriber is not None:
             self.transcriber.reload_ai_config()
+
+    def reload_paths(self) -> None:
+        """Re-point the vault index after an output-folder change.
+
+        Forwards to the underlying :class:`Transcriber`. No-op until the daemon
+        has built its transcriber — so it must never raise into the Settings
+        handler.
+        """
+        if self.transcriber is not None:
+            self.transcriber.reload_paths()
 
     @property
     def vault_index(self):

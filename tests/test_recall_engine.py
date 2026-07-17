@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import math
+import sqlite3
 from pathlib import Path
 
 import pytest
+
+# sqlite-vec needs a Python built with loadable sqlite extensions; the
+# setup-python CPython on GitHub runners is not. Recall is optional at
+# runtime (seam degrades gracefully), so skip rather than fail there.
+pytestmark = pytest.mark.skipif(
+    not hasattr(sqlite3.Connection, "enable_load_extension"),
+    reason="Python built without loadable sqlite extensions (sqlite-vec)",
+)
 
 from src.connections.recall import engine as engine_mod
 
@@ -82,7 +91,9 @@ def test_dim_change_rebuilds_store(vault, monkeypatch):
 
 def test_cli_backfill_then_ask(tmp_path, monkeypatch, capsys):
     """The deployed entrypoint (`make ask` / `make backfill-embeddings`) end to end."""
-    from src.config.config import config as config_proxy  # delegates to the get_config() singleton
+    from src.config.config import (
+        config as config_proxy,  # delegates to the get_config() singleton
+    )
 
     _note(tmp_path, "okna", "Okna", "14.06", "Producenci okien nie odpowiadaja, dach stoi w miejscu.")
     from src.connections.recall import cli as cli_mod
