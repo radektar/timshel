@@ -320,7 +320,13 @@ def _note(text, height=44):
 
 
 def _field_row(label_text, control, control_w, control_h, height=_ROW_H):
-    """Card row: leading right-aligned label + a trailing control."""
+    """Card row: leading right-aligned label + a trailing control.
+
+    ``control_w=None`` stretches the control from the label's right edge to
+    the card inset. A fixed width wider than the card put the control on top
+    of the label (the unreadable Output-folder row), so wide controls must
+    use the stretch mode; fixed widths are clamped to the label edge.
+    """
     from Foundation import NSMakeRect
 
     def place(card, width, y):
@@ -329,9 +335,14 @@ def _field_row(label_text, control, control_w, control_h, height=_ROW_H):
             lbl.setFrame_(NSMakeRect(_CARD_INSET, y + (height - 20) / 2, 150, 20))
             card.addSubview_(lbl)
         if control is not None:
-            cx = width - _CARD_INSET - control_w
+            label_edge = _CARD_INSET + 150 + 12
+            w = control_w
+            if w is None:
+                w = max(width - _CARD_INSET - label_edge, 60)
+            cx = max(width - _CARD_INSET - w, label_edge)
+            w = max(min(w, width - _CARD_INSET - cx), 20)
             control.setFrame_(
-                NSMakeRect(cx, y + (height - control_h) / 2, control_w, control_h)
+                NSMakeRect(cx, y + (height - control_h) / 2, w, control_h)
             )
             card.addSubview_(control)
 
@@ -431,7 +442,8 @@ def _build_general_section(state, delegate):
 
     location_card, lh = _build_card(
         [
-            _field_row("Output folder", value, 620, 20),
+            # None = stretch label→inset; the full path truncates in the middle.
+            _field_row("Output folder", value, None, 20),
             _action_row(pick_btn, 160, 28, None),
         ]
     )
