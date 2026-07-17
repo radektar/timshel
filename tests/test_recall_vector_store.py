@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 
 import pytest
+
+# sqlite-vec needs a Python built with loadable sqlite extensions; the
+# setup-python CPython on GitHub runners is not. Recall is optional at
+# runtime (seam degrades gracefully), so skip rather than fail there.
+pytestmark = pytest.mark.skipif(
+    not hasattr(sqlite3.Connection, "enable_load_extension"),
+    reason="Python built without loadable sqlite extensions (sqlite-vec)",
+)
 
 from src.connections.recall.chunking import Chunk
 from src.connections.recall.vector_store import VaultVectorStore
