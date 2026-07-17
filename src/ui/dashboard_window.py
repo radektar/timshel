@@ -50,6 +50,7 @@ try:
         NSMakePoint,
         NSMakeRect,
         NSMakeSize,
+        NSPanel,
         NSScrollView,
         NSTextField,
         NSTrackingActiveAlways,
@@ -188,6 +189,25 @@ if _APPKIT_AVAILABLE:
     class _DashFlippedView(NSView):
         def isFlipped(self):
             return True
+
+    class _AskPanel(NSPanel):
+        """Borderless ask-bar panel that can actually take keyboard input.
+
+        A borderless NSPanel refuses key status by default, so the field
+        looked focused but never received a keystroke — and with no Esc or
+        click-away path the overlay could only be escaped by quitting the
+        app. Key here, Esc and losing key both dismiss.
+        """
+
+        def canBecomeKeyWindow(self):
+            return True
+
+        def cancelOperation_(self, _sender):  # Esc
+            self.orderOut_(None)
+
+        def resignKeyWindow(self):  # click-away / app switch
+            objc.super(_AskPanel, self).resignKeyWindow()
+            self.orderOut_(None)
 
     class _DarkBackground(NSView):
         """Window background: a soft dark radial, like the mock."""
@@ -1920,16 +1940,33 @@ if _APPKIT_AVAILABLE:
             """Present the ask-bar overlay (redesign C): a borderless floating
             NSPanel with a dark rounded field + terracotta focus ring."""
             from AppKit import (
-                NSPanel, NSColor, NSTextField, NSFloatingWindowLevel,
+                NSApp, NSColor, NSTextField, NSFloatingWindowLevel,
                 NSBackingStoreBuffered, NSAttributedString,
                 NSForegroundColorAttributeName, NSFontAttributeName,
             )
 
             self._ensure_window()  # results land in the window; keep it realised
+
+            # Reuse the panel across invocations — rebuilding leaked the
+            # previous one and its field each time the loupe was clicked.
+            panel = getattr(self, "_ask_overlay", None)
+            if panel is not None:
+                fld = self._ask_overlay_field
+                fld.setStringValue_("")
+                NSApp.activateIgnoringOtherApps_(True)
+                panel.center()
+                panel.makeKeyAndOrderFront_(None)
+                panel.makeFirstResponder_(fld)
+                return
+
             W, FLD_H = 560.0, 52.0
-            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            panel = _AskPanel.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, W, FLD_H + 24), 1 << 7, NSBackingStoreBuffered, False
             )
+            # We keep the only strong reference and never close() — dropping
+            # AppKit's close-time autorelease avoids the over-release crash
+            # class (see download_window.py).
+            panel.setReleasedWhenClosed_(False)
             panel.setLevel_(NSFloatingWindowLevel)
             panel.setOpaque_(False)
             panel.setBackgroundColor_(NSColor.clearColor())
@@ -1964,13 +2001,29 @@ if _APPKIT_AVAILABLE:
             fld.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.0))
             fld.setTarget_(self)
             fld.setAction_("askOverlaySubmitted:")
+            fld.setDelegate_(self)  # Esc lands in control:textView:doCommandBySelector:
             container.addSubview_(fld)
             self._ask_overlay = panel
             self._ask_overlay_field = fld
 
+            # LSUIElement app: without explicit activation the panel never
+            # becomes key and typing goes nowhere.
+            NSApp.activateIgnoringOtherApps_(True)
             panel.center()
             panel.makeKeyAndOrderFront_(None)
             panel.makeFirstResponder_(fld)
+
+        def control_textView_doCommandBySelector_(self, control, _tv, selector):
+            # Esc inside the field editor: dismiss the overlay instead of the
+            # text system's completion behaviour.
+            if str(selector) == "cancelOperation:" and control is getattr(
+                self, "_ask_overlay_field", None
+            ):
+                panel = getattr(self, "_ask_overlay", None)
+                if panel is not None:
+                    panel.orderOut_(None)
+                return True
+            return False
 
         def titlebarAskClicked_(self, _sender):
             self.showAskOverlay()
@@ -1982,8 +2035,7 @@ if _APPKIT_AVAILABLE:
                 text = ""
             panel = getattr(self, "_ask_overlay", None)
             if panel is not None:
-                panel.orderOut_(None)
-                self._ask_overlay = None
+                panel.orderOut_(None)  # kept alive for reuse
             if text:
                 self._ensure_window()
                 self._run_recall(text)

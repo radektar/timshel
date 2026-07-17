@@ -318,32 +318,38 @@ class TimshelMenuApp(rumps.App):
             status: None for status in AppStatus
         }
 
-        # Redesign F: the menu-bar mark is the wave sigil, with two state
-        # modifiers — indexing = dimmed to 55%, everything else = full. The
-        # gold-dot badge (unseen insight) survives as a non-template overlay.
-        active = {
-            AppStatus.SCANNING,
-            AppStatus.TRANSCRIBING,
-            AppStatus.DOWNLOADING,
-            AppStatus.MIGRATING,
+        # Redesign F: the menu-bar mark is the wave sigil. Working states get a
+        # terracotta activity dot at FULL sigil opacity — the original "dim to
+        # 55%" modifier read as a broken/greyed icon, not as activity, and was
+        # invisible on tinted menu bars. The gold-dot badge (unseen insight)
+        # stays as the second non-template overlay.
+        active_resolved: dict[AppStatus, Optional[str]] = {
+            status: None for status in AppStatus
         }
         icon_dir = Path(tempfile.mkdtemp(prefix="timshel-menubar-icons-"))
         for status in AppStatus:
             try:
-                alpha = 0.55 if status in active else 1.0
-                png = _render_sigil_menu_png(36, alpha=alpha)  # black → template
+                png = _render_sigil_menu_png(36)  # black → template
                 out = icon_dir / f"{status.value}.png"
                 out.write_bytes(png)
                 resolved[status] = str(out)
                 dot_png = _render_sigil_menu_png(
-                    36, alpha=alpha, dot_hex="#D6B033", sigil_rgb=(0.98, 0.95, 0.89)
+                    36, dot_hex="#D6B033", sigil_rgb=(0.98, 0.95, 0.89)
                 )
                 dot_out = icon_dir / f"{status.value}-dot.png"
                 dot_out.write_bytes(dot_png)
                 dot_resolved[status] = str(dot_out)
+                if status in self._ACTIVE_STATUSES:
+                    act_png = _render_sigil_menu_png(
+                        36, dot_hex="#C24010", sigil_rgb=(0.98, 0.95, 0.89)
+                    )
+                    act_out = icon_dir / f"{status.value}-active.png"
+                    act_out.write_bytes(act_png)
+                    active_resolved[status] = str(act_out)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Could not render menu-bar icon for %s: %s", status, exc)
         self._icon_paths_dot = dot_resolved
+        self._icon_paths_active = active_resolved
         return resolved
 
     def _update_icon(self, status: AppStatus) -> None:
@@ -375,6 +381,16 @@ class TimshelMenuApp(rumps.App):
         if icon_key == getattr(self, "_last_icon_key", None):
             return
         self._last_icon_key = icon_key
+
+        # Working states: terracotta activity dot — activity beats the insight
+        # badge for the moment (the gold dot returns when the work is done).
+        if status in self._ACTIVE_STATUSES:
+            active_path = getattr(self, "_icon_paths_active", {}).get(status)
+            if active_path:
+                self.title = None
+                self.template = False
+                self.icon = active_path
+                return
 
         # When an unseen insight is waiting, show the badged (gold-dot) icon —
         # a non-template image, so the gold survives macOS's menu-bar tinting.
@@ -1609,6 +1625,17 @@ class TimshelMenuApp(rumps.App):
         AppStatus.RECORDER_PENDING: "circle.dashed",
         AppStatus.ERROR: "exclamationmark.triangle.fill",
     }
+
+    # States where the app is actively working — menu-bar mark gets the
+    # terracotta activity dot for these.
+    _ACTIVE_STATUSES = frozenset(
+        {
+            AppStatus.SCANNING,
+            AppStatus.TRANSCRIBING,
+            AppStatus.DOWNLOADING,
+            AppStatus.MIGRATING,
+        }
+    )
 
     def _apply_status_icon(self, status) -> None:
         """Set an SF Symbol status dot on the header item, keyed by state.
