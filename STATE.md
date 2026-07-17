@@ -29,8 +29,8 @@ Assety: handoff wpięty `design-system/app-redesign-2026-07/`; tokeny w `src/ui/
 (rodziny akcentów + MESH_STOPS + SIGIL_BARS); nowa ikona (mesh sygnet na #141414,
 `assets/gen_icon.py`) — Radek zatwierdził kierunek; znak menu-bar mono
 (`assets/menu_bar/sigil.png` +@2x, wpięcie do menu_app = faza 3). Tester DMG
-**przebudowany po rundzie 2 poprawek 2026-07-17** (beta.17, build stamp
-`7da21ae`, sha256 `3c7eb1c8…`); kopia na iCloud Drive `Timshel/` (+ test-assets:
+**przebudowany po rundzie 3 poprawek 2026-07-17** (beta.17, build stamp
+`35298c9`, sha256 `8d0538d1…`); kopia na iCloud Drive `Timshel/` (+ test-assets:
 10 tekstów Helios/Nordfab/Vantage + 2 audio TTS PL/EN). Fonty handoffu NIE
 wdrożone (→ SF Pro).
 NIE ruszać w assetach: fonty Neue Haas/Montreal (mapują na SF Pro); port ekranów A–I
@@ -82,9 +82,13 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Weryfikacja buildu na czystym środowisku** wg `Docs/TESTER-BUILD-VERIFY.md`
    — w toku na drugim Macu (DMG `3c7eb1c8…` z iCloud). Zrobione: instalacja,
-   wizard, download, import tekstów. Do dokończenia: **folder z wizarda po
-   fixie**, audio PL/EN (auto-detect), digest+metrics, Insights triage → signal,
-   Export feedback, quit/relaunch. Gatekeeper wymaga transferu realnym kanałem
+   wizard, download, import tekstów. Zrobione też: folder z wizarda ✓, audio
+   PL/EN auto-detect ✓, klucz API/summaries ✓. Runda 3 naprawiła: martwy
+   ask-overlay (borderless panel bez key), rozjechany Settings/General,
+   kropka aktywności zamiast przygaszania sygnetu. Do dokończenia:
+   digest+metrics, Insights triage → signal, Export feedback, quit/relaunch.
+   UX-y zgłoszone (podgląd notatki z Insights, kontrola stylu podsumowań) —
+   backlog produktowy, decyzja po H1. Gatekeeper wymaga transferu realnym kanałem
    (iCloud nie ustawia quarantine!).
 3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit; potwierdzić
    że `checksums.py` release URL-e (`radektar/malinche`) rozwiązują się przez
