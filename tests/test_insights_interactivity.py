@@ -37,6 +37,11 @@ def _ctrl(callbacks):
 
 
 def test_note_chip_click_opens_that_note(monkeypatch):
+    # Pin the FALLBACK contract deterministically: when the basename does not
+    # resolve to a vault file, the chip click must fire the open_note callback.
+    # (Without the patch the outcome would depend on the machine's real vault —
+    # the in-app-resolution path is covered in test_note_reader_window.)
+    monkeypatch.setattr(dw.obsidian_link, "resolve_note_path", lambda n, v: None)
     opened = {}
     ctrl = _ctrl({"open_note": lambda name: opened.setdefault("name", name)})
     names = ctrl._note_basenames

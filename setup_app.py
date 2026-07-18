@@ -89,10 +89,13 @@ OPTIONS = {
         'dotenv',
         'click',
         'PIL',  # Pillow — renders the menu-bar wave sigil (menu_app)
+        'markdown_it',  # in-app markdown reader (note_renderer)
+        'mdurl',  # markdown-it-py runtime dependency
         'src',  # Include entire src package
     ],
     'includes': [
         'MacFSEvents',  # FSEvents wrapper
+        'WebKit',  # WKWebView for the in-app markdown reader
         'src.config',
         'src.config.settings',
         'src.config.defaults',

@@ -30,6 +30,8 @@ from src.connections import handoff as ho
 from src.connections import validation_signal as vsig
 from src.logger import logger
 from src.ui import insight_model as im
+from src.ui import note_renderer as nrend
+from src.ui import obsidian_link
 
 try:
     import objc
@@ -71,6 +73,25 @@ try:
 except ImportError:  # pragma: no cover - non-mac
     _APPKIT_AVAILABLE = False
 
+try:  # WKWebView hosts the in-app note reader; optional like AppKit.
+    from WebKit import (
+        WKWebpagePreferences,
+        WKWebView,
+        WKWebViewConfiguration,
+    )
+
+    try:
+        from WebKit import WKNavigationActionPolicyAllow as _WK_ALLOW
+        from WebKit import WKNavigationActionPolicyCancel as _WK_CANCEL
+        from WebKit import WKNavigationTypeLinkActivated as _WK_LINK_CLICK
+    except ImportError:  # pragma: no cover - constants absent in old wrappers
+        _WK_ALLOW, _WK_CANCEL, _WK_LINK_CLICK = 1, 0, 0
+
+    _WEBKIT_AVAILABLE = True
+except ImportError:  # pragma: no cover - non-mac / stripped env
+    _WEBKIT_AVAILABLE = False
+    _WK_ALLOW, _WK_CANCEL, _WK_LINK_CLICK = 1, 0, 0
+
 
 # Dimensions (points).
 _WIN_W = 860.0  # fallback only — see _initial_window_size()
@@ -99,9 +120,9 @@ _SEG_H = 30.0  # triage segment track (3px pad + 24px items)
 _SHEET_W = 560.0  # ask history sheet (U8)
 # Radius family (design: one decision, held everywhere — native macOS feel).
 _R_CONTROL = 6.0  # buttons, segment track, CTA, icons
-_R_CHECK = 5.0    # checkbox
-_R_ROW = 12.0     # rows, cards
-_R_CARD = 14.0    # rail card / panels
+_R_CHECK = 5.0  # checkbox
+_R_ROW = 12.0  # rows, cards
+_R_CARD = 14.0  # rail card / panels
 
 
 def _initial_window_size():
@@ -290,7 +311,8 @@ if _APPKIT_AVAILABLE:
 
             def _draw(s, x, color, font, right=None):
                 a = NSAttributedString.alloc().initWithString_attributes_(
-                    s, {NSFontAttributeName: font, NSForegroundColorAttributeName: color}
+                    s,
+                    {NSFontAttributeName: font, NSForegroundColorAttributeName: color},
                 )
                 px = x if right is None else right - a.size().width
                 a.drawAtPoint_(NSMakePoint(px, (b.size.height - a.size().height) / 2.0))
@@ -298,15 +320,25 @@ if _APPKIT_AVAILABLE:
             body = _c(255, 255, 255) if hot else _c(201, 187, 166)
             if spec.get("checked"):
                 _draw("✓", 12.0, body, NSFont.systemFontOfSize_weight_(11.0, 0.0))
-            _draw(spec.get("label", ""), 28.0, body,
-                  NSFont.systemFontOfSize_weight_(12.5, 0.0))
-            n = spec.get("count", 0)
-            cnt_color = _c(255, 255, 255) if hot else (
-                _gold() if spec.get("is_new") else _c(140, 130, 115)
+            _draw(
+                spec.get("label", ""),
+                28.0,
+                body,
+                NSFont.systemFontOfSize_weight_(12.5, 0.0),
             )
-            _draw(str(n), 0.0, cnt_color,
-                  NSFont.monospacedDigitSystemFontOfSize_weight_(11.0, 0.0),
-                  right=b.size.width - 14.0)
+            n = spec.get("count", 0)
+            cnt_color = (
+                _c(255, 255, 255)
+                if hot
+                else (_gold() if spec.get("is_new") else _c(140, 130, 115))
+            )
+            _draw(
+                str(n),
+                0.0,
+                cnt_color,
+                NSFont.monospacedDigitSystemFontOfSize_weight_(11.0, 0.0),
+                right=b.size.width - 14.0,
+            )
 
     class _SigilView(NSView):
         """The demoted constellation: a small static mark whose *shape* encodes
@@ -347,10 +379,12 @@ if _APPKIT_AVAILABLE:
 
             def quad(a, q, z, alpha, w):
                 # Quadratic → cubic: c1 = a + 2/3(q−a), c2 = z + 2/3(q−z).
-                c1 = NSMakePoint(a.x + 2.0 / 3.0 * (q.x - a.x),
-                                 a.y + 2.0 / 3.0 * (q.y - a.y))
-                c2 = NSMakePoint(z.x + 2.0 / 3.0 * (q.x - z.x),
-                                 z.y + 2.0 / 3.0 * (q.y - z.y))
+                c1 = NSMakePoint(
+                    a.x + 2.0 / 3.0 * (q.x - a.x), a.y + 2.0 / 3.0 * (q.y - a.y)
+                )
+                c2 = NSMakePoint(
+                    z.x + 2.0 / 3.0 * (q.x - z.x), z.y + 2.0 / 3.0 * (q.y - z.y)
+                )
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_(a)
                 p.curveToPoint_controlPoint1_controlPoint2_(z, c1, c2)
@@ -376,19 +410,28 @@ if _APPKIT_AVAILABLE:
 
             def node(x, y):
                 c = pt(x, y)
-                radial(c, 7.0 * s,
-                       [_alpha(stroke, 0.50), _alpha(stroke, 0.08), _alpha(stroke, 0.0)],
-                       [0.0, 0.6, 1.0])
-                disc(c, 2.5 * s, _c(194, 64, 16))    # core #C24010 (fixed)
+                radial(
+                    c,
+                    7.0 * s,
+                    [_alpha(stroke, 0.50), _alpha(stroke, 0.08), _alpha(stroke, 0.0)],
+                    [0.0, 0.6, 1.0],
+                )
+                disc(c, 2.5 * s, _c(194, 64, 16))  # core #C24010 (fixed)
                 disc(c, 1.0 * s, _c(250, 243, 226))  # centre #FAF3E2 (fixed)
 
             def bloom(x, y, r0):
                 c = pt(x, y)
-                radial(c, r0 * 2.6 * s,
-                       [_c(244, 221, 142, 0.90), _c(214, 176, 51, 0.30),
-                        _c(214, 176, 51, 0.0)],
-                       [0.0, 0.55, 1.0])
-                disc(c, r0 * s, _c(244, 221, 142))        # #F4DD8E
+                radial(
+                    c,
+                    r0 * 2.6 * s,
+                    [
+                        _c(244, 221, 142, 0.90),
+                        _c(214, 176, 51, 0.30),
+                        _c(214, 176, 51, 0.0),
+                    ],
+                    [0.0, 0.55, 1.0],
+                )
+                disc(c, r0 * s, _c(244, 221, 142))  # #F4DD8E
                 disc(c, r0 * 0.4 * s, _c(255, 251, 240))  # spark #FFFBF0
 
             if layout == "contradiction":
@@ -466,7 +509,11 @@ if _APPKIT_AVAILABLE:
 
     def _label(text, size, color, bold=False):
         field = NSTextField.labelWithString_(text)
-        f = NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size)
+        f = (
+            NSFont.boldSystemFontOfSize_(size)
+            if bold
+            else NSFont.systemFontOfSize_(size)
+        )
         field.setFont_(f)
         field.setTextColor_(color)
         return field
@@ -499,7 +546,7 @@ if _APPKIT_AVAILABLE:
         from AppKit import NSAttributedString
         from src.ui import typography as _T
 
-        s = (text or "")
+        s = text or ""
         if _T.is_upper(style):
             s = s.upper()
         field = (
@@ -570,7 +617,7 @@ if _APPKIT_AVAILABLE:
         from AppKit import NSAttributedString
         from src.ui import typography as _T
 
-        s = (text or "")
+        s = text or ""
         if _T.is_upper(style):
             s = s.upper()
         attrs = _T.attributes(style)
@@ -584,7 +631,7 @@ if _APPKIT_AVAILABLE:
         from AppKit import NSAttributedString
         from src.ui import typography as _T
 
-        s = (text or "")
+        s = text or ""
         if _T.is_upper(style):
             s = s.upper()
         f = NSTextField.wrappingLabelWithString_(s)
@@ -713,9 +760,7 @@ if _APPKIT_AVAILABLE:
 
                 b = self.bounds()
                 r = min(layer.cornerRadius(), b.size.height / 2.0)
-                layer.setShadowPath_(
-                    CGPathCreateWithRoundedRect(b, r, r, None)
-                )
+                layer.setShadowPath_(CGPathCreateWithRoundedRect(b, r, r, None))
             except Exception:  # pragma: no cover - shadow stays content-based
                 pass
 
@@ -730,9 +775,7 @@ if _APPKIT_AVAILABLE:
             )
 
         def resetCursorRects(self):
-            self.addCursorRect_cursor_(
-                self.bounds(), NSCursor.pointingHandCursor()
-            )
+            self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
 
         def mouseEntered_(self, event):
             self._hovering = True
@@ -884,13 +927,13 @@ if _APPKIT_AVAILABLE:
             self._callbacks: Dict[str, Callable] = callbacks or {}
             # C8 accordion: exactly one rail section open at a time.
             self._section = "serendypacje"  # serendypacje | zapytales | notatki
-            self._ask_sheet = None          # history sheet (U8) when open
-            self._ask_scrim = None          # reader-only scrim behind the sheet
-            self._toolbar_field = None      # the ask field in the toolbar
-            self._hist_idx = -1             # ↑↓ position in the history sheet
-            self._notes_rows: List = []     # (title, path) rows of the Notatki section
-            self._recent_paths: List = []   # legacy hook (transcriptClicked_)
-            self._asked_rows: List = []     # ask-history entries behind rail rows
+            self._ask_sheet = None  # history sheet (U8) when open
+            self._ask_scrim = None  # reader-only scrim behind the sheet
+            self._toolbar_field = None  # the ask field in the toolbar
+            self._hist_idx = -1  # ↑↓ position in the history sheet
+            self._notes_rows: List = []  # (title, path) rows of the Notatki section
+            self._recent_paths: List = []  # legacy hook (transcriptClicked_)
+            self._asked_rows: List = []  # ask-history entries behind rail rows
             self._window = None
             self._keep_timer = None
             self._dismiss_timer = None
@@ -902,19 +945,28 @@ if _APPKIT_AVAILABLE:
             self._scroll = None
             self._scroll_y = 0.0
             # pull (recall) surface — Faza 3
-            self._mode = "insight"          # "insight" (push) | "recall" (pull)
-            self._recall = None             # RecallResults view-model when in recall mode
+            self._mode = "insight"  # "insight" | "recall" | "note"
+            # in-app note reader (markdown-reader plan)
+            self._note_path = None  # Path of the note shown in "note" mode
+            self._note_html = ""  # rendered page for _note_path
+            self._note_stack: List = []  # wikilink breadcrumb (previous paths)
+            self._note_return_mode = "insight"  # mode „← Wróć" exits to
+            self._webview = None  # persistent WKWebView (note mode)
+            self._webview_path = None  # note whose HTML the webview holds
+            self._recall = None  # RecallResults view-model when in recall mode
             self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
-            self._query = ""                # last query text (persists across rebuilds)
-            self._recall_loading = False    # search in flight (off the main thread)
-            self._recall_status = "ok"      # "ok" | "empty" | "unavailable" (honest states)
-            self._pending_recall = None     # worker→main-thread handoff payload
-            self._recall_raw: List = []     # raw hits kept for the synthesis escalation
-            self._answer = None             # RecallAnswer once synthesized (the LLM door)
-            self._answer_loading = False    # synthesis in flight
-            self._pending_answer = None     # synth worker→main-thread handoff
-            self._synth_note_ids: List[str] = []  # tag -> note_id for answer-card ↗ open
-            self._answer_failed = False     # last synthesis attempt returned nothing
+            self._query = ""  # last query text (persists across rebuilds)
+            self._recall_loading = False  # search in flight (off the main thread)
+            self._recall_status = "ok"  # "ok" | "empty" | "unavailable" (honest states)
+            self._pending_recall = None  # worker→main-thread handoff payload
+            self._recall_raw: List = []  # raw hits kept for the synthesis escalation
+            self._answer = None  # RecallAnswer once synthesized (the LLM door)
+            self._answer_loading = False  # synthesis in flight
+            self._pending_answer = None  # synth worker→main-thread handoff
+            self._synth_note_ids: List[str] = (
+                []
+            )  # tag -> note_id for answer-card ↗ open
+            self._answer_failed = False  # last synthesis attempt returned nothing
             # Monotonic generation token: every new search/navigation bumps it, and
             # an off-thread search OR synthesis result is applied only if its captured
             # epoch still matches — text equality alone can't tell a stale answer
@@ -1102,7 +1154,9 @@ if _APPKIT_AVAILABLE:
             """One 30px accordion header: label · counter · chevron (C8)."""
             from src.ui.hover import make_hover_button
 
-            btn = make_hover_button(NSMakeRect(6, y, frame.size.width - 12, _SEC_H - 2)) or (
+            btn = make_hover_button(
+                NSMakeRect(6, y, frame.size.width - 12, _SEC_H - 2)
+            ) or (
                 NSButton.alloc().initWithFrame_(
                     NSMakeRect(6, y, frame.size.width - 12, _SEC_H - 2)
                 )
@@ -1128,8 +1182,10 @@ if _APPKIT_AVAILABLE:
             cnt_style = "rail_count" if gold else "menu_shortcut"
             cw = _typo_width(str(count), cnt_style) + 6
             cnt = _typo_label(
-                str(count), cnt_style,
-                NSMakeRect(w - 22 - cw, 7, cw, 14), wrapping=False,
+                str(count),
+                cnt_style,
+                NSMakeRect(w - 22 - cw, 7, cw, 14),
+                wrapping=False,
             )
             btn.addSubview_(cnt)
             car = _label("›", 11.0, _muted())
@@ -1151,8 +1207,12 @@ if _APPKIT_AVAILABLE:
             # insight mode; Zapytałeś → last query (or the ask empty state).
             # Notatki is pure navigation — the reader keeps its content.
             if key == "serendypacje":
+                if self._mode == "note":
+                    self._exit_note_mode()
                 self._mode = "insight"
             elif key == "zapytales":
+                if self._mode == "note":
+                    self._exit_note_mode()
                 self._mode = "recall"
             self._render()
 
@@ -1179,7 +1239,9 @@ if _APPKIT_AVAILABLE:
             scroll.setBorderType_(0)
             doc.setFrame_(
                 NSMakeRect(
-                    0, 0, frame.size.width,
+                    0,
+                    0,
+                    frame.size.width,
                     max(content_h, frame.size.height - frame_y),
                 )
             )
@@ -1262,7 +1324,8 @@ if _APPKIT_AVAILABLE:
                 # icon (template SF symbol, tinted like the segment text)
                 empty = n == 0 and not active
                 tint = (
-                    _c(250, 243, 226) if active
+                    _c(250, 243, 226)
+                    if active
                     else (_c(140, 130, 115) if empty else _c(176, 162, 141))
                 )
                 img = style.sf_symbol(symbol, point=10.5, weight="medium")
@@ -1282,18 +1345,23 @@ if _APPKIT_AVAILABLE:
                 if active:  # label rides only on the active segment
                     lw = _typo_width(label, "seg_label") + 4
                     lab = _typo_label(
-                        label, "seg_label",
-                        NSMakeRect(tx, (item_h - 13) / 2.0, lw, 13), wrapping=False,
+                        label,
+                        "seg_label",
+                        NSMakeRect(tx, (item_h - 13) / 2.0, lw, 13),
+                        wrapping=False,
                     )
                     seg.addSubview_(lab)
                     tx += lw + 5
                 cnt_col = (
-                    _c(217, 84, 42) if active
+                    _c(217, 84, 42)
+                    if active
                     else (_c(90, 82, 73) if empty else _c(111, 102, 90))
                 )
                 cnt = _label(str(n), 10.0, cnt_col)
                 try:
-                    cnt.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10.0, 0.0))
+                    cnt.setFont_(
+                        NSFont.monospacedDigitSystemFontOfSize_weight_(10.0, 0.0)
+                    )
                 except Exception:  # pragma: no cover
                     pass
                 cnt.setFrame_(NSMakeRect(tx, (item_h - 13) / 2.0, 30, 13))
@@ -1318,7 +1386,8 @@ if _APPKIT_AVAILABLE:
                 im.DISMISSED: "Nic odrzuconego.",
             }[self._deck.view]
             sent = _typo_label(
-                copy, "rail_snippet",
+                copy,
+                "rail_snippet",
                 NSMakeRect(10, top + 10, frame.size.width - 20, 40),
             )
             sent.setMaximumNumberOfLines_(3)
@@ -1326,7 +1395,10 @@ if _APPKIT_AVAILABLE:
             counts = self._deck.counts()
             bridge = None
             if self._deck.view != im.KEPT and counts.get(im.KEPT, 0) > 0:
-                bridge = (f"Zachowane czekają — {counts[im.KEPT]}", "bridgeToKeptClicked:")
+                bridge = (
+                    f"Zachowane czekają — {counts[im.KEPT]}",
+                    "bridgeToKeptClicked:",
+                )
             elif self._deck.view != im.NEW and counts.get(im.NEW, 0) > 0:
                 bridge = (f"Nowe czekają — {counts[im.NEW]}", "bridgeToNewClicked:")
             if bridge is None:
@@ -1385,7 +1457,9 @@ if _APPKIT_AVAILABLE:
                 return fallback
 
         @objc.python_method
-        def _add_icon_text_row(self, doc, y, width, symbol, text, tag, action, active=False):
+        def _add_icon_text_row(
+            self, doc, y, width, symbol, text, tag, action, active=False
+        ):
             """Shared row for Zapytałeś / Notatki: 18px icon column + 12.5px
             text clamped to 2 lines (C8), terracotta bar on the active query."""
             from src.ui import style
@@ -1413,7 +1487,9 @@ if _APPKIT_AVAILABLE:
                 btn.addSubview_(bar)
             img = style.sf_symbol(symbol, point=12.0, weight="regular")
             if img is not None:
-                iv = NSImageView.alloc().initWithFrame_(NSMakeRect(9, (h - 4 - 18) / 2.0, 18, 18))
+                iv = NSImageView.alloc().initWithFrame_(
+                    NSMakeRect(9, (h - 4 - 18) / 2.0, 18, 18)
+                )
                 iv.setImage_(img)
                 try:
                     iv.setContentTintColor_(_c(176, 162, 141))
@@ -1423,7 +1499,8 @@ if _APPKIT_AVAILABLE:
             text_w = width - 4 - 42
             th = min(_typo_measure(text, "rail_title_quiet", text_w), h - 8)
             lab = _typo_label(
-                text, "rail_title_quiet",
+                text,
+                "rail_title_quiet",
                 NSMakeRect(34, max((h - 4 - th) / 2.0, 2.0), text_w, th),
             )
             lab.setMaximumNumberOfLines_(2)
@@ -1444,15 +1521,21 @@ if _APPKIT_AVAILABLE:
             if not self._asked_rows:
                 sent = _typo_label(
                     "Zapytaj swój korpus — historia pytań zostanie tutaj.",
-                    "rail_snippet", NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
+                    "rail_snippet",
+                    NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
                 )
                 sent.setMaximumNumberOfLines_(3)
                 doc.addSubview_(sent)
                 cy += 60
             for i, entry in enumerate(self._asked_rows):
                 cy = self._add_icon_text_row(
-                    doc, cy, frame.size.width, "magnifyingglass",
-                    entry["query"], i, "askedRowClicked:",
+                    doc,
+                    cy,
+                    frame.size.width,
+                    "magnifyingglass",
+                    entry["query"],
+                    i,
+                    "askedRowClicked:",
                     active=(self._mode == "recall" and entry["query"] == self._query),
                 )
             if self._asked_rows:
@@ -1491,8 +1574,8 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_notes_body(self, holder, frame):
-            # §7: corpus navigation, not an editor — a click opens the note in
-            # the user's opener; Timshel never edits notes.
+            # §7: corpus navigation, not an editor — a click renders the note
+            # in the in-app reader (read-only); editing stays in the opener.
             doc = _DashFlippedView.alloc().initWithFrame_(
                 NSMakeRect(0, 0, frame.size.width, 10)
             )
@@ -1500,15 +1583,21 @@ if _APPKIT_AVAILABLE:
             if not self._notes_rows:
                 sent = _typo_label(
                     "Brak notatek w korpusie — zaimportuj audio albo transkrypty.",
-                    "rail_snippet", NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
+                    "rail_snippet",
+                    NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
                 )
                 sent.setMaximumNumberOfLines_(3)
                 doc.addSubview_(sent)
                 cy += 60
             for i, row in enumerate(self._notes_rows):
                 cy = self._add_icon_text_row(
-                    doc, cy, frame.size.width, "doc.text",
-                    str(row.get("label", "")), i, "notesRowClicked:",
+                    doc,
+                    cy,
+                    frame.size.width,
+                    "doc.text",
+                    str(row.get("label", "")),
+                    i,
+                    "notesRowClicked:",
                 )
             holder.addSubview_(self._wrap_in_scroll(doc, cy, 0.0, frame))
 
@@ -1517,7 +1606,10 @@ if _APPKIT_AVAILABLE:
             if 0 <= i < len(self._notes_rows):
                 path = self._notes_rows[i].get("path")
                 if path is not None:
-                    self._invoke_callback("open_transcript", path)
+                    # A rail row is a fresh entry, not a wikilink hop — it must
+                    # not grow the breadcrumb („← Wróć" exits in one press).
+                    self._note_stack = []
+                    self._open_note_in_reader(path, push=False)
 
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
@@ -1552,7 +1644,9 @@ if _APPKIT_AVAILABLE:
             # C2: padding 10/11/11 · sigil 26 · cols 26px/1fr gap 10 ·
             # label 12.5/600 · snippet 12 clamped to 2 lines.
             btn.addSubview_(
-                _sigil(NSMakeRect(11, 10, 26, 26), conn.layout(), conn.resolved_tcolor())
+                _sigil(
+                    NSMakeRect(11, 10, 26, 26), conn.layout(), conn.resolved_tcolor()
+                )
             )
 
             text_x = 47.0
@@ -1572,7 +1666,8 @@ if _APPKIT_AVAILABLE:
             btn.addSubview_(lab)
 
             snip = _typo_label(
-                conn.snippet, "rail_snippet",
+                conn.snippet,
+                "rail_snippet",
                 NSMakeRect(text_x, 27, text_w, frame.size.height - 27 - 6),
             )
             snip.setMaximumNumberOfLines_(2)
@@ -1696,7 +1791,9 @@ if _APPKIT_AVAILABLE:
             top_y = _HEADER_H + _TOOLBAR_H
 
             scrim = NSButton.alloc().initWithFrame_(
-                NSMakeRect(reader_x, top_y, b.size.width - reader_x, b.size.height - top_y)
+                NSMakeRect(
+                    reader_x, top_y, b.size.width - reader_x, b.size.height - top_y
+                )
             )
             scrim.setTitle_("")
             scrim.setBordered_(False)
@@ -1713,7 +1810,9 @@ if _APPKIT_AVAILABLE:
             self._sheet_entries = entries
             self._hist_idx = -1
             ROW_H, HEAD_H, FOOT_H, PADV = 34.0, 26.0, 26.0, 8.0
-            sheet_h = PADV * 2 + FOOT_H + (HEAD_H + ROW_H * len(entries) if entries else 34.0)
+            sheet_h = (
+                PADV * 2 + FOOT_H + (HEAD_H + ROW_H * len(entries) if entries else 34.0)
+            )
             sheet_w = min(_SHEET_W, b.size.width - reader_x - 24.0)
             sx = b.size.width - 12.0 - sheet_w  # aligned to the field's right edge
             sheet = _DashFlippedView.alloc().initWithFrame_(
@@ -1741,8 +1840,10 @@ if _APPKIT_AVAILABLE:
             cy = PADV
             if entries:
                 head = _typo_label(
-                    "Ostatnie pytania", "collapsed_h",
-                    NSMakeRect(14, cy + 4, sheet_w - 28, 14), wrapping=False,
+                    "Ostatnie pytania",
+                    "collapsed_h",
+                    NSMakeRect(14, cy + 4, sheet_w - 28, 14),
+                    wrapping=False,
                 )
                 sheet.addSubview_(head)
                 cy += HEAD_H
@@ -1786,12 +1887,15 @@ if _APPKIT_AVAILABLE:
             else:
                 hintl = _label(
                     "Zadaj pierwsze pytanie — historia zostanie tutaj.",
-                    12.0, _muted(),
+                    12.0,
+                    _muted(),
                 )
                 hintl.setFrame_(NSMakeRect(14, cy + 6, sheet_w - 28, 16))
                 sheet.addSubview_(hintl)
                 cy += 34.0
-            foot = _label("↵ zapytaj · ↑↓ historia · esc zamknij", 11.0, _c(111, 102, 90))
+            foot = _label(
+                "↵ zapytaj · ↑↓ historia · esc zamknij", 11.0, _c(111, 102, 90)
+            )
             foot.setFrame_(NSMakeRect(14, cy + 5, sheet_w - 28, 14))
             sheet.addSubview_(foot)
             content.addSubview_(sheet)
@@ -1829,7 +1933,9 @@ if _APPKIT_AVAILABLE:
         @objc.python_method
         def _build_reader(self, frame):
             view = _DashFlippedView.alloc().initWithFrame_(frame)
-            div = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, _hairline(), frame.size.height))
+            div = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, _hairline(), frame.size.height)
+            )
             div.setWantsLayer_(True)
             if div.layer() is not None:
                 div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
@@ -1840,11 +1946,101 @@ if _APPKIT_AVAILABLE:
             # content now starts directly under the native titlebar. In Pytanie
             # the question becomes the reader title, not a field.
             top = 0.0
-            if self._mode == "recall":
+            if self._mode == "note":
+                self._build_note_reader(view, frame, top)
+            elif self._mode == "recall":
                 self._build_recall_reader(view, frame, top)
             else:
                 self._build_insight_reader(view, frame, top)
             return view
+
+        @objc.python_method
+        def _build_note_reader(self, view, frame, top):
+            """In-app note view: native header (Wróć / Otwórz w Obsidianie)
+            over a WKWebView with the rendered note. Read-only by design —
+            Timshel never edits notes; editing stays in the user's opener."""
+            head_h = 40.0
+            back = _pill_button(
+                "← Wróć",
+                NSMakeRect(_READER_PAD_X, top + 7, 88, 26),
+                _c(200, 188, 168),
+                None,
+                None,
+                self,
+                "noteBackClicked:",
+                12.5,
+            )
+            view.addSubview_(back)
+            # The escape hatch honors the configured opener — don't claim
+            # Obsidian when the click will launch a different editor.
+            opener = str(getattr(config, "NOTE_OPENER", "obsidian") or "obsidian")
+            ext_label = (
+                "Otwórz w Obsidianie ↗"
+                if opener == "obsidian"
+                else "Otwórz w edytorze ↗"
+            )
+            open_w = 176.0
+            ext = _pill_button(
+                ext_label,
+                NSMakeRect(
+                    frame.size.width - _READER_PAD_X - open_w, top + 7, open_w, 26
+                ),
+                _c(140, 130, 115),
+                None,
+                None,
+                self,
+                "noteOpenExternalClicked:",
+                12.5,
+            )
+            view.addSubview_(ext)
+            div = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, top + head_h, frame.size.width, _hairline())
+            )
+            div.setWantsLayer_(True)
+            if div.layer() is not None:
+                div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+            view.addSubview_(div)
+
+            web_y = top + head_h + _hairline()
+            web_rect = NSMakeRect(0, web_y, frame.size.width, frame.size.height - web_y)
+            if not _WEBKIT_AVAILABLE:  # pragma: no cover - stripped env
+                lbl = _wrapping_label(
+                    "Podgląd niedostępny — otwórz notatkę w Obsidianie.",
+                    13.0,
+                    _muted(),
+                    NSMakeRect(
+                        _READER_PAD_X,
+                        web_y + 16,
+                        frame.size.width - 2 * _READER_PAD_X,
+                        40,
+                    ),
+                )
+                view.addSubview_(lbl)
+                return
+            # ONE persistent webview per window session: re-parented across
+            # re-renders (resize, updateDeck_, setTranscribing_) so the user's
+            # reading position survives them; the page reloads only when the
+            # shown note actually changes.
+            web = self._webview
+            if web is None:
+                cfg = WKWebViewConfiguration.alloc().init()
+                prefs = WKWebpagePreferences.alloc().init()
+                prefs.setAllowsContentJavaScript_(False)
+                cfg.setDefaultWebpagePreferences_(prefs)
+                web = WKWebView.alloc().initWithFrame_configuration_(web_rect, cfg)
+                web.setNavigationDelegate_(self)
+                try:
+                    # No white flash before the dark page paints.
+                    web.setValue_forKey_(False, "drawsBackground")
+                except Exception:  # pragma: no cover - KVC gone in a future OS
+                    pass
+                self._webview = web
+            else:
+                web.setFrame_(web_rect)
+            if self._webview_path != self._note_path:
+                web.loadHTMLString_baseURL_(self._note_html, None)
+                self._webview_path = self._note_path
+            view.addSubview_(web)
 
         @objc.python_method
         def _build_insight_reader(self, view, frame, top):
@@ -1878,9 +2074,7 @@ if _APPKIT_AVAILABLE:
             scroll.setDrawsBackground_(False)
             scroll.setBorderType_(0)
             doc, content_h = self._build_reader_content(frame.size.width, conn)
-            doc.setFrame_(
-                NSMakeRect(0, 0, frame.size.width, max(content_h, scroll_h))
-            )
+            doc.setFrame_(NSMakeRect(0, 0, frame.size.width, max(content_h, scroll_h)))
             scroll.setDocumentView_(doc)
             self._scroll = scroll
             # Preserve scroll position across the full rebuild — otherwise ticking
@@ -1895,7 +2089,9 @@ if _APPKIT_AVAILABLE:
             # pinned quiet footer — never cropped, never morphing (C5)
             self._build_footer(
                 view,
-                NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H),
+                NSMakeRect(
+                    0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H
+                ),
                 overflow=content_h > scroll_h,
             )
 
@@ -1941,9 +2137,14 @@ if _APPKIT_AVAILABLE:
             left = pad
             if self._mode == "recall":
                 back = _pill_button(
-                    "‹ Podsunięte", NSMakeRect(pad, fy + 6, 118, 26),
-                    _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                    self, "backToInsightsClicked:", 12.0,
+                    "‹ Podsunięte",
+                    NSMakeRect(pad, fy + 6, 118, 26),
+                    _cream_soft(),
+                    _c(255, 255, 255, 0.05),
+                    _c(255, 255, 255, 0.16),
+                    self,
+                    "backToInsightsClicked:",
+                    12.0,
                 )
                 strip.addSubview_(back)
                 left = pad + 130
@@ -2002,25 +2203,35 @@ if _APPKIT_AVAILABLE:
                 return cy
             done, total = snap.get("done", 0), snap.get("total", 0)
             count = f"  ({done}/{total})" if total else ""
-            band = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 30))
+            band = NSView.alloc().initWithFrame_(
+                NSMakeRect(_READER_PAD_X, cy, inner_w, 30)
+            )
             band.setWantsLayer_(True)
             if band.layer() is not None:
                 band.layer().setBackgroundColor_(_c(214, 176, 51, 0.08).CGColor())
                 band.layer().setCornerRadius_(6.0)
             doc.addSubview_(band)
-            lbl = _label(f"Indeksuję Twoje notatki{count} — możesz pytać już teraz "
-                         f"(wyniki częściowe).", 12, _gold())
+            lbl = _label(
+                f"Indeksuję Twoje notatki{count} — możesz pytać już teraz "
+                f"(wyniki częściowe).",
+                12,
+                _gold(),
+            )
             lbl.setFrame_(NSMakeRect(_READER_PAD_X + 10, cy + 7, inner_w - 20, 16))
             doc.addSubview_(lbl)
             return cy + 40
 
         @objc.python_method
         def _build_recall_content(self, reader_w, vm):
-            doc = _DashFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, reader_w, 10))
+            doc = _DashFlippedView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, reader_w, 10)
+            )
             inner_w = reader_w - 2 * _READER_PAD_X
             cy = _PAD
             self._recall_note_ids = []
-            self._synth_note_ids = []  # reset in lockstep — never carry stale answer tags
+            self._synth_note_ids = (
+                []
+            )  # reset in lockstep — never carry stale answer tags
 
             # honest partial-index banner while the background backfill is still running
             cy = self._build_index_banner(doc, cy, inner_w)
@@ -2029,20 +2240,28 @@ if _APPKIT_AVAILABLE:
             # field: small "Zapytałeś" eyebrow + the query as a 21pt display title.
             if self._query:
                 eye = _typo_label(
-                    "Zapytałeś", "collapsed_h", NSMakeRect(_READER_PAD_X, cy, inner_w, 13),
+                    "Zapytałeś",
+                    "collapsed_h",
+                    NSMakeRect(_READER_PAD_X, cy, inner_w, 13),
                     wrapping=False,
                 )
                 doc.addSubview_(eye)
                 cy += 20
                 measure = min(inner_w, _THESIS_MEASURE)
                 qh = max(24.0, _typo_measure(self._query, "question_title", measure))
-                doc.addSubview_(_typo_label(
-                    self._query, "question_title",
-                    NSMakeRect(_READER_PAD_X, cy, measure, qh)))
+                doc.addSubview_(
+                    _typo_label(
+                        self._query,
+                        "question_title",
+                        NSMakeRect(_READER_PAD_X, cy, measure, qh),
+                    )
+                )
                 cy += qh + 12
 
             if self._recall_loading:
-                lbl = _label("Szukam w Twoich notatkach…  (lokalnie, bez AI)", 13.5, _muted())
+                lbl = _label(
+                    "Szukam w Twoich notatkach…  (lokalnie, bez AI)", 13.5, _muted()
+                )
                 lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
                 doc.addSubview_(lbl)
                 cy += 30
@@ -2053,7 +2272,10 @@ if _APPKIT_AVAILABLE:
                 lbl = _wrapping_label(
                     "Zapytaj swój korpus — ⌘K albo pole nad czytnikiem "
                     "(globalnie: ⌃⌥Space). Przeszukam Twoje notatki lokalnie.",
-                    15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 26))
+                    15,
+                    _muted(),
+                    NSMakeRect(_READER_PAD_X, cy, inner_w, 26),
+                )
                 doc.addSubview_(lbl)
                 cy += 34
                 # Privacy disclosure — the trust backbone: local search, cloud only on
@@ -2064,9 +2286,14 @@ if _APPKIT_AVAILABLE:
                     "„Zsyntetyzuj”."
                 )
                 ph = _measure_height(privacy, 12, inner_w)
-                doc.addSubview_(_wrapping_label(
-                    privacy, 12, _c(111, 102, 90),
-                    NSMakeRect(_READER_PAD_X, cy, inner_w, ph)))
+                doc.addSubview_(
+                    _wrapping_label(
+                        privacy,
+                        12,
+                        _c(111, 102, 90),
+                        NSMakeRect(_READER_PAD_X, cy, inner_w, ph),
+                    )
+                )
                 doc.setFrameSize_(NSMakeSize(reader_w, cy + ph + 20))
                 return doc, cy + ph + 20
 
@@ -2076,7 +2303,9 @@ if _APPKIT_AVAILABLE:
                 doc.addSubview_(meta)
                 cy += 22
 
-            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
+            rule = NSView.alloc().initWithFrame_(
+                NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline())
+            )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
                 rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
@@ -2111,19 +2340,29 @@ if _APPKIT_AVAILABLE:
             # your notes about X" when the search couldn't actually run.
             if self._recall_status == "empty":
                 head = "Twoje notatki nie są jeszcze zaindeksowane."
-                sub = ("Recall potrzebuje jednorazowego zindeksowania vaulta, zanim "
-                       "przeszuka — to nie znaczy, że nic nie ma. (Auto-backfill: wkrótce.)")
+                sub = (
+                    "Recall potrzebuje jednorazowego zindeksowania vaulta, zanim "
+                    "przeszuka — to nie znaczy, że nic nie ma. (Auto-backfill: wkrótce.)"
+                )
             else:  # "unavailable"
                 head = "Nie udało się przeszukać notatek."
-                sub = ("Indeks lub lokalny model nie są jeszcze gotowe — spróbuj "
-                       "ponownie za chwilę. To nie znaczy, że nic nie ma.")
+                sub = (
+                    "Indeks lub lokalny model nie są jeszcze gotowe — spróbuj "
+                    "ponownie za chwilę. To nie znaczy, że nic nie ma."
+                )
             hh = max(24.0, _measure_height(head, 20, inner_w))
-            doc.addSubview_(_wrapping_label(
-                head, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            doc.addSubview_(
+                _wrapping_label(
+                    head, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)
+                )
+            )
             cy += hh + 8
             sh = max(18.0, _measure_height(sub, 13.5, inner_w))
-            doc.addSubview_(_wrapping_label(
-                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            doc.addSubview_(
+                _wrapping_label(
+                    sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)
+                )
+            )
             cy += sh + 12
             return cy
 
@@ -2131,7 +2370,9 @@ if _APPKIT_AVAILABLE:
         def _build_escalation(self, doc, cy, inner_w, reader_w):
             # The one LLM door: explicit, gold, and honest that excerpts leave the Mac.
             cy += 8
-            rule = NSView.alloc().initWithFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline()))
+            rule = NSView.alloc().initWithFrame_(
+                NSMakeRect(_READER_PAD_X, cy, inner_w, _hairline())
+            )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
                 rule.layer().setBackgroundColor_(_c(214, 176, 51, 0.22).CGColor())
@@ -2140,17 +2381,29 @@ if _APPKIT_AVAILABLE:
             if self._answer_loading:
                 lbl = _label(
                     "Syntetyzuję…  (jedyny moment, gdy dopasowane fragmenty idą do Claude)",
-                    12.5, _gold())
+                    12.5,
+                    _gold(),
+                )
                 lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
                 doc.addSubview_(lbl)
                 cy += 28
                 return cy
             btn = _pill_button(
-                "✦ Zsyntetyzuj te wyniki", NSMakeRect(_READER_PAD_X, cy, 214, 30),
-                _c(244, 221, 142), _c(214, 176, 51, 0.08), _c(214, 176, 51, 0.5),
-                self, "synthesizeClicked:", 13.0)
+                "✦ Zsyntetyzuj te wyniki",
+                NSMakeRect(_READER_PAD_X, cy, 214, 30),
+                _c(244, 221, 142),
+                _c(214, 176, 51, 0.08),
+                _c(214, 176, 51, 0.5),
+                self,
+                "synthesizeClicked:",
+                13.0,
+            )
             doc.addSubview_(btn)
-            note = _label("Tylko teraz fragmenty świadomie opuszczają Maca.", 11.5, _c(140, 130, 115))
+            note = _label(
+                "Tylko teraz fragmenty świadomie opuszczają Maca.",
+                11.5,
+                _c(140, 130, 115),
+            )
             note.setFrame_(NSMakeRect(_READER_PAD_X + 226, cy + 7, inner_w - 226, 16))
             doc.addSubview_(note)
             cy += 40
@@ -2163,13 +2416,20 @@ if _APPKIT_AVAILABLE:
             answered = getattr(ans, "answered", True)
             eye = _eyebrow(
                 "✦ Synteza" if answered else "✦ Synteza — brak pokrycia w notatkach",
-                _gold() if answered else _muted())
+                _gold() if answered else _muted(),
+            )
             eye.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 130, 13))
             doc.addSubview_(eye)
             back = _pill_button(
-                "‹ tylko wyniki", NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
-                _cream_soft(), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                self, "clearAnswerClicked:", 11.5)
+                "‹ tylko wyniki",
+                NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
+                _cream_soft(),
+                _c(255, 255, 255, 0.05),
+                _c(255, 255, 255, 0.16),
+                self,
+                "clearAnswerClicked:",
+                11.5,
+            )
             doc.addSubview_(back)
             cy += 24
 
@@ -2178,8 +2438,11 @@ if _APPKIT_AVAILABLE:
             thesis = "„" + (getattr(ans, "thesis", "") or "") + "”"
             tcolor = _cream() if answered else _c(176, 162, 141)
             th = max(28.0, _measure_height(thesis, 22, inner_w))
-            doc.addSubview_(_wrapping_label(
-                thesis, 22, tcolor, NSMakeRect(_READER_PAD_X, cy, inner_w, th)))
+            doc.addSubview_(
+                _wrapping_label(
+                    thesis, 22, tcolor, NSMakeRect(_READER_PAD_X, cy, inner_w, th)
+                )
+            )
             cy += th + 14
 
             for ev in getattr(ans, "evidence", None) or []:
@@ -2194,13 +2457,26 @@ if _APPKIT_AVAILABLE:
                 for d in dirs:
                     line = "→  " + (d or "").strip()
                     lh = max(18.0, _measure_height(line, 13.5, inner_w))
-                    doc.addSubview_(_wrapping_label(
-                        line, 13.5, _cream_soft(), NSMakeRect(_READER_PAD_X, cy, inner_w, lh)))
+                    doc.addSubview_(
+                        _wrapping_label(
+                            line,
+                            13.5,
+                            _cream_soft(),
+                            NSMakeRect(_READER_PAD_X, cy, inner_w, lh),
+                        )
+                    )
                     cy += lh + 6
 
             save = _pill_button(
-                "⤓ Zapisz do notatek", NSMakeRect(_READER_PAD_X, cy + 6, 170, 28),
-                _c(255, 255, 255), _terra_deep(), _terra_deep(), self, "saveAnswerClicked:", 12.5)
+                "⤓ Zapisz do notatek",
+                NSMakeRect(_READER_PAD_X, cy + 6, 170, 28),
+                _c(255, 255, 255),
+                _terra_deep(),
+                _terra_deep(),
+                self,
+                "saveAnswerClicked:",
+                12.5,
+            )
             doc.addSubview_(save)
             cy += 46
             return cy
@@ -2210,23 +2486,35 @@ if _APPKIT_AVAILABLE:
             from src.ui.recall_presenter import split_stem
 
             date, title = split_stem(getattr(ev, "note", "") or "")
-            top = f"{date}   ·   {title}" if date else (title or getattr(ev, "note", ""))
+            top = (
+                f"{date}   ·   {title}" if date else (title or getattr(ev, "note", ""))
+            )
             tl = _label(top, 12.0, _muted())
             tl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w - 40, 16))
             doc.addSubview_(tl)
             idx = len(self._synth_note_ids)
             self._synth_note_ids.append(getattr(ev, "note", "") or "")
             ob = _pill_button(
-                "↗", NSMakeRect(reader_w - _READER_PAD_X - 30, cy - 2, 30, 22),
-                _terracotta(), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
-                self, "synthOpenClicked:", 12.0)
+                "↗",
+                NSMakeRect(reader_w - _READER_PAD_X - 30, cy - 2, 30, 22),
+                _terracotta(),
+                _c(255, 255, 255, 0.0),
+                _c(255, 255, 255, 0.0),
+                self,
+                "synthOpenClicked:",
+                12.0,
+            )
             ob.setTag_(idx)
             doc.addSubview_(ob)
             cy += 19
             quote = "„" + (getattr(ev, "quote", "") or "") + "”"
             qh = max(16.0, _measure_height(quote, 13.5, inner_w - 12))
-            lbl = _wrapping_label(quote, 13.5, _cream_soft(),
-                                  NSMakeRect(_READER_PAD_X + 12, cy, inner_w - 12, qh))
+            lbl = _wrapping_label(
+                quote,
+                13.5,
+                _cream_soft(),
+                NSMakeRect(_READER_PAD_X + 12, cy, inner_w - 12, qh),
+            )
             doc.addSubview_(lbl)
             cy += qh + 12
             return cy
@@ -2244,23 +2532,32 @@ if _APPKIT_AVAILABLE:
             # Top line: date (mono, gold) + title (bold) — the redline split.
             tx = text_x
             if row.date:
-                dlab = _typo_label(row.date, "result_date",
-                                   NSMakeRect(tx, cy, 60, 16), wrapping=False)
+                dlab = _typo_label(
+                    row.date, "result_date", NSMakeRect(tx, cy, 60, 16), wrapping=False
+                )
                 doc.addSubview_(dlab)
                 tx += _text_width(row.date, 11.5) + 16
             if row.title:
-                tlab = _typo_label(row.title, "result_title",
-                                   NSMakeRect(tx, cy, text_w - (tx - text_x) - 96, 16),
-                                   wrapping=False)
+                tlab = _typo_label(
+                    row.title,
+                    "result_title",
+                    NSMakeRect(tx, cy, text_w - (tx - text_x) - 96, 16),
+                    wrapping=False,
+                )
                 tlab.setLineBreakMode_(4)
                 doc.addSubview_(tlab)
 
             idx = len(self._recall_note_ids)
             self._recall_note_ids.append(row.note_id)
             ob = _pill_button(
-                "↗ otwórz", NSMakeRect(reader_w - _READER_PAD_X - 84, cy - 3, 84, 22),
-                _c(224, 213, 191, 0.45), _c(255, 255, 255, 0.0), _c(255, 255, 255, 0.0),
-                self, "recallOpenClicked:", 11.5,
+                "↗ otwórz",
+                NSMakeRect(reader_w - _READER_PAD_X - 84, cy - 3, 84, 22),
+                _c(224, 213, 191, 0.45),
+                _c(255, 255, 255, 0.0),
+                _c(255, 255, 255, 0.0),
+                self,
+                "recallOpenClicked:",
+                11.5,
             )
             ob.setTag_(idx)
             doc.addSubview_(ob)
@@ -2271,17 +2568,23 @@ if _APPKIT_AVAILABLE:
             ql = _typo_label(quote, "result_quote", NSMakeRect(text_x, cy, text_w, qh))
             if row.dimmed:
                 from AppKit import (
-                    NSAttributedString, NSFontAttributeName,
-                    NSForegroundColorAttributeName, NSParagraphStyleAttributeName,
+                    NSAttributedString,
+                    NSFontAttributeName,
+                    NSForegroundColorAttributeName,
+                    NSParagraphStyleAttributeName,
                 )
                 from src.ui import typography as _T
+
                 at = _T.attributes("result_quote", color_alpha=0.45)
                 ql.setAttributedStringValue_(
-                    NSAttributedString.alloc().initWithString_attributes_(quote, at))
+                    NSAttributedString.alloc().initWithString_attributes_(quote, at)
+                )
             doc.addSubview_(ql)
             cy += qh + 12
 
-            sep = NSView.alloc().initWithFrame_(NSMakeRect(text_x, cy, text_w, _hairline()))
+            sep = NSView.alloc().initWithFrame_(
+                NSMakeRect(text_x, cy, text_w, _hairline())
+            )
             sep.setWantsLayer_(True)
             if sep.layer() is not None:
                 sep.layer().setBackgroundColor_(_c(255, 255, 255, 0.055).CGColor())
@@ -2293,14 +2596,22 @@ if _APPKIT_AVAILABLE:
         def _build_recall_abstinence(self, doc, vm, cy, inner_w, reader_w):
             head_txt = "Nic w Twoich notatkach na to pytanie."
             hh = max(24.0, _measure_height(head_txt, 20, inner_w))
-            doc.addSubview_(_wrapping_label(
-                head_txt, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)))
+            doc.addSubview_(
+                _wrapping_label(
+                    head_txt, 20, _cream(), NSMakeRect(_READER_PAD_X, cy, inner_w, hh)
+                )
+            )
             cy += hh + 8
-            sub = ("Search jest w 100% lokalny i niczego nie zmyśla — "
-                   "nic nie opuszcza Twojego Maca.")
+            sub = (
+                "Search jest w 100% lokalny i niczego nie zmyśla — "
+                "nic nie opuszcza Twojego Maca."
+            )
             sh = max(18.0, _measure_height(sub, 13.5, inner_w))
-            doc.addSubview_(_wrapping_label(
-                sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)))
+            doc.addSubview_(
+                _wrapping_label(
+                    sub, 13.5, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, sh)
+                )
+            )
             cy += sh + 20
 
             if vm.nearest is not None:
@@ -2327,7 +2638,9 @@ if _APPKIT_AVAILABLE:
                 self._invoke_callback("open_note", ids[i])
 
         def backToInsightsClicked_(self, sender):
-            self._epoch += 1          # invalidate any in-flight search/synthesis
+            self._epoch += 1  # invalidate any in-flight search/synthesis
+            if self._mode == "note":
+                self._exit_note_mode()
             self._mode = "insight"
             self._section = "serendypacje"
             self._recall = None
@@ -2352,6 +2665,8 @@ if _APPKIT_AVAILABLE:
             self._query = (text or "").strip()
             if not self._query:
                 self._reset_recall_flight()
+                if self._mode == "note":
+                    self._exit_note_mode()
                 self._mode = "insight"
                 self._recall_loading = False
                 self._render()
@@ -2361,6 +2676,8 @@ if _APPKIT_AVAILABLE:
             # download) must never block the AppKit UI, mirroring the digest/retranscribe
             # daemon threads.
             self._reset_recall_flight()
+            if self._mode == "note":
+                self._exit_note_mode()
             self._mode = "recall"
             self._section = "zapytales"  # the rail follows the executed pull
             self._recall_loading = True
@@ -2370,8 +2687,10 @@ if _APPKIT_AVAILABLE:
             import threading
 
             threading.Thread(
-                target=self._recall_worker_, args=(self._query, epoch),
-                name="RecallSearch", daemon=True,
+                target=self._recall_worker_,
+                args=(self._query, epoch),
+                name="RecallSearch",
+                daemon=True,
             ).start()
 
         @objc.python_method
@@ -2441,8 +2760,10 @@ if _APPKIT_AVAILABLE:
             import threading
 
             threading.Thread(
-                target=self._synth_worker_, args=(self._query, list(self._recall_raw), epoch),
-                name="RecallSynthesis", daemon=True,
+                target=self._synth_worker_,
+                args=(self._query, list(self._recall_raw), epoch),
+                name="RecallSynthesis",
+                daemon=True,
             ).start()
 
         @objc.python_method
@@ -2471,7 +2792,9 @@ if _APPKIT_AVAILABLE:
                 # Synthesis attempted but produced nothing (no key, disabled, or error) —
                 # tell the user instead of silently snapping back to the same results.
                 self._answer_failed = True
-                self._show_toast("Synteza niedostępna — sprawdź klucz API lub spróbuj ponownie")
+                self._show_toast(
+                    "Synteza niedostępna — sprawdź klucz API lub spróbuj ponownie"
+                )
             self._render()
 
         def synthesizeClicked_(self, sender):
@@ -2527,9 +2850,14 @@ if _APPKIT_AVAILABLE:
             """Present the ask-bar overlay (redesign C): a borderless floating
             NSPanel with a dark rounded field + terracotta focus ring."""
             from AppKit import (
-                NSApp, NSColor, NSTextField, NSFloatingWindowLevel,
-                NSBackingStoreBuffered, NSAttributedString,
-                NSForegroundColorAttributeName, NSFontAttributeName,
+                NSApp,
+                NSColor,
+                NSTextField,
+                NSFloatingWindowLevel,
+                NSBackingStoreBuffered,
+                NSAttributedString,
+                NSForegroundColorAttributeName,
+                NSFontAttributeName,
             )
 
             self._ensure_window()  # results land in the window; keep it realised
@@ -2569,13 +2897,13 @@ if _APPKIT_AVAILABLE:
                 container.layer().setBorderColor_(_c(217, 84, 42, 0.18).CGColor())
             panel.setContentView_(container)
 
-            fld = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(18, 12, W - 36, FLD_H)
-            )
+            fld = NSTextField.alloc().initWithFrame_(NSMakeRect(18, 12, W - 36, FLD_H))
             fld.setBordered_(False)
             fld.setBezeled_(False)
             fld.setDrawsBackground_(False)
-            fld.setFocusRingType_(1)  # NSFocusRingTypeNone — the ring is on the container
+            fld.setFocusRingType_(
+                1
+            )  # NSFocusRingTypeNone — the ring is on the container
             fld.setTextColor_(_c(250, 243, 226))
             ph = NSAttributedString.alloc().initWithString_attributes_(
                 "Zapytaj swój korpus…",
@@ -2653,11 +2981,16 @@ if _APPKIT_AVAILABLE:
 
             # header: sigil + type eyebrow + quiet provenance metadata (U5)
             doc.addSubview_(
-                _sigil(NSMakeRect(_READER_PAD_X, cy, 34, 34), conn.layout(), conn.resolved_tcolor())
+                _sigil(
+                    NSMakeRect(_READER_PAD_X, cy, 34, 34),
+                    conn.layout(),
+                    conn.resolved_tcolor(),
+                )
             )
             # type eyebrow — gold, uppercase, tracked (typography ramp)
             tlabel = _typo_label(
-                conn.resolved_label(), "eyebrow",
+                conn.resolved_label(),
+                "eyebrow",
                 NSMakeRect(_READER_PAD_X + 44, cy + 12, inner_w - 200, 14),
                 wrapping=False,
             )
@@ -2708,7 +3041,9 @@ if _APPKIT_AVAILABLE:
                     ban.layer().setBorderColor_(_c(91, 196, 149, 0.35).CGColor())
                 from src.ui import style as _style
 
-                ric = _style.sf_symbol("arrow.uturn.backward", point=11.0, weight="regular")
+                ric = _style.sf_symbol(
+                    "arrow.uturn.backward", point=11.0, weight="regular"
+                )
                 if ric is not None:
                     riv = NSImageView.alloc().initWithFrame_(NSMakeRect(12, 10, 14, 14))
                     riv.setImage_(ric)
@@ -2720,7 +3055,8 @@ if _APPKIT_AVAILABLE:
                 bl = _label(
                     "Odrzucone — możesz odzyskać. Zachowaj przeniesie to z "
                     "powrotem do Zachowanych.",
-                    12.0, _c(139, 224, 181),
+                    12.0,
+                    _c(139, 224, 181),
                 )
                 bl.setFrame_(NSMakeRect(32, 9, inner_w - 44, 16))
                 ban.addSubview_(bl)
@@ -2732,7 +3068,9 @@ if _APPKIT_AVAILABLE:
             measure = min(inner_w, _THESIS_MEASURE)
             th = max(30.0, _typo_measure(thesis, "thesis", measure))
             doc.addSubview_(
-                _typo_label(thesis, "thesis", NSMakeRect(_READER_PAD_X, cy, measure, th))
+                _typo_label(
+                    thesis, "thesis", NSMakeRect(_READER_PAD_X, cy, measure, th)
+                )
             )
             cy += th + 16
 
@@ -2742,7 +3080,9 @@ if _APPKIT_AVAILABLE:
             cx = _READER_PAD_X
             right_edge = reader_w - _READER_PAD_X
             for i, note in enumerate(conn.notes):
-                chip = self._chip(note, NSMakePoint(cx, cy), i, right_edge - _READER_PAD_X)
+                chip = self._chip(
+                    note, NSMakePoint(cx, cy), i, right_edge - _READER_PAD_X
+                )
                 w = chip.frame().size.width
                 if cx + w > right_edge and cx > _READER_PAD_X:
                     cx = _READER_PAD_X
@@ -2844,7 +3184,12 @@ if _APPKIT_AVAILABLE:
                 quote = "„" + ev.quote + "”"
                 qh = max(16.0, _measure_height(quote, 14, inner_w - 70))
                 doc.addSubview_(
-                    _wrapping_label(quote, 14, _cream_soft(), NSMakeRect(x + 60, cy, inner_w - 70, qh))
+                    _wrapping_label(
+                        quote,
+                        14,
+                        _cream_soft(),
+                        NSMakeRect(x + 60, cy, inner_w - 70, qh),
+                    )
                 )
                 cy += qh + 2
                 src = _label("◇ " + ev.note + " ↗", 11.5, _muted())
@@ -2917,7 +3262,8 @@ if _APPKIT_AVAILABLE:
                 btn.addSubview_(chk)
 
             line = _typo_label(
-                text, "direction",
+                text,
+                "direction",
                 NSMakeRect(text_x, PADTOP, text_w, row_h - PADTOP * 2 + 4),
             )
             if selected:  # 'on' → lit to full white
@@ -2928,6 +3274,7 @@ if _APPKIT_AVAILABLE:
                     NSParagraphStyleAttributeName,
                 )
                 from src.ui import typography as _T
+
                 at = _T.attributes("direction", color_alpha=1.0)
                 line.setAttributedStringValue_(
                     NSAttributedString.alloc().initWithString_attributes_(text, at)
@@ -2988,35 +3335,46 @@ if _APPKIT_AVAILABLE:
 
             if show_label:
                 lab = _typo_label(
-                    cnt, "dirbar_count",
-                    NSMakeRect(pad, _BAR_H / 2 - 8, label_w, 16), wrapping=False,
+                    cnt,
+                    "dirbar_count",
+                    NSMakeRect(pad, _BAR_H / 2 - 8, label_w, 16),
+                    wrapping=False,
                 )
                 bar.addSubview_(lab)
 
             # right-anchored: [icons] gap [split CTA]
             x_cta = max(pad, inner_w - pad - cta_w - CARET_W)
             sx = x_cta - GAP_CLUSTER - icons_w
-            for k, (symbol, tip, action) in enumerate((
-                ("checkmark.square", "Utwórz zadanie", "taskClicked:"),
-                ("calendar", "Do kalendarza", "calendarClicked:"),
-                ("doc.on.doc", "Kopiuj", "copyClicked:"),
-            )):
+            for k, (symbol, tip, action) in enumerate(
+                (
+                    ("checkmark.square", "Utwórz zadanie", "taskClicked:"),
+                    ("calendar", "Do kalendarza", "calendarClicked:"),
+                    ("doc.on.doc", "Kopiuj", "copyClicked:"),
+                )
+            ):
                 btn = _icon_button(
                     style.sf_symbol(symbol, point=13.0, weight="regular"),
                     tip,
                     NSMakeRect(sx + k * (ICON_W + GAP), BTN_Y, ICON_W, CTA_H),
-                    _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                    self, action,
+                    _c(201, 187, 166),
+                    _c(255, 255, 255, 0.05),
+                    _c(255, 255, 255, 0.16),
+                    self,
+                    action,
                 )
                 bar.addSubview_(btn)
 
             # --- primary CTA = split pill: [chip + label] | caret ---
-            LEFT_CORNERS = 1 | 4   # MinXMinY | MinXMaxY
+            LEFT_CORNERS = 1 | 4  # MinXMinY | MinXMaxY
             RIGHT_CORNERS = 2 | 8  # MaxXMinY | MaxXMaxY
             go = _pill_button(
-                "", NSMakeRect(x_cta, BTN_Y, cta_w, CTA_H),
-                white, _terra_deep(), _terra_deep(),
-                self, "continueLLMClicked:",
+                "",
+                NSMakeRect(x_cta, BTN_Y, cta_w, CTA_H),
+                white,
+                _terra_deep(),
+                _terra_deep(),
+                self,
+                "continueLLMClicked:",
             )
             if go.layer() is not None:
                 go.layer().setMaskedCorners_(LEFT_CORNERS)
@@ -3036,7 +3394,9 @@ if _APPKIT_AVAILABLE:
                 go.layer().setShadowOffset_(NSMakeSize(0, -3))
             go.setToolTip_("Przekaż wybrane kierunki do " + name)
             # white brand chip with the provider glyph tinted terracotta
-            chip = NSView.alloc().initWithFrame_(NSMakeRect(10, (CTA_H - 18) / 2.0, 18, 18))
+            chip = NSView.alloc().initWithFrame_(
+                NSMakeRect(10, (CTA_H - 18) / 2.0, 18, 18)
+            )
             chip.setWantsLayer_(True)
             if chip.layer() is not None:
                 chip.layer().setCornerRadius_(5.0)
@@ -3059,8 +3419,11 @@ if _APPKIT_AVAILABLE:
             caret = _pill_button(
                 "",
                 NSMakeRect(x_cta + cta_w, BTN_Y, CARET_W, CTA_H),
-                white, _terra_deep(), None,
-                self, "switchLLMClicked:",
+                white,
+                _terra_deep(),
+                None,
+                self,
+                "switchLLMClicked:",
             )
             cimg = style.sf_symbol("chevron.down", point=9.0, weight="semibold")
             if cimg is not None:
@@ -3105,7 +3468,9 @@ if _APPKIT_AVAILABLE:
             foot.setWantsLayer_(True)
             if foot.layer() is not None:
                 foot.layer().setBackgroundColor_(_c(16, 14, 21, 0.86).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
+            tdiv = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, frame.size.width, _hairline())
+            )
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
                 tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
@@ -3122,13 +3487,19 @@ if _APPKIT_AVAILABLE:
             vis = self._deck.visible()
             if vis:
                 pos = next(
-                    (k for k, (i, _cn) in enumerate(vis) if i == self._deck.active_index),
+                    (
+                        k
+                        for k, (i, _cn) in enumerate(vis)
+                        if i == self._deck.active_index
+                    ),
                     -1,
                 )
                 if pos >= 0:
                     ctr = _typo_label(
-                        f"{pos + 1} z {len(vis)}", "footer_counter",
-                        NSMakeRect(frame.size.width / 2 - 50, 15, 100, 16), wrapping=False,
+                        f"{pos + 1} z {len(vis)}",
+                        "footer_counter",
+                        NSMakeRect(frame.size.width / 2 - 50, 15, 100, 16),
+                        wrapping=False,
                     )
                     ctr.setAlignment_(1)
                     foot.addSubview_(ctr)
@@ -3137,16 +3508,26 @@ if _APPKIT_AVAILABLE:
             BTN_H = 34.0
             BTN_Y = (frame.size.height - BTN_H) / 2.0
             dismiss = _pill_button(
-                "Odrzuć", NSMakeRect(frame.size.width - 232, BTN_Y, 86, BTN_H),
-                _c(140, 130, 115), None, None,
-                self, "dismissClicked:", 12.5,
+                "Odrzuć",
+                NSMakeRect(frame.size.width - 232, BTN_Y, 86, BTN_H),
+                _c(140, 130, 115),
+                None,
+                None,
+                self,
+                "dismissClicked:",
+                12.5,
             )
             foot.addSubview_(dismiss)
             in_kept = self._deck.view == im.KEPT
             keep = _pill_button(
-                "", NSMakeRect(frame.size.width - 134, BTN_Y, 118, BTN_H),
-                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(91, 196, 149, 0.5),
-                self, "keepClicked:", 12.5,
+                "",
+                NSMakeRect(frame.size.width - 134, BTN_Y, 118, BTN_H),
+                _c(139, 224, 181),
+                _c(70, 177, 126, 0.16),
+                _c(91, 196, 149, 0.5),
+                self,
+                "keepClicked:",
+                12.5,
             )
             keep_label = "Zachowano" if in_kept else "Zachowaj"
             keep_symbol = "bookmark.fill" if in_kept else "bookmark"
@@ -3210,13 +3591,16 @@ if _APPKIT_AVAILABLE:
                 pass
             view.addSubview_(sig)
             h = _typo_label(
-                title, "empty_title",
-                NSMakeRect(bx, by + 46 + 14, block_w, 24), wrapping=False,
+                title,
+                "empty_title",
+                NSMakeRect(bx, by + 46 + 14, block_w, 24),
+                wrapping=False,
             )
             h.setAlignment_(1)
             view.addSubview_(h)
             p = _typo_label(
-                subtitle, "empty_desc",
+                subtitle,
+                "empty_desc",
                 NSMakeRect(bx, by + 46 + 14 + 24 + 7, block_w, sub_h),
             )
             p.setAlignment_(1)
@@ -3243,15 +3627,25 @@ if _APPKIT_AVAILABLE:
             for (text, action, jade), w in zip(actions, widths):
                 if jade:  # jade tinted — the bridge to saved insights
                     btn = _pill_button(
-                        text, NSMakeRect(ax, ay, w, 30),
-                        _c(139, 224, 181), _c(70, 177, 126, 0.16),
-                        _c(91, 196, 149, 0.5), self, action, 12.0,
+                        text,
+                        NSMakeRect(ax, ay, w, 30),
+                        _c(139, 224, 181),
+                        _c(70, 177, 126, 0.16),
+                        _c(91, 196, 149, 0.5),
+                        self,
+                        action,
+                        12.0,
                     )
                 else:  # ghost with a border — the ask entry
                     btn = _pill_button(
-                        text, NSMakeRect(ax, ay, w, 30),
-                        _c(201, 187, 166), _c(255, 255, 255, 0.04),
-                        _c(255, 255, 255, 0.16), self, action, 12.0,
+                        text,
+                        NSMakeRect(ax, ay, w, 30),
+                        _c(201, 187, 166),
+                        _c(255, 255, 255, 0.04),
+                        _c(255, 255, 255, 0.16),
+                        self,
+                        action,
+                        12.0,
                     )
                 view.addSubview_(btn)
                 ax += w + 10.0
@@ -3304,9 +3698,7 @@ if _APPKIT_AVAILABLE:
             # so a bare glyph measure truncates text that actually fits.
             text_w = _text_width(text, 11.5) + 6.0
             w = min(PAD + DOT + GAP + text_w + 6.0 + ARROW_W + PAD, max_w)
-            btn = NSButton.alloc().initWithFrame_(
-                NSMakeRect(origin.x, origin.y, w, 26)
-            )
+            btn = NSButton.alloc().initWithFrame_(NSMakeRect(origin.x, origin.y, w, 26))
             btn.setTitle_("")
             btn.setBordered_(False)
             btn.setTarget_(self)
@@ -3363,7 +3755,15 @@ if _APPKIT_AVAILABLE:
         def noteClicked_(self, sender):
             names = getattr(self, "_note_basenames", [])
             i = int(sender.tag())
-            if 0 <= i < len(names):
+            if not (0 <= i < len(names)):
+                return
+            # Source chip on a connection → read the note in-app (the digest
+            # entry point of the markdown-reader plan); unresolvable basenames
+            # degrade to the external opener as before.
+            path = self._resolve_note_basename(names[i])
+            if path is not None:
+                self._open_note_in_reader(path)
+            else:
                 self._invoke_callback("open_note", names[i])
 
         def transcriptClicked_(self, sender):
@@ -3371,6 +3771,122 @@ if _APPKIT_AVAILABLE:
             i = int(sender.tag())
             if 0 <= i < len(paths) and paths[i] is not None:
                 self._invoke_callback("open_transcript", paths[i])
+
+        # -- in-app note reader (markdown-reader plan) ----------------------- #
+
+        @objc.python_method
+        def _resolve_note_basename(self, basename):
+            try:
+                return obsidian_link.resolve_note_path(
+                    basename, Path(config.TRANSCRIBE_DIR)
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("note resolve failed for %r: %s", basename, exc)
+                return None
+
+        @objc.python_method
+        def _open_note_in_reader(self, path, push=True):
+            """Render ``path`` in the in-app reader; degrade to the opener.
+
+            ``push=False`` replaces the shown note without touching the
+            breadcrumb (back-navigation, fresh rail entries)."""
+            try:
+                html = nrend.note_page_html(Path(path))
+            except Exception as exc:
+                logger.warning("in-app render failed for %s: %s", path, exc)
+                self._invoke_callback("open_transcript", path)
+                return
+            if self._mode != "note":
+                # Save where the user was — both the mode to return to and
+                # the reader scroll offset restored on „← Wróć"; the epoch
+                # bump drops in-flight recall/synthesis deliveries so they
+                # can't re-render (and yank) the note view.
+                self._capture_scroll()
+                self._epoch += 1
+                self._note_return_mode = self._mode
+                self._note_stack = []
+            elif push and self._note_path is not None and Path(path) != self._note_path:
+                self._note_stack.append(self._note_path)
+            self._note_path = Path(path)
+            self._note_html = html
+            self._mode = "note"
+            self._render()
+
+        @objc.python_method
+        def _exit_note_mode(self):
+            """Drop all reader state (webview incl.) — every path that leaves
+            "note" mode goes through here so nothing keeps retaining the
+            out-of-process web content."""
+            self._note_path = None
+            self._note_html = ""
+            self._note_stack = []
+            self._webview = None
+            self._webview_path = None
+
+        def noteBackClicked_(self, _sender):
+            # Skip breadcrumb entries whose note vanished from disk since the
+            # push (deleted/renamed in Obsidian) instead of desyncing the view.
+            while self._note_stack:
+                prev = self._note_stack.pop()
+                try:
+                    if Path(prev).exists():
+                        self._open_note_in_reader(prev, push=False)
+                        return
+                except OSError:  # pragma: no cover - defensive
+                    pass
+                logger.info("breadcrumb note gone, skipping: %s", prev)
+            mode = self._note_return_mode
+            self._exit_note_mode()
+            self._mode = mode
+            self._render()
+
+        def noteOpenExternalClicked_(self, _sender):
+            if self._note_path is not None:
+                self._invoke_callback("open_transcript", self._note_path)
+
+        def openNoteFromLink_(self, path_str):
+            """Deferred wikilink navigation (off the WKWebView delegate)."""
+            self._open_note_in_reader(Path(str(path_str)))
+
+        def webView_decidePolicyForNavigationAction_decisionHandler_(
+            self, _web, action, handler
+        ):
+            """Reader navigation policy: fragment jumps stay in the page,
+            wikilinks re-render in-app, http(s)/mailto/obsidian go to the
+            system, and everything else is denied (self-contained page)."""
+            try:
+                url = action.request().URL()
+                s = str(url.absoluteString()) if url is not None else ""
+            except Exception:  # pragma: no cover - defensive
+                handler(_WK_CANCEL)
+                return
+            try:
+                link_click = int(action.navigationType()) == _WK_LINK_CLICK
+            except Exception:
+                link_click = False
+            if s.startswith("about:blank#"):
+                handler(_WK_ALLOW)  # in-document #anchor jump
+                return
+            if (s == "" or s.startswith("about:")) and not link_click:
+                handler(_WK_ALLOW)  # the loadHTMLString page itself
+                return
+            # From here on everything is denied in-webview; some schemes are
+            # re-dispatched to the system instead. (A content link like
+            # [x](about:blank) is a link_click and lands here — denied.)
+            handler(_WK_CANCEL)
+            target = nrend.wikilink_target(s)
+            if target is not None:
+                path = self._resolve_note_basename(target)
+                if path is not None:
+                    # Defer: re-rendering tears the webview down mid-callback.
+                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                        "openNoteFromLink:", str(path), False
+                    )
+                else:
+                    self._invoke_callback("open_note", target)
+                return
+            if s.startswith(("http://", "https://", "mailto:", "obsidian://")):
+                obsidian_link.open_url(s)
 
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
@@ -3461,8 +3977,10 @@ if _APPKIT_AVAILABLE:
 
             # Kept on self so tests (and a curious debugger) can join it.
             self._handoff_thread = threading.Thread(
-                target=self._handoff_worker_, args=(payload,),
-                name="HandoffDispatch", daemon=True,
+                target=self._handoff_worker_,
+                args=(payload,),
+                name="HandoffDispatch",
+                daemon=True,
             )
             self._handoff_thread.start()
 
@@ -3601,7 +4119,8 @@ if _APPKIT_AVAILABLE:
             self._render()
             label = "Odzyskano" if prev_view == im.DISMISSED else "Zachowano"
             self._show_toast(
-                label, undo=(idx, prev_view, conn.sig or "", conn.synthesis_type, conn.notes)
+                label,
+                undo=(idx, prev_view, conn.sig or "", conn.synthesis_type, conn.notes),
             )
 
         def dismissClicked_(self, sender):
@@ -3654,9 +4173,7 @@ if _APPKIT_AVAILABLE:
                 im.DISMISSED: vsig.TARGET_NONE,
             }.get(prev_view, vsig.TARGET_RESET)
             try:
-                vsig.record_action(
-                    target, sig=sig, conn_type=conn_type, notes=notes
-                )
+                vsig.record_action(target, sig=sig, conn_type=conn_type, notes=notes)
             except Exception as exc:  # pragma: no cover - best effort
                 logger.debug("undo record_action failed: %s", exc)
             self.removeToast_(None)
@@ -3679,7 +4196,8 @@ if _APPKIT_AVAILABLE:
                 NSMakeRect(
                     _RAIL_W + (b.size.width - _RAIL_W - tw) / 2,
                     b.size.height - _FOOTER_H - 44,
-                    tw, 32,
+                    tw,
+                    32,
                 )
             )
             toast.setWantsLayer_(True)
@@ -3714,10 +4232,8 @@ if _APPKIT_AVAILABLE:
             self._toast = toast
             from Foundation import NSTimer
 
-            self._toast_timer = (
-                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                    2.0, self, "removeToast:", None, False
-                )
+            self._toast_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                2.0, self, "removeToast:", None, False
             )
 
         def removeToast_(self, timer):
