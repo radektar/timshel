@@ -195,22 +195,34 @@ def test_hex_helper():
     assert dw._hex("nope") is not None
 
 
-def test_keep_flash_shows_then_advances():
+def test_keep_commits_immediately_and_advances():
+    # 17.07 redesign: the big flash overlay is retired — Zachowaj commits at
+    # click and the feedback channel is the toast with „Cofnij".
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
     before = ctrl._deck.active_index
-    assert ctrl._show_keep_flash() is True
-    _render(ctrl)  # the overlay must paint without raising
-    # the timer callback keeps the active connection and advances
-    ctrl.afterKeepFlash_(None)
+    ctrl.keepClicked_(None)
     assert ctrl._deck.is_kept(before)
     assert ctrl._deck.active_index != before
+    _render(ctrl)  # post-keep rebuild must paint without raising
 
 
-def test_keep_flash_noop_without_window():
+def test_keep_works_without_window():
     ctrl = dw.build_dashboard_window()
-    # no _ensure_window() → no window yet
-    assert ctrl._show_keep_flash() is False
+    # no _ensure_window() → no window; the retag still lands, toast no-ops
+    before = ctrl._deck.active_index
+    ctrl.keepClicked_(None)
+    assert ctrl._deck.is_kept(before)
+
+
+def test_undo_restores_previous_state():
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    before = ctrl._deck.active_index
+    ctrl.keepClicked_(None)
+    assert ctrl._deck.is_kept(before)
+    ctrl.undoTriageClicked_(None)  # toast „Cofnij"
+    assert ctrl._deck.state_at(before) == im.NEW
 
 
 def test_skeleton_renders_when_transcribing_and_empty():

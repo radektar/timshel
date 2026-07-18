@@ -183,8 +183,8 @@ class InsightDeck:
         triage: Optional[Dict[str, str]] = None,
         digest_label: Optional[str] = None,
     ) -> None:
-        #: Right-side eyebrow marker, e.g. "digest 09.07 · z chmury" (redesign
-        #: A6). None → the window falls back to a generic cloud marker.
+        #: Right-side provenance marker, e.g. "digest · 09.07" (U5; the window
+        #: appends the tool name). None → plain "digest".
         self.digest_label = digest_label
         self._items: List[InsightConnection] = list(connections or [])
         self._state: List[str] = []
@@ -260,6 +260,17 @@ class InsightDeck:
             self._view = view
             self._active = self._first_in_view(view)
 
+    def focus_first_nonempty(self) -> None:
+        """Window-open rule (U9): land on the first non-empty view in
+        Nowe → Zachowane → Odrzucone order. A session's explicit choice wins
+        later — this is only applied when a deck is (re)loaded."""
+        counts = self.counts()
+        for view in VIEWS:
+            if counts.get(view, 0) > 0:
+                self._view = view
+                self._active = self._first_in_view(view)
+                return
+
     def select(self, index: int) -> None:
         if 0 <= index < len(self._items) and self._state[index] == self._view:
             self._active = index
@@ -283,6 +294,25 @@ class InsightDeck:
     def dismiss(self) -> None:
         """Mark the active connection Odrzucone (reversible) and advance."""
         self._retag(DISMISSED)
+
+    def retag_index(self, index: int, new_state: str) -> None:
+        """Retag connection *index* regardless of the active pointer.
+
+        Powers handoff ⇒ auto-Zachowaj (U4 rev. 2) and toast „Cofnij" — both
+        act on a captured index, not on whatever is active by the time the
+        worker returns. When the retagged item is the active one and it left
+        the current view, advance like ``keep``/``dismiss`` would.
+        """
+        if new_state not in VIEWS or not (0 <= index < len(self._items)):
+            return
+        if index == self._active:
+            prev_active = self._active
+            self._retag(new_state)
+            # _retag advances only when the item LEFT the view; keep pointer sane.
+            if self._active == prev_active and self._state[index] != self._view:
+                self._active = self._next_in_view(forward=True)
+            return
+        self._state[index] = new_state
 
     def _retag(self, new_state: str) -> None:
         if not (0 <= self._active < len(self._items)):

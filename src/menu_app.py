@@ -1389,6 +1389,7 @@ class TimshelMenuApp(rumps.App):
         """
         return {
             "recent_transcripts": self._recent_transcripts_for_insights,
+            "notes_count": self._notes_count_for_insights,
             "open_note": self._open_note_in_obsidian,
             "open_transcript": self._open_transcript_in_obsidian,
             "recall_search": self._recall_search,
@@ -1453,6 +1454,15 @@ class TimshelMenuApp(rumps.App):
         date_str = datetime.now().strftime("%Y-%m-%d")  # match digest_writer's 4-digit year
         return save_answer(query, answer, config.TRANSCRIBE_DIR, date_str=date_str)
 
+    def _notes_count_for_insights(self):
+        """Counter of the rail's „Notatki" section — the size of the index."""
+        try:
+            if self.transcriber is not None:
+                return int(self.transcriber.vault_index.entry_count())
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("notes_count for insights failed: %s", exc)
+        return 0
+
     def _recent_transcripts_for_insights(self):
         """Real recent transcripts for the Insights rail (replaces atrapy).
 
@@ -1465,7 +1475,7 @@ class TimshelMenuApp(rumps.App):
         if self.transcriber is None:
             return out
         try:
-            entries = self.transcriber.vault_index.recent_entries(5)
+            entries = self.transcriber.vault_index.recent_entries(30)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("recent_entries for insights failed: %s", exc)
             entries = []  # fall through to the on-disk scan below
@@ -1486,7 +1496,7 @@ class TimshelMenuApp(rumps.App):
         # older build that didn't maintain it) while transcripts sit on disk.
         # Fall back to the filesystem so the rail reflects what's actually
         # there rather than showing "—".
-        return self._recent_transcripts_from_disk()
+        return self._recent_transcripts_from_disk(limit=30)
 
     # A whole-vault rglob is expensive on a large iCloud-synced vault; this
     # fallback fires on every rail rebuild when the index is empty (fresh

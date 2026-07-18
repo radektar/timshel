@@ -67,6 +67,7 @@ HEX = {
     # Dark window (Konstelacja) text.
     "window_hi":   "#FAF3E2",
     "window_body": "#C9BBA6",
+    "dirbar_count": "#F0E0C8",  # C4: directions-bar counter
     # Back-compat alias (older code/tests referenced sage_ink).
     "sage_ink": "#2E4D47",
 }

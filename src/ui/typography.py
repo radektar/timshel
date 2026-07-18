@@ -89,7 +89,10 @@ SPEC: Dict[str, dict] = {
     "toast":         dict(size=12.5, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
     "trace":         dict(size=12.0, weight="regular", track=0.0,    lh=1.0,  color=("window_hi", 0.80)),
     "trace_file":    dict(size=11.5, weight="regular", track=0.0,    lh=1.0,  color=("jade_text", 1.0), mono=True),
-    "direction":     dict(size=13.0, weight="regular", track=0.0,    lh=1.45, color=("window_hi", 0.82)),
+    # C3 redline (17.07): direction label 15px / line-height 1.5.
+    "direction":     dict(size=15.0, weight="regular", track=0.0,    lh=1.50, color=("window_hi", 0.82)),
+    "seg_label":     dict(size=11.0, weight="medium",  track=0.0,    lh=1.0,  color=("window_hi", 1.0)),
+    "dirbar_count":  dict(size=12.5, weight="medium",  track=0.0,    lh=1.0,  color=("dirbar_count", 1.0)),
     # Empty state
     "empty_title":   dict(size=16.0, weight="medium",  track=-0.012, lh=1.2,  color=("window_hi", 1.0)),
     "empty_desc":    dict(size=12.0, weight="regular", track=0.0,    lh=1.45, color=("window_hi", 0.50)),

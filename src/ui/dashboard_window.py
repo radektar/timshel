@@ -89,10 +89,14 @@ _READER_PAD_X = 24.0
 # Thesis reading measure — handoff ".thesis max 30em" (em = the 24pt font-size).
 # Tunable pending the Claude Design redline; caps the line length on wide windows.
 _THESIS_MEASURE = 30.0 * 24.0
-_ROW_H = 78.0  # rail row step: 72pt row (9+16+2 + snippet 2 lines + 9) + 6 gap
+_ROW_H = 64.0  # rail row step: ~58pt row (10/11/11 pad + 2-line snippet) + 6 gap
 _FOOTER_H = 46.0
-_BAR_H = 48.0
+_BAR_H = 48.0  # inline directions bar (C4) — lives UNDER the list, in the scroll
 _ASKBAR_H = 56.0  # pull entry strip under the header (recall — Faza 3)
+_TOOLBAR_H = 36.0  # ask toolbar over the reader column (U6 rev. 3)
+_SEC_H = 30.0  # rail accordion section header (C8)
+_SEG_H = 30.0  # triage segment track (3px pad + 24px items)
+_SHEET_W = 560.0  # ask history sheet (U8)
 # Radius family (design: one decision, held everywhere — native macOS feel).
 _R_CONTROL = 6.0  # buttons, segment track, CTA, icons
 _R_CHECK = 5.0    # checkbox
@@ -189,6 +193,30 @@ if _APPKIT_AVAILABLE:
     class _DashFlippedView(NSView):
         def isFlipped(self):
             return True
+
+    class _DashWindow(NSWindow):
+        """Konstelacja window: routes ⌘K to the ask field (U6 rev. 3).
+
+        A menu-bar (LSUIElement) app has no main menu, so key equivalents are
+        never translated — without this, ⌘K would be a dead shortcut.
+        """
+
+        def performKeyEquivalent_(self, event):
+            try:
+                from AppKit import NSEventModifierFlagCommand
+
+                if event.modifierFlags() & NSEventModifierFlagCommand and (
+                    (event.charactersIgnoringModifiers() or "").lower() == "k"
+                ):
+                    delegate = self.delegate()
+                    if delegate is not None and delegate.respondsToSelector_(
+                        "focusAskField"
+                    ):
+                        delegate.focusAskField()
+                        return True
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return objc.super(_DashWindow, self).performKeyEquivalent_(event)
 
     class _AskPanel(NSPanel):
         """Borderless ask-bar panel that can actually take keyboard input.
@@ -384,6 +412,29 @@ if _APPKIT_AVAILABLE:
                 node(9, 24)
                 node(23, 24)
                 bloom(16, 9, 3.0)
+
+    class _DirBarBG(NSView):
+        """C4 directions-bar background: warm dark gradient, terracotta
+        border, radius 12 — drawn natively (no web-only effects)."""
+
+        def isFlipped(self):
+            return True
+
+        def drawRect_(self, _rect):
+            b = self.bounds()
+            path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                b, _R_ROW, _R_ROW
+            )
+            grad = NSGradient.alloc().initWithColors_atLocations_colorSpace_(
+                [_c(44, 24, 17, 0.5), _c(28, 16, 12, 0.75)],
+                [0.0, 1.0],
+                NSColorSpace.sRGBColorSpace(),
+            )
+            if grad is not None:
+                grad.drawInBezierPath_angle_(path, 90.0)
+            _c(217, 84, 42, 0.28).setStroke()
+            path.setLineWidth_(1.0)
+            path.stroke()
 
     class _FlashOverlay(NSView):
         """Micro-bloom + wash, shown briefly on keep/dismiss."""
@@ -807,7 +858,19 @@ if _APPKIT_AVAILABLE:
             if self is None:
                 return None
             self._deck = deck if deck is not None else im.InsightDeck()
+            # U9: the window lands on the first non-empty triage view; the
+            # user's in-session choice wins from then on.
+            self._deck.focus_first_nonempty()
             self._callbacks: Dict[str, Callable] = callbacks or {}
+            # C8 accordion: exactly one rail section open at a time.
+            self._section = "serendypacje"  # serendypacje | zapytales | notatki
+            self._ask_sheet = None          # history sheet (U8) when open
+            self._ask_scrim = None          # reader-only scrim behind the sheet
+            self._toolbar_field = None      # the ask field in the toolbar
+            self._hist_idx = -1             # ↑↓ position in the history sheet
+            self._notes_rows: List = []     # (title, path) rows of the Notatki section
+            self._recent_paths: List = []   # legacy hook (transcriptClicked_)
+            self._asked_rows: List = []     # ask-history entries behind rail rows
             self._window = None
             self._keep_timer = None
             self._dismiss_timer = None
@@ -853,7 +916,7 @@ if _APPKIT_AVAILABLE:
                 | NSWindowStyleMaskFullSizeContentView
             )
             win_w, win_h = _initial_window_size()
-            win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            win = _DashWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, win_w, win_h), mask, NSBackingStoreBuffered, False
             )
             win.setTitle_("Timshel — Konstelacja")
@@ -870,38 +933,9 @@ if _APPKIT_AVAILABLE:
                 )
             except Exception:  # pragma: no cover - cosmetic
                 pass
-            # Title-bar keeps ONLY ⌕ on the right (redesign): a native accessory
-            # button that opens the ask-bar overlay (screen C).
-            try:
-                from AppKit import (
-                    NSTitlebarAccessoryViewController,
-                    NSLayoutAttributeRight,
-                )
-                from src.ui import style as _style
-
-                acc_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 36, 28))
-                btn = NSButton.alloc().initWithFrame_(NSMakeRect(4, 4, 26, 20))
-                btn.setBordered_(False)
-                btn.setTitle_("")
-                img = _style.sf_symbol("magnifyingglass", point=13.0, weight="regular")
-                if img is not None:
-                    btn.setImage_(img)
-                    try:
-                        btn.setContentTintColor_(_c(250, 243, 226, 0.55))
-                    except Exception:  # pragma: no cover
-                        pass
-                else:  # pragma: no cover - symbol fallback
-                    btn.setTitle_("⌕")
-                btn.setTarget_(self)
-                btn.setAction_("titlebarAskClicked:")
-                btn.setToolTip_("Zapytaj swój korpus (⌃⌥Space)")
-                acc_view.addSubview_(btn)
-                acc = NSTitlebarAccessoryViewController.alloc().init()
-                acc.setView_(acc_view)
-                acc.setLayoutAttribute_(NSLayoutAttributeRight)
-                win.addTitlebarAccessoryViewController_(acc)
-            except Exception as exc:  # pragma: no cover - cosmetic
-                logger.debug("titlebar ⌕ accessory skipped: %s", exc)
+            # U6 rev. 3: the title-bar ⌕ accessory is RETIRED — the pull entry
+            # is the toolbar field over the reader column. Title-bar stays
+            # clean (traffic lights + title).
 
             win.center()
             self._window = win
@@ -963,19 +997,39 @@ if _APPKIT_AVAILABLE:
             backdrop = _DarkBackground.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
             bg.addSubview_(backdrop)
 
-            # Position counter moved to the footer; the title-bar keeps only ⌕
-            # (redesign). ⌕ accessory is the next increment (title-bar rebuild).
+            # Layout (U6 rev. 3): the rail owns its full column up to the
+            # title-bar; the ask toolbar spans ONLY the reader column, starting
+            # exactly at the rail's right edge — it never overlaps the rail.
             rail_h = h - _HEADER_H
             rail = self._build_rail(NSMakeRect(0, 0, _RAIL_W, rail_h))
             rail.setFrameOrigin_(NSMakePoint(0, _HEADER_H))
             bg.addSubview_(rail)
 
             reader_w = w - _RAIL_W
-            reader = self._build_reader(NSMakeRect(0, 0, reader_w, rail_h))
-            reader.setFrameOrigin_(NSMakePoint(_RAIL_W, _HEADER_H))
+            toolbar = self._build_toolbar(NSMakeRect(0, 0, reader_w, _TOOLBAR_H))
+            toolbar.setFrameOrigin_(NSMakePoint(_RAIL_W, _HEADER_H))
+            bg.addSubview_(toolbar)
+
+            reader_h = rail_h - _TOOLBAR_H
+            reader = self._build_reader(NSMakeRect(0, 0, reader_w, reader_h))
+            reader.setFrameOrigin_(NSMakePoint(_RAIL_W, _HEADER_H + _TOOLBAR_H))
             bg.addSubview_(reader)
 
             self._window.setContentView_(bg)
+            # A rebuild drops the transient ask sheet (its views lived in the
+            # old content view) — clear the refs so state stays honest.
+            self._ask_sheet = None
+            self._ask_scrim = None
+
+        # C8 accordion — one grammar of section headers carries all three
+        # peer sections. NOT a dropdown: disclosure in place, one open at a
+        # time, collapsed headers keep their counters (anti-error 1 & 10).
+        _SECTIONS = ("serendypacje", "zapytales", "notatki")
+        _SECTION_LABELS = {
+            "serendypacje": "Serendypacje",
+            "zapytales": "Zapytałeś",
+            "notatki": "Notatki",
+        }
 
         @objc.python_method
         def _build_rail(self, frame):
@@ -988,188 +1042,459 @@ if _APPKIT_AVAILABLE:
                 wash.layer().setBackgroundColor_(_c(0, 0, 0, 0.16).CGColor())
             view.addSubview_(wash)
 
-            pad = 12.0
-            cy = 13.0
-            in_recall = self._mode == "recall"
+            from src.connections import ask_history
 
-            if not in_recall:
-                # Przegląd: "Podsunięte" lit + "Nowe N ⌄" filter; rows; the
-                # collapsed "Zapytałeś ›" switcher at the bottom (B5 — section
-                # headers ARE the mode switch).
-                head = _typo_label(
-                    "Podsunięte", "rail_header", NSMakeRect(pad, cy, 120, 14),
-                    wrapping=False,
-                )
-                view.addSubview_(head)
-                self._build_rail_filter(view, frame, cy)
-                cy += 30
+            counts = self._deck.counts()
+            new_n = counts.get(im.NEW, 0)
+            self._asked_rows = list(ask_history.recent(50))
+            self._notes_rows = self._recent_transcripts()
+            notes_n = self._notes_count(len(self._notes_rows))
 
-                vis = self._deck.visible()
-                if not vis:
-                    empty = _label("—", 11, _c(111, 102, 90))
-                    empty.setFrame_(
-                        NSMakeRect(pad + 2, cy + 2, frame.size.width - 2 * pad, 14)
-                    )
-                    view.addSubview_(empty)
-                    cy += _ROW_H
-                for i, conn in vis:
-                    self._add_rail_row(
-                        view, conn, i,
-                        NSMakeRect(8, cy, frame.size.width - 16, _ROW_H - 6),
-                    )
-                    cy += _ROW_H
+            # Section counters (always visible, anti-error 10): Serendypacje
+            # shows "N nowe" in gold only when new > 0, else the total.
+            ser_cnt = f"{new_n} nowe" if new_n > 0 else str(len(self._deck))
+            spec = (
+                ("serendypacje", ser_cnt, new_n > 0),
+                ("zapytales", str(len(self._asked_rows)), False),
+                ("notatki", str(notes_n), False),
+            )
 
-                self._add_collapsed_header(
-                    view, frame, frame.size.height - 40, "Zapytałeś",
-                    "collapsedAskClicked:",
+            # Open section takes the remaining height (flex 1 + inner scroll);
+            # the other headers stay visible — the rail never pushes a section
+            # out of the window.
+            body_h = max(frame.size.height - 3 * _SEC_H - 18.0, 60.0)
+            cy = 6.0
+            for idx, (key, cnt, gold) in enumerate(spec):
+                self._add_section_header(
+                    view, frame, cy, idx, key, cnt, gold, open_=(key == self._section)
                 )
-            else:
-                # Pytanie: collapsed "Podsunięte N ›" on top (click → back to
-                # Przegląd), then the lit "Zapytałeś" section with the current
-                # query as the active entry (terracotta bar — the user's action).
-                n = self._deck.counts().get("new", 0)
-                self._add_collapsed_header(
-                    view, frame, cy - 4, f"Podsunięte   {n}",
-                    "backToInsightsClicked:",
-                )
-                cy += 30
-                head = _typo_label(
-                    "Zapytałeś", "rail_header", NSMakeRect(pad, cy, 140, 14),
-                    wrapping=False,
-                )
-                view.addSubview_(head)
-                cy += 24
-                if self._query:
-                    row = NSView.alloc().initWithFrame_(
-                        NSMakeRect(8, cy, frame.size.width - 16, 40)
+                cy += _SEC_H
+                if key == self._section:
+                    body = self._build_section_body(
+                        key, NSMakeRect(6, cy, frame.size.width - 12, body_h)
                     )
-                    row.setWantsLayer_(True)
-                    if row.layer() is not None:
-                        row.layer().setCornerRadius_(8.0)
-                        row.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
-                    tbar = NSView.alloc().initWithFrame_(NSMakeRect(1, 8, 2.5, 24))
-                    tbar.setWantsLayer_(True)
-                    if tbar.layer() is not None:
-                        tbar.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
-                        tbar.layer().setCornerRadius_(2.0)
-                    row.addSubview_(tbar)
-                    q = _typo_label(
-                        self._query, "rail_title",
-                        NSMakeRect(12, 5, frame.size.width - 16 - 20, 30),
-                    )
-                    q.setMaximumNumberOfLines_(2)
-                    try:
-                        q.cell().setTruncatesLastVisibleLine_(True)
-                    except Exception:  # pragma: no cover
-                        pass
-                    row.addSubview_(q)
-                    view.addSubview_(row)
-
-            self._recent_paths = []  # recents cut per redesign; handler no-ops
+                    view.addSubview_(body)
+                    cy += body_h
             return view
 
         @objc.python_method
-        def _add_collapsed_header(self, view, frame, y, label, action):
-            """Collapsed section header '{LABEL} ›' — the mode switch (B5)."""
+        def _add_section_header(self, view, frame, y, idx, key, count, gold, open_):
+            """One 30px accordion header: label · counter · chevron (C8)."""
             from src.ui.hover import make_hover_button
 
-            btn = make_hover_button(NSMakeRect(8, y, frame.size.width - 16, 24)) or (
+            btn = make_hover_button(NSMakeRect(6, y, frame.size.width - 12, _SEC_H - 2)) or (
                 NSButton.alloc().initWithFrame_(
-                    NSMakeRect(8, y, frame.size.width - 16, 24)
+                    NSMakeRect(6, y, frame.size.width - 12, _SEC_H - 2)
                 )
+            )
+            btn.setTitle_("")
+            btn.setBordered_(False)
+            btn.setTarget_(self)
+            btn.setAction_("sectionHeaderClicked:")
+            btn.setTag_(idx)
+            if btn.layer() is not None:
+                btn.layer().setCornerRadius_(8.0)
+            w = frame.size.width - 12
+            label = self._SECTION_LABELS[key]
+            lab = _typo_label(
+                label, "collapsed_h", NSMakeRect(8, 7, w - 90, 14), wrapping=False
+            )
+            if open_:  # otwarta: label lights up to rgba(250,243,226,.82)
+                try:
+                    lab.setTextColor_(_c(250, 243, 226, 0.82))
+                except Exception:  # pragma: no cover
+                    pass
+            btn.addSubview_(lab)
+            cnt_style = "rail_count" if gold else "menu_shortcut"
+            cw = _typo_width(str(count), cnt_style) + 6
+            cnt = _typo_label(
+                str(count), cnt_style,
+                NSMakeRect(w - 22 - cw, 7, cw, 14), wrapping=False,
+            )
+            btn.addSubview_(cnt)
+            car = _label("›", 11.0, _muted())
+            car.setFrame_(NSMakeRect(w - 18, 6, 12, 15))
+            if open_:
+                try:  # chevron rotates 90° when the section is open
+                    car.setFrameCenterRotation_(-90.0)
+                except Exception:  # pragma: no cover
+                    pass
+            btn.addSubview_(car)
+            view.addSubview_(btn)
+
+        def sectionHeaderClicked_(self, sender):
+            key = self._SECTIONS[int(sender.tag()) % len(self._SECTIONS)]
+            if key == self._section:
+                return  # exactly one section open — no closed-all state
+            self._section = key
+            # The reader follows the section (BEHAVIOR §2.2): Serendypacje →
+            # insight mode; Zapytałeś → last query (or the ask empty state).
+            # Notatki is pure navigation — the reader keeps its content.
+            if key == "serendypacje":
+                self._mode = "insight"
+            elif key == "zapytales":
+                self._mode = "recall"
+            self._render()
+
+        @objc.python_method
+        def _build_section_body(self, key, frame):
+            """The open section's content area (internal scroll)."""
+            holder = _DashFlippedView.alloc().initWithFrame_(frame)
+            if key == "serendypacje":
+                self._build_serendypacje_body(holder, frame)
+            elif key == "zapytales":
+                self._build_asked_body(holder, frame)
+            else:
+                self._build_notes_body(holder, frame)
+            return holder
+
+        @objc.python_method
+        def _wrap_in_scroll(self, doc, content_h, frame_y, frame):
+            scroll = NSScrollView.alloc().initWithFrame_(
+                NSMakeRect(0, frame_y, frame.size.width, frame.size.height - frame_y)
+            )
+            scroll.setHasVerticalScroller_(True)
+            scroll.setAutohidesScrollers_(True)
+            scroll.setDrawsBackground_(False)
+            scroll.setBorderType_(0)
+            doc.setFrame_(
+                NSMakeRect(
+                    0, 0, frame.size.width,
+                    max(content_h, frame.size.height - frame_y),
+                )
+            )
+            scroll.setDocumentView_(doc)
+            return scroll
+
+        @objc.python_method
+        def _build_serendypacje_body(self, holder, frame):
+            # U9/C1: the triage segment pins to the top of the list (it never
+            # scrolls away); the rows scroll under it.
+            self._build_triage_segment(holder, frame.size.width)
+            top = _SEG_H + 6.0
+            vis = self._deck.visible()
+            if not vis:
+                self._build_rail_empty_view(holder, frame, top)
+                return
+            doc = _DashFlippedView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, frame.size.width, 10)
+            )
+            cy = 2.0
+            for i, conn in vis:
+                self._add_rail_row(
+                    doc, conn, i, NSMakeRect(2, cy, frame.size.width - 4, _ROW_H - 6)
+                )
+                cy += _ROW_H
+            holder.addSubview_(self._wrap_in_scroll(doc, cy, top, frame))
+
+        @objc.python_method
+        def _build_triage_segment(self, holder, width):
+            """C1 hybrid segment: active = icon+label+count (tinted), inactive
+            = icon+count (ghost). Counters always visible; 0 stays clickable."""
+            from src.ui import style
+
+            track = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, _SEG_H))
+            track.setWantsLayer_(True)
+            if track.layer() is not None:
+                track.layer().setCornerRadius_(_R_CONTROL)
+                track.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
+                track.layer().setBorderWidth_(1.0)
+                track.layer().setBorderColor_(_c(255, 255, 255, 0.10).CGColor())
+
+            counts = self._deck.counts()
+            segs = (
+                (im.NEW, "Nowe", "sparkle"),
+                (im.KEPT, "Zachowane", "bookmark"),
+                (im.DISMISSED, "Odrzucone", "archivebox"),
+            )
+            PAD, GAP = 3.0, 2.0
+            item_h = _SEG_H - 2 * PAD
+            # Natural widths for the inactive items (icon 14 + count), active
+            # flexes into the remaining track width.
+            widths = []
+            for key, label, _ in segs:
+                n = counts.get(key, 0)
+                if key == self._deck.view:
+                    widths.append(None)  # flex
+                else:
+                    widths.append(8 + 14 + 5 + _typo_width(str(n), "menu_shortcut") + 8)
+            fixed = sum(w for w in widths if w is not None) + 2 * PAD + GAP * 2
+            flex_w = max(width - fixed, 60.0)
+            x = PAD
+            for tag, ((key, label, symbol), w) in enumerate(zip(segs, widths)):
+                n = counts.get(key, 0)
+                iw = flex_w if w is None else w
+                active = key == self._deck.view
+                seg = NSButton.alloc().initWithFrame_(NSMakeRect(x, PAD, iw, item_h))
+                seg.setTitle_("")
+                seg.setBordered_(False)
+                seg.setTarget_(self)
+                seg.setAction_("triageSegClicked:")
+                seg.setTag_(tag)
+                seg.setToolTip_(f"{label} — {n}")
+                seg.setWantsLayer_(True)
+                if seg.layer() is not None:
+                    seg.layer().setCornerRadius_(4.0)
+                    if active:
+                        seg.layer().setBackgroundColor_(_c(217, 84, 42, 0.16).CGColor())
+                        seg.layer().setBorderWidth_(1.0)
+                        seg.layer().setBorderColor_(_c(217, 84, 42, 0.55).CGColor())
+                # icon (template SF symbol, tinted like the segment text)
+                empty = n == 0 and not active
+                tint = (
+                    _c(250, 243, 226) if active
+                    else (_c(140, 130, 115) if empty else _c(176, 162, 141))
+                )
+                img = style.sf_symbol(symbol, point=10.5, weight="medium")
+                ix = 8.0
+                if img is not None:
+                    iv = NSImageView.alloc().initWithFrame_(
+                        NSMakeRect(ix, (item_h - 13) / 2.0, 14, 13)
+                    )
+                    iv.setImage_(img)
+                    try:
+                        iv.setContentTintColor_(tint)
+                    except Exception:  # pragma: no cover
+                        pass
+                    seg.addSubview_(iv)
+                tx = ix + 14 + 5
+                if active:  # label rides only on the active segment
+                    lw = _typo_width(label, "seg_label") + 4
+                    lab = _typo_label(
+                        label, "seg_label",
+                        NSMakeRect(tx, (item_h - 13) / 2.0, lw, 13), wrapping=False,
+                    )
+                    seg.addSubview_(lab)
+                    tx += lw + 5
+                cnt_col = (
+                    _c(217, 84, 42) if active
+                    else (_c(90, 82, 73) if empty else _c(111, 102, 90))
+                )
+                cnt = _label(str(n), 10.0, cnt_col)
+                try:
+                    cnt.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10.0, 0.0))
+                except Exception:  # pragma: no cover
+                    pass
+                cnt.setFrame_(NSMakeRect(tx, (item_h - 13) / 2.0, 30, 13))
+                seg.addSubview_(cnt)
+                track.addSubview_(seg)
+                x += iw + GAP
+            holder.addSubview_(track)
+
+        def triageSegClicked_(self, sender):
+            key = (im.NEW, im.KEPT, im.DISMISSED)[int(sender.tag()) % 3]
+            if key != self._deck.view:
+                self._deck.set_view(key)
+                self._reset_card_state()
+                self._render()
+
+        @objc.python_method
+        def _build_rail_empty_view(self, holder, frame, top):
+            """U9: an empty triage view is a sentence + a bridge, never blank."""
+            copy = {
+                im.NEW: "Nic nowego. Digest wróci, gdy korpus urośnie.",
+                im.KEPT: "Nic zachowanego. To, co zachowasz, czeka tutaj.",
+                im.DISMISSED: "Nic odrzuconego.",
+            }[self._deck.view]
+            sent = _typo_label(
+                copy, "rail_snippet",
+                NSMakeRect(10, top + 10, frame.size.width - 20, 40),
+            )
+            sent.setMaximumNumberOfLines_(3)
+            holder.addSubview_(sent)
+            counts = self._deck.counts()
+            bridge = None
+            if self._deck.view != im.KEPT and counts.get(im.KEPT, 0) > 0:
+                bridge = (f"Zachowane czekają — {counts[im.KEPT]}", "bridgeToKeptClicked:")
+            elif self._deck.view != im.NEW and counts.get(im.NEW, 0) > 0:
+                bridge = (f"Nowe czekają — {counts[im.NEW]}", "bridgeToNewClicked:")
+            if bridge is None:
+                return
+            from src.ui import style
+            from src.ui.hover import make_hover_button
+
+            text, action = bridge
+            btn = make_hover_button(
+                NSMakeRect(4, top + 58, frame.size.width - 8, 28)
+            ) or NSButton.alloc().initWithFrame_(
+                NSMakeRect(4, top + 58, frame.size.width - 8, 28)
             )
             btn.setTitle_("")
             btn.setBordered_(False)
             btn.setTarget_(self)
             btn.setAction_(action)
             if btn.layer() is not None:
-                btn.layer().setCornerRadius_(5.0)
-            lab = _typo_label(
-                label, "collapsed_h",
-                NSMakeRect(6, 5, frame.size.width - 44, 14), wrapping=False,
-            )
+                btn.layer().setCornerRadius_(8.0)
+            mark = style.sf_symbol("bookmark", point=11.0, weight="regular")
+            if mark is not None:
+                iv = NSImageView.alloc().initWithFrame_(NSMakeRect(8, 7, 14, 14))
+                iv.setImage_(mark)
+                try:
+                    iv.setContentTintColor_(_c(139, 224, 181))
+                except Exception:  # pragma: no cover
+                    pass
+                btn.addSubview_(iv)
+            lab = _label(text, 12.5, _c(139, 224, 181))
+            lab.setFrame_(NSMakeRect(28, 6, frame.size.width - 60, 16))
             btn.addSubview_(lab)
-            car = _label("›", 11.0, _muted())
-            car.setFrame_(NSMakeRect(frame.size.width - 34, 4, 14, 15))
+            car = _label("›", 11.0, _c(139, 224, 181))
+            car.setFrame_(NSMakeRect(frame.size.width - 24, 6, 12, 15))
             btn.addSubview_(car)
-            view.addSubview_(btn)
+            holder.addSubview_(btn)
 
-        def collapsedAskClicked_(self, _sender):
-            # Enter Pytanie via the rail switcher: no query yet → the reader
-            # shows the ask prompt state; the overlay is the typing surface.
-            self._mode = "recall"
+        def bridgeToKeptClicked_(self, _sender):
+            self._deck.set_view(im.KEPT)
+            self._reset_card_state()
             self._render()
 
-        _FILTER_LABELS = (("new", "Nowe"), ("kept", "Zachowane"), ("dismissed", "Odrzucone"))
+        def bridgeToNewClicked_(self, _sender):
+            self._deck.set_view(im.NEW)
+            self._reset_card_state()
+            self._render()
 
         @objc.python_method
-        def _build_rail_filter(self, view, frame, cy):
-            """The 'Nowe N ⌄' trigger in the rail header → view-based NSMenu (A3)."""
+        def _notes_count(self, fallback):
+            cb = self._callbacks.get("notes_count")
+            if cb is None:
+                return fallback
+            try:
+                return int(cb())
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("notes_count callback failed: %s", exc)
+                return fallback
+
+        @objc.python_method
+        def _add_icon_text_row(self, doc, y, width, symbol, text, tag, action, active=False):
+            """Shared row for Zapytałeś / Notatki: 18px icon column + 12.5px
+            text clamped to 2 lines (C8), terracotta bar on the active query."""
+            from src.ui import style
             from src.ui.hover import make_hover_button
 
-            cur = self._deck.view
-            label = dict(self._FILTER_LABELS).get(cur, "Nowe")
-            n = self._deck.counts().get(cur, 0)
-            cnt_style = "rail_count" if cur == "new" else "menu_shortcut"
-            # Kern-aware measured layout: [label] 6 [count] 5 [⌄], padded 6 each
-            # side; trigger 22pt tall, radius 5 (redline).
-            # NSTextField draws with ~2pt internal inset per side — measured
-            # widths get +5 slack so the label never truncates ("NOWE"→"NOW").
-            SLACK = 5.0
-            lw = _typo_width(label, "collapsed_h") + SLACK
-            cw = _typo_width(str(n), cnt_style) + SLACK
-            PADS, GAP1, GAP2, CARW = 6.0, 5.0, 4.0, 12.0
-            tw = PADS + lw + GAP1 + cw + GAP2 + CARW + PADS
-            tx = frame.size.width - 12.0 - tw
-            trig = make_hover_button(NSMakeRect(tx, cy - 4, tw, 22)) or (
-                NSButton.alloc().initWithFrame_(NSMakeRect(tx, cy - 4, tw, 22))
+            h = 40.0
+            btn = make_hover_button(NSMakeRect(2, y, width - 4, h - 4)) or (
+                NSButton.alloc().initWithFrame_(NSMakeRect(2, y, width - 4, h - 4))
             )
-            trig.setTitle_("")
-            trig.setBordered_(False)
-            trig.setTarget_(self)
-            trig.setAction_("railFilterClicked:")
-            if trig.layer() is not None:
-                trig.layer().setCornerRadius_(5.0)
-            x = PADS
-            lab = _typo_label(label, "collapsed_h", NSMakeRect(x, 4, lw, 14), wrapping=False)
-            trig.addSubview_(lab)
-            x += lw + GAP1
-            cnt = _typo_label(str(n), cnt_style, NSMakeRect(x, 4, cw, 14), wrapping=False)
-            trig.addSubview_(cnt)
-            x += cw + GAP2
-            car = _label("⌄", 10.0, _muted())
-            car.setFrame_(NSMakeRect(x, 4, CARW, 14))
-            trig.addSubview_(car)
-            view.addSubview_(trig)
+            btn.setTitle_("")
+            btn.setBordered_(False)
+            btn.setTarget_(self)
+            btn.setAction_(action)
+            btn.setTag_(tag)
+            if btn.layer() is not None:
+                btn.layer().setCornerRadius_(_R_ROW)
+                if active:
+                    btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+            if active:
+                bar = NSView.alloc().initWithFrame_(NSMakeRect(1, 7, 2.5, h - 18))
+                bar.setWantsLayer_(True)
+                if bar.layer() is not None:
+                    bar.layer().setBackgroundColor_(_terracotta().CGColor())
+                    bar.layer().setCornerRadius_(2.0)
+                btn.addSubview_(bar)
+            img = style.sf_symbol(symbol, point=12.0, weight="regular")
+            if img is not None:
+                iv = NSImageView.alloc().initWithFrame_(NSMakeRect(9, (h - 4 - 18) / 2.0, 18, 18))
+                iv.setImage_(img)
+                try:
+                    iv.setContentTintColor_(_c(176, 162, 141))
+                except Exception:  # pragma: no cover
+                    pass
+                btn.addSubview_(iv)
+            lab = _typo_label(
+                text, "rail_title_quiet",
+                NSMakeRect(34, 4, width - 4 - 42, h - 12),
+            )
+            lab.setMaximumNumberOfLines_(2)
+            try:
+                lab.cell().setTruncatesLastVisibleLine_(True)
+            except Exception:  # pragma: no cover
+                pass
+            btn.addSubview_(lab)
+            doc.addSubview_(btn)
+            return y + h
 
-        def railFilterClicked_(self, sender):
-            from AppKit import NSMenu, NSMenuItem
-
-            counts = self._deck.counts()
-            menu = NSMenu.alloc().init()
-            menu.setAutoenablesItems_(False)
-            for key, label in self._FILTER_LABELS:
-                it = NSMenuItem.alloc().init()
-                it.setTarget_(self)
-                it.setAction_("railFilterPicked:")
-                it.setRepresentedObject_(key)
-                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 210, 28))
-                v._spec = dict(
-                    label=label, count=counts.get(key, 0),
-                    checked=(key == self._deck.view), is_new=(key == "new"),
+        @objc.python_method
+        def _build_asked_body(self, holder, frame):
+            doc = _DashFlippedView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, frame.size.width, 10)
+            )
+            cy = 2.0
+            if not self._asked_rows:
+                sent = _typo_label(
+                    "Zapytaj swój korpus — historia pytań zostanie tutaj.",
+                    "rail_snippet", NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
                 )
-                it.setView_(v)
-                menu.addItem_(it)
-            menu.popUpMenuPositioningItem_atLocation_inView_(
-                None, NSMakePoint(0, sender.frame().size.height + 2), sender
-            )
+                sent.setMaximumNumberOfLines_(3)
+                doc.addSubview_(sent)
+                cy += 60
+            for i, entry in enumerate(self._asked_rows):
+                cy = self._add_icon_text_row(
+                    doc, cy, frame.size.width, "magnifyingglass",
+                    entry["query"], i, "askedRowClicked:",
+                    active=(self._mode == "recall" and entry["query"] == self._query),
+                )
+            if self._asked_rows:
+                from src.ui.hover import make_hover_button
 
-        def railFilterPicked_(self, sender):
-            key = sender.representedObject()
-            if key:
-                self._deck.set_view(key)
-                self._reset_card_state()
-                self._render()
+                btn = make_hover_button(
+                    NSMakeRect(2, cy + 4, frame.size.width - 4, 24)
+                ) or NSButton.alloc().initWithFrame_(
+                    NSMakeRect(2, cy + 4, frame.size.width - 4, 24)
+                )
+                btn.setTitle_("")
+                btn.setBordered_(False)
+                btn.setTarget_(self)
+                btn.setAction_("clearAskHistoryClicked:")
+                if btn.layer() is not None:
+                    btn.layer().setCornerRadius_(6.0)
+                lab = _label("Wyczyść historię", 11.0, _muted())
+                lab.setFrame_(NSMakeRect(10, 4, frame.size.width - 24, 14))
+                btn.addSubview_(lab)
+                doc.addSubview_(btn)
+                cy += 32
+            holder.addSubview_(self._wrap_in_scroll(doc, cy, 0.0, frame))
+
+        def askedRowClicked_(self, sender):
+            i = int(sender.tag())
+            if 0 <= i < len(self._asked_rows):
+                query = self._asked_rows[i]["query"]
+                self._hide_ask_sheet()
+                self._run_recall(query)
+
+        def clearAskHistoryClicked_(self, _sender):
+            from src.connections import ask_history
+
+            ask_history.clear()
+            self._render()
+
+        @objc.python_method
+        def _build_notes_body(self, holder, frame):
+            # §7: corpus navigation, not an editor — a click opens the note in
+            # the user's opener; Timshel never edits notes.
+            doc = _DashFlippedView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, frame.size.width, 10)
+            )
+            cy = 2.0
+            if not self._notes_rows:
+                sent = _typo_label(
+                    "Brak notatek w korpusie — zaimportuj audio albo transkrypty.",
+                    "rail_snippet", NSMakeRect(10, cy + 8, frame.size.width - 20, 40),
+                )
+                sent.setMaximumNumberOfLines_(3)
+                doc.addSubview_(sent)
+                cy += 60
+            for i, row in enumerate(self._notes_rows):
+                cy = self._add_icon_text_row(
+                    doc, cy, frame.size.width, "doc.text",
+                    str(row.get("label", "")), i, "notesRowClicked:",
+                )
+            holder.addSubview_(self._wrap_in_scroll(doc, cy, 0.0, frame))
+
+        def notesRowClicked_(self, sender):
+            i = int(sender.tag())
+            if 0 <= i < len(self._notes_rows):
+                path = self._notes_rows[i].get("path")
+                if path is not None:
+                    self._invoke_callback("open_transcript", path)
 
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
@@ -1185,13 +1510,13 @@ if _APPKIT_AVAILABLE:
             active = index == self._deck.active_index
             kept = self._deck.is_kept(index)
             if btn.layer() is not None:
-                # radius 8 per the row redline (cards keep _R_ROW).
-                btn.layer().setCornerRadius_(8.0)
+                # C2 redline: row radius 12, active bg .07 + gold bar 2.5.
+                btn.layer().setCornerRadius_(_R_ROW)
                 if active:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
 
             if active:
-                # Gold bar = the insight role; the TITLE stays full white.
+                # Gold bar = the insight role; the label lights gold-glow (C2).
                 bar = NSView.alloc().initWithFrame_(
                     NSMakeRect(1, 8, 2.5, frame.size.height - 16)
                 )
@@ -1201,12 +1526,14 @@ if _APPKIT_AVAILABLE:
                     bar.layer().setCornerRadius_(2.0)
                 btn.addSubview_(bar)
 
-            # Redline: padding 9×8, sigil 18, title 12.5/700 (1 line, truncated),
-            # snippet 11.5 clamped to 2 lines with an ellipsis — never clipped.
-            btn.addSubview_(_sigil(NSMakeRect(8, 9, 18, 18), conn.layout(), conn.resolved_tcolor()))
+            # C2: padding 10/11/11 · sigil 26 · cols 26px/1fr gap 10 ·
+            # label 12.5/600 · snippet 12 clamped to 2 lines.
+            btn.addSubview_(
+                _sigil(NSMakeRect(11, 10, 26, 26), conn.layout(), conn.resolved_tcolor())
+            )
 
-            text_x = 34.0
-            text_w = frame.size.width - text_x - 8.0
+            text_x = 47.0
+            text_w = frame.size.width - text_x - 10.0
             lab = _typo_label(
                 conn.resolved_label(),
                 "rail_title" if active else "rail_title_quiet",
@@ -1214,11 +1541,16 @@ if _APPKIT_AVAILABLE:
                 wrapping=False,
             )
             lab.setLineBreakMode_(4)  # truncate tail
+            if active:
+                try:  # aktywny → gold-glow #F4DD8E (C2)
+                    lab.setTextColor_(_hex("#F4DD8E"))
+                except Exception:  # pragma: no cover
+                    pass
             btn.addSubview_(lab)
 
             snip = _typo_label(
                 conn.snippet, "rail_snippet",
-                NSMakeRect(text_x, 27, text_w, frame.size.height - 27 - 8),
+                NSMakeRect(text_x, 27, text_w, frame.size.height - 27 - 6),
             )
             snip.setMaximumNumberOfLines_(2)
             try:
@@ -1241,6 +1573,223 @@ if _APPKIT_AVAILABLE:
                     btn.addSubview_(miv)
                 btn.setAlphaValue_(0.5)
             view.addSubview_(btn)
+
+        # -- ask toolbar + history sheet (U6 rev. 3 + U8) --------------------- #
+
+        @objc.python_method
+        def _build_toolbar(self, frame):
+            """36px toolbar over the reader column only — never over the rail.
+            The field is the ONE text input of the window (none in the rail)."""
+            bar = _DashFlippedView.alloc().initWithFrame_(frame)
+            bd = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, frame.size.height - 1, frame.size.width, 1)
+            )
+            bd.setWantsLayer_(True)
+            if bd.layer() is not None:
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+            bar.addSubview_(bd)
+
+            FLD_H = 28.0
+            margin = 12.0
+            fld_w = min(260.0, max(frame.size.width - 2 * margin, 120.0))
+            fx = frame.size.width - margin - fld_w
+            cont = NSView.alloc().initWithFrame_(
+                NSMakeRect(fx, (frame.size.height - FLD_H) / 2.0, fld_w, FLD_H)
+            )
+            cont.setWantsLayer_(True)
+            if cont.layer() is not None:
+                cont.layer().setCornerRadius_(_R_CONTROL)
+                cont.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
+                cont.layer().setBorderWidth_(1.0)
+                cont.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+            bar.addSubview_(cont)
+
+            glyph = _label("⌕", 13, _terracotta())
+            glyph.setFrame_(NSMakeRect(9, (FLD_H - 17) / 2.0, 15, 17))
+            cont.addSubview_(glyph)
+
+            # ⌘K badge at the field's right edge (mono, quiet).
+            KB_W = 26.0
+            kbd = _label("⌘K", 10.5, _c(111, 102, 90))
+            try:
+                kbd.setFont_(NSFont.monospacedSystemFontOfSize_weight_(10.5, 0.0))
+            except Exception:  # pragma: no cover
+                pass
+            kbd.setFrame_(NSMakeRect(fld_w - KB_W - 8, (FLD_H - 13) / 2.0, KB_W, 13))
+            cont.addSubview_(kbd)
+
+            fld = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(28, (FLD_H - 17) / 2.0, fld_w - 28 - KB_W - 12, 17)
+            )
+            fld.setEditable_(True)
+            fld.setBezeled_(False)
+            fld.setBordered_(False)
+            fld.setDrawsBackground_(False)
+            fld.setTextColor_(_cream())
+            fld.setFont_(NSFont.systemFontOfSize_(12.5))
+            fld.setUsesSingleLineMode_(True)
+            try:
+                fld.setPlaceholderString_("Zapytaj swój korpus…")
+                fld.setFocusRingType_(1)  # NSFocusRingTypeNone
+                fld.cell().setLineBreakMode_(4)  # truncate tail, no wrap
+            except Exception:  # pragma: no cover - cosmetic
+                pass
+            fld.setDelegate_(self)  # focus → sheet; ↑↓ history; Esc closes
+            fld.setTarget_(self)
+            fld.setAction_("askToolbarSubmitted:")
+            cont.addSubview_(fld)
+            self._toolbar_field = fld
+            return bar
+
+        def focusAskField(self):
+            """⌘K (window) — focus the toolbar field and open the sheet."""
+            fld = getattr(self, "_toolbar_field", None)
+            if fld is None or self._window is None:
+                return
+            self._window.makeFirstResponder_(fld)
+            self._show_ask_sheet()
+
+        def controlTextDidBeginEditing_(self, note):
+            try:
+                if note.object() is self._toolbar_field:
+                    self._show_ask_sheet()
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        @objc.python_method
+        def _show_ask_sheet(self):
+            """U8: the history sheet under the field — fixed position, scrim
+            over the reader column ONLY (the rail stays active)."""
+            if self._ask_sheet is not None or self._window is None:
+                return
+            content = self._window.contentView()
+            if content is None:
+                return
+            from src.connections import ask_history
+            from src.ui.hover import make_hover_button
+
+            b = content.bounds()
+            reader_x = _RAIL_W
+            top_y = _HEADER_H + _TOOLBAR_H
+
+            scrim = NSButton.alloc().initWithFrame_(
+                NSMakeRect(reader_x, top_y, b.size.width - reader_x, b.size.height - top_y)
+            )
+            scrim.setTitle_("")
+            scrim.setBordered_(False)
+            scrim.setTransparent_(False)
+            scrim.setWantsLayer_(True)
+            if scrim.layer() is not None:
+                scrim.layer().setBackgroundColor_(_c(10, 9, 14, 0.45).CGColor())
+            scrim.setTarget_(self)
+            scrim.setAction_("hideAskSheetClicked:")
+            content.addSubview_(scrim)
+            self._ask_scrim = scrim
+
+            entries = ask_history.recent(5)
+            self._sheet_entries = entries
+            self._hist_idx = -1
+            ROW_H, HEAD_H, FOOT_H, PADV = 34.0, 26.0, 26.0, 8.0
+            sheet_h = PADV * 2 + FOOT_H + (HEAD_H + ROW_H * len(entries) if entries else 34.0)
+            sheet_w = min(_SHEET_W, b.size.width - reader_x - 24.0)
+            sx = b.size.width - 12.0 - sheet_w  # aligned to the field's right edge
+            sheet = _DashFlippedView.alloc().initWithFrame_(
+                NSMakeRect(sx, top_y, sheet_w, sheet_h)
+            )
+            sheet.setWantsLayer_(True)
+            if sheet.layer() is not None:
+                sheet.layer().setCornerRadius_(_R_ROW)
+                sheet.layer().setBackgroundColor_(_c(28, 27, 36, 0.98).CGColor())
+                sheet.layer().setBorderWidth_(1.0)
+                sheet.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+                sheet.layer().setShadowOpacity_(0.5)
+                sheet.layer().setShadowRadius_(18.0)
+                sheet.layer().setShadowOffset_(NSMakeSize(0, -8))
+            cy = PADV
+            if entries:
+                head = _typo_label(
+                    "Ostatnie pytania", "collapsed_h",
+                    NSMakeRect(14, cy + 4, sheet_w - 28, 14), wrapping=False,
+                )
+                sheet.addSubview_(head)
+                cy += HEAD_H
+                for i, entry in enumerate(entries):
+                    row = make_hover_button(
+                        NSMakeRect(6, cy, sheet_w - 12, ROW_H - 2)
+                    ) or NSButton.alloc().initWithFrame_(
+                        NSMakeRect(6, cy, sheet_w - 12, ROW_H - 2)
+                    )
+                    row.setTitle_("")
+                    row.setBordered_(False)
+                    row.setTarget_(self)
+                    row.setAction_("sheetRowClicked:")
+                    row.setTag_(i)
+                    if row.layer() is not None:
+                        row.layer().setCornerRadius_(8.0)
+                    glyph = _label("⌕", 12, _c(176, 162, 141))
+                    glyph.setFrame_(NSMakeRect(10, 8, 14, 16))
+                    row.addSubview_(glyph)
+                    frag = f"{entry['fragmentCount']} fragm."
+                    fw = 70.0
+                    q = _label(entry["query"], 13, _cream_soft())
+                    q.setFrame_(NSMakeRect(30, 8, sheet_w - 12 - 30 - fw - 14, 16))
+                    try:
+                        q.cell().setLineBreakMode_(4)
+                    except Exception:  # pragma: no cover
+                        pass
+                    row.addSubview_(q)
+                    fc = _label(frag, 10.5, _c(111, 102, 90))
+                    try:
+                        fc.setFont_(
+                            NSFont.monospacedSystemFontOfSize_weight_(10.5, 0.0)
+                        )
+                    except Exception:  # pragma: no cover
+                        pass
+                    fc.setAlignment_(2)
+                    fc.setFrame_(NSMakeRect(sheet_w - 12 - fw - 8, 9, fw, 14))
+                    row.addSubview_(fc)
+                    sheet.addSubview_(row)
+                    cy += ROW_H
+            else:
+                hintl = _label(
+                    "Zadaj pierwsze pytanie — historia zostanie tutaj.",
+                    12.0, _muted(),
+                )
+                hintl.setFrame_(NSMakeRect(14, cy + 6, sheet_w - 28, 16))
+                sheet.addSubview_(hintl)
+                cy += 34.0
+            foot = _label("↵ zapytaj · ↑↓ historia · esc zamknij", 11.0, _c(111, 102, 90))
+            foot.setFrame_(NSMakeRect(14, cy + 5, sheet_w - 28, 14))
+            sheet.addSubview_(foot)
+            content.addSubview_(sheet)
+            self._ask_sheet = sheet
+            _slide_in(sheet, 8.0, 0.18)
+
+        @objc.python_method
+        def _hide_ask_sheet(self):
+            for attr in ("_ask_sheet", "_ask_scrim"):
+                v = getattr(self, attr, None)
+                if v is not None:
+                    v.removeFromSuperview()
+                    setattr(self, attr, None)
+            self._hist_idx = -1
+
+        def hideAskSheetClicked_(self, _sender):
+            self._hide_ask_sheet()
+
+        def sheetRowClicked_(self, sender):
+            entries = getattr(self, "_sheet_entries", [])
+            i = int(sender.tag())
+            if 0 <= i < len(entries):
+                query = entries[i]["query"]
+                self._hide_ask_sheet()
+                self._run_recall(query)
+
+        def askToolbarSubmitted_(self, sender):
+            text = str(sender.stringValue()).strip()
+            self._hide_ask_sheet()
+            if text:
+                self._run_recall(text)
 
         # -- reader ---------------------------------------------------------- #
 
@@ -1281,13 +1830,13 @@ if _APPKIT_AVAILABLE:
                 self._build_empty(view, frame)
                 return
 
-            has_sel = bool(self._selected)
-            if not has_sel:
+            if not self._selected:
                 self._handoff_bar_shown = False  # next reveal animates again
-            bar_h = _BAR_H if has_sel else 0.0
-            scroll_h = frame.size.height - _FOOTER_H - bar_h - top
+            # U4 rev. 2: the directions bar lives INSIDE the scroll, under the
+            # KIERUNKI list — the footer never morphs and never hosts the CTA.
+            scroll_h = frame.size.height - _FOOTER_H - top
 
-            # scrolling document (spark + ground + directions)
+            # scrolling document (spark + ground + directions + dirbar)
             scroll = NSScrollView.alloc().initWithFrame_(
                 NSMakeRect(0, top, frame.size.width, scroll_h)
             )
@@ -1310,17 +1859,11 @@ if _APPKIT_AVAILABLE:
                 scroll.reflectScrolledClipView_(clip)
             view.addSubview_(scroll)
 
-            # pinned handoff bar (only when ≥1 direction selected)
-            if has_sel:
-                self._build_handoff_bar(
-                    view,
-                    NSMakeRect(0, frame.size.height - _FOOTER_H - bar_h, frame.size.width, bar_h),
-                    len(self._selected),
-                )
-
-            # pinned quiet footer — never cropped
+            # pinned quiet footer — never cropped, never morphing (C5)
             self._build_footer(
-                view, NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H)
+                view,
+                NSMakeRect(0, frame.size.height - _FOOTER_H, frame.size.width, _FOOTER_H),
+                overflow=content_h > scroll_h,
             )
 
         @objc.python_method
@@ -1484,7 +2027,7 @@ if _APPKIT_AVAILABLE:
                 # the explicit synthesis, and only matched excerpts.
                 privacy = (
                     "Wyszukiwanie jest w 100% lokalne — nic nie opuszcza Twojego Maca. "
-                    "Do chmury idą tylko dopasowane fragmenty i tylko gdy klikniesz "
+                    "Do Claude idą tylko dopasowane fragmenty i tylko gdy klikniesz "
                     "„Zsyntetyzuj”."
                 )
                 ph = _measure_height(privacy, 12, inner_w)
@@ -1563,7 +2106,7 @@ if _APPKIT_AVAILABLE:
             cy += 14
             if self._answer_loading:
                 lbl = _label(
-                    "Syntetyzuję…  (jedyny moment, gdy dopasowane fragmenty idą do chmury)",
+                    "Syntetyzuję…  (jedyny moment, gdy dopasowane fragmenty idą do Claude)",
                     12.5, _gold())
                 lbl.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 18))
                 doc.addSubview_(lbl)
@@ -1753,6 +2296,7 @@ if _APPKIT_AVAILABLE:
         def backToInsightsClicked_(self, sender):
             self._epoch += 1          # invalidate any in-flight search/synthesis
             self._mode = "insight"
+            self._section = "serendypacje"
             self._recall = None
             self._recall_loading = False
             self._answer = None
@@ -1785,6 +2329,7 @@ if _APPKIT_AVAILABLE:
             # daemon threads.
             self._reset_recall_flight()
             self._mode = "recall"
+            self._section = "zapytales"  # the rail follows the executed pull
             self._recall_loading = True
             self._scroll_y = 0.0
             epoch = self._epoch
@@ -1839,6 +2384,15 @@ if _APPKIT_AVAILABLE:
             self._recall_status = payload.get("status", "ok")
             self._recall_raw = payload.get("results", [])
             self._recall_loading = False
+            # U8: an executed question tops the persistent, local askHistory —
+            # it feeds the sheet and the rail's "Zapytałeś" section.
+            try:
+                from src.connections import ask_history
+
+                if self._query:
+                    ask_history.append(self._query, len(self._recall_raw))
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("ask history append failed: %s", exc)
             self._render()
 
         # -- synthesis escalation (the one LLM door in the pull path) -------- #
@@ -2014,15 +2568,30 @@ if _APPKIT_AVAILABLE:
             panel.makeFirstResponder_(fld)
 
         def control_textView_doCommandBySelector_(self, control, _tv, selector):
-            # Esc inside the field editor: dismiss the overlay instead of the
-            # text system's completion behaviour.
-            if str(selector) == "cancelOperation:" and control is getattr(
+            sel = str(selector)
+            # Esc inside the overlay panel (⌥Space): dismiss it.
+            if sel == "cancelOperation:" and control is getattr(
                 self, "_ask_overlay_field", None
             ):
                 panel = getattr(self, "_ask_overlay", None)
                 if panel is not None:
                     panel.orderOut_(None)
                 return True
+            # Toolbar field (U8): Esc closes the sheet without a trace; ↑↓
+            # walks the history (the entry jumps into the input).
+            if control is getattr(self, "_toolbar_field", None):
+                if sel == "cancelOperation:":
+                    self._hide_ask_sheet()
+                    control.setStringValue_("")
+                    return True
+                if sel in ("moveUp:", "moveDown:"):
+                    entries = getattr(self, "_sheet_entries", None)
+                    if not entries:
+                        return False
+                    step = 1 if sel == "moveDown:" else -1
+                    self._hist_idx = (self._hist_idx + step) % len(entries)
+                    control.setStringValue_(entries[self._hist_idx]["query"])
+                    return True
             return False
 
         def titlebarAskClicked_(self, _sender):
@@ -2049,27 +2618,81 @@ if _APPKIT_AVAILABLE:
             inner_w = reader_w - 2 * _READER_PAD_X
             cy = _PAD
 
-            # header: sigil + type + "✦ Nowy insight"
+            # header: sigil + type eyebrow + quiet provenance metadata (U5)
             doc.addSubview_(
                 _sigil(NSMakeRect(_READER_PAD_X, cy, 34, 34), conn.layout(), conn.resolved_tcolor())
             )
             # type eyebrow — gold, uppercase, tracked (typography ramp)
             tlabel = _typo_label(
                 conn.resolved_label(), "eyebrow",
-                NSMakeRect(_READER_PAD_X + 44, cy + 12, inner_w - 160, 14),
+                NSMakeRect(_READER_PAD_X + 44, cy + 12, inner_w - 200, 14),
                 wrapping=False,
             )
             doc.addSubview_(tlabel)
-            # Right-side marker (A6): "digest dd.mm · z chmury" — the to-cloud
-            # provenance chip, NOT the beta.17 "✦ Nowy insight" badge.
-            marker = getattr(self._deck, "digest_label", None) or "z chmury"
-            eye = _typo_label(
-                "✦ " + marker, "cloud_chip",
-                NSMakeRect(reader_w - 230, cy + 12, 206, 14), wrapping=False,
+            # U5: provenance is quiet metadata at the header's right edge —
+            # brand chip (template, soft tint) + "digest · dd.mm · Claude".
+            # The word "chmura" does not exist in this window (anti-error 7).
+            marker = getattr(self._deck, "digest_label", None) or "digest"
+            meta_text = f"{marker} · Claude"
+            mw = _text_width(meta_text, 12.0) + 8
+            chip_img = _brand_image("claude", 15.0)
+            mx = reader_w - _READER_PAD_X - mw
+            if chip_img is not None:
+                biv = NSImageView.alloc().initWithFrame_(
+                    NSMakeRect(mx - 20, cy + 11, 15, 15)
+                )
+                biv.setImage_(chip_img)
+                try:
+                    biv.setContentTintColor_(_c(176, 162, 141))
+                except Exception:  # pragma: no cover
+                    pass
+                biv.setToolTip_(
+                    "Ten digest powstał z użyciem Claude — wybrane notatki "
+                    "zostały wysłane do Anthropic."
+                )
+                doc.addSubview_(biv)
+            meta = _label(meta_text, 12.0, _c(111, 102, 90))
+            meta.setAlignment_(2)
+            meta.setFrame_(NSMakeRect(mx, cy + 12, mw, 15))
+            meta.setToolTip_(
+                "Ten digest powstał z użyciem Claude — wybrane notatki "
+                "zostały wysłane do Anthropic."
             )
-            eye.setAlignment_(2)
-            doc.addSubview_(eye)
+            doc.addSubview_(meta)
             cy += 46
+
+            # Kadr 2: a dismissed insight opens under a recall banner — Zachowaj
+            # acts as "odzyskaj" (constant label, meaning from context).
+            if self._deck.view == im.DISMISSED:
+                ban = NSView.alloc().initWithFrame_(
+                    NSMakeRect(_READER_PAD_X, cy, inner_w, 34)
+                )
+                ban.setWantsLayer_(True)
+                if ban.layer() is not None:
+                    ban.layer().setCornerRadius_(_R_ROW)
+                    ban.layer().setBackgroundColor_(_c(70, 177, 126, 0.10).CGColor())
+                    ban.layer().setBorderWidth_(1.0)
+                    ban.layer().setBorderColor_(_c(91, 196, 149, 0.35).CGColor())
+                from src.ui import style as _style
+
+                ric = _style.sf_symbol("arrow.uturn.backward", point=11.0, weight="regular")
+                if ric is not None:
+                    riv = NSImageView.alloc().initWithFrame_(NSMakeRect(12, 10, 14, 14))
+                    riv.setImage_(ric)
+                    try:
+                        riv.setContentTintColor_(_c(139, 224, 181))
+                    except Exception:  # pragma: no cover
+                        pass
+                    ban.addSubview_(riv)
+                bl = _label(
+                    "Odrzucone — możesz odzyskać. Zachowaj przeniesie to z "
+                    "powrotem do Zachowanych.",
+                    12.0, _c(139, 224, 181),
+                )
+                bl.setFrame_(NSMakeRect(32, 9, inner_w - 44, 16))
+                ban.addSubview_(bl)
+                doc.addSubview_(ban)
+                cy += 44
 
             # thesis (the spark) — display 24pt, capped to a readable measure (30em)
             thesis = "„" + conn.rationale + "”"
@@ -2134,16 +2757,36 @@ if _APPKIT_AVAILABLE:
             doc.addSubview_(rule)
             cy += 16
 
-            # act — directions header + multi-select rows
+            # act — directions header (U2): label starts EXACTLY at the
+            # checkboxes' left edge; no inline description — the "?" glyph
+            # carries the explanation as a tooltip.
+            DIR_PADX = 14.0  # row's inner padding = the checkbox left edge
             dcap = _eyebrow("Kierunki", _muted())
-            dcap.setFrame_(NSMakeRect(_READER_PAD_X, cy, 120, 13))
+            dcap.setFrame_(NSMakeRect(_READER_PAD_X + DIR_PADX, cy, 90, 13))
             doc.addSubview_(dcap)
-            hint = _label("— zaznacz, by przekazać", 11.5, _c(111, 102, 90))
-            hint.setFrame_(NSMakeRect(_READER_PAD_X + 78, cy, inner_w - 78, 13))
-            doc.addSubview_(hint)
+            qx = _READER_PAD_X + DIR_PADX + _typo_width("KIERUNKI", "eyebrow") + 10
+            qm = NSView.alloc().initWithFrame_(NSMakeRect(qx, cy - 1, 14, 14))
+            qm.setWantsLayer_(True)
+            if qm.layer() is not None:
+                qm.layer().setCornerRadius_(7.0)
+                qm.layer().setBorderWidth_(1.0)
+                qm.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+            qlab = _label("?", 9.0, _muted())
+            qlab.setAlignment_(1)
+            qlab.setFrame_(NSMakeRect(0, 1, 14, 11))
+            qm.addSubview_(qlab)
+            qm.setToolTip_(
+                "Zaznaczone kierunki trafią do handoffu — „Kontynuuj w Claude”."
+            )
+            doc.addSubview_(qm)
             cy += 22
             for i, d in enumerate(conn.directions):
                 cy = self._build_direction_row(doc, i, d, cy, inner_w)
+
+            # U4 rev. 2: the directions bar appears right UNDER the list (same
+            # width and left edge) the moment ≥1 checkbox is ticked.
+            if self._selected:
+                cy = self._build_dirbar(doc, cy + 4, inner_w, len(self._selected))
             cy += _PAD
 
             doc.setFrameSize_(NSMakeSize(reader_w, cy))
@@ -2178,17 +2821,25 @@ if _APPKIT_AVAILABLE:
                 cy += 8
             return cy + 4
 
+        # U3 — THE checkbox constant: 18×18, border 1.5, radius 5, margin-top 3.
+        # One constant in code; if two checkboxes differ by a pixel, that's a
+        # bug (anti-error 6).
+        _CHK_BOX = 18.0
+        _CHK_BORDER = 1.5
+        _CHK_MT = 3.0
+
         @objc.python_method
         def _build_direction_row(self, doc, index, text, cy, inner_w):
             from src.ui.hover import make_hover_button
 
             selected = index in self._selected
-            # Design C3: padding 12/14, cols [18px chk] 11 [text], radius 12.
-            PADX = 12.0
-            PADTOP = 11.0
-            BOX = 16.0
+            # C3 redline: padding 12/14, cols [18px chk] 11 [text 15/1.5],
+            # radius 12; the row border stays TRANSPARENT in every state (U7).
+            PADX = 14.0
+            PADTOP = 12.0
+            BOX = self._CHK_BOX
             COLGAP = 11.0
-            text_x = PADX + BOX + COLGAP  # 39
+            text_x = PADX + BOX + COLGAP
             text_w = inner_w - text_x - PADX
             th = _typo_measure(text, "direction", text_w)
             row_h = max(46.0, PADTOP * 2 + th)
@@ -2202,33 +2853,29 @@ if _APPKIT_AVAILABLE:
             btn.setWantsLayer_(True)
             if btn.layer() is not None:
                 btn.layer().setCornerRadius_(_R_ROW)
-                if selected:
+                if selected:  # U7: one signal — checkbox + tint, NO frame
                     btn.layer().setBackgroundColor_(_c(217, 84, 42, 0.09).CGColor())
-                    btn.layer().setBorderWidth_(1.0)
-                    btn.layer().setBorderColor_(_c(217, 84, 42, 0.55).CGColor())
                 else:
                     btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.018).CGColor())
 
-            # Checkbox centred on the FIRST text line (redesign E). The ramp now
-            # uses lineSpacing (between lines only), so the first line's glyph
-            # box starts exactly at PADTOP: centre = PADTOP + lineHeight/2
-            # (≈15.5/2 for 13pt) → box_y for a 16pt box ≈ PADTOP + 1.
-            box_y = PADTOP + 1.0
+            # U3: margin-top 3px puts the box on the optical centre of the
+            # FIRST text line (15px × 1.5 − 18) / 2 ≈ 2.6 → 3.
+            box_y = PADTOP + self._CHK_MT
             box = NSView.alloc().initWithFrame_(NSMakeRect(PADX, box_y, BOX, BOX))
             box.setWantsLayer_(True)
             if box.layer() is not None:
                 box.layer().setCornerRadius_(_R_CHECK)
                 if selected:
                     box.layer().setBackgroundColor_(_terra_deep().CGColor())
-                    box.layer().setBorderWidth_(1.0)
+                    box.layer().setBorderWidth_(self._CHK_BORDER)
                     box.layer().setBorderColor_(_terra_deep().CGColor())
                 else:
-                    box.layer().setBorderWidth_(1.5)
+                    box.layer().setBorderWidth_(self._CHK_BORDER)
                     box.layer().setBorderColor_(_c(255, 255, 255, 0.24).CGColor())
             btn.addSubview_(box)
             if selected:
                 chk = _label("✓", 11, _c(255, 255, 255), bold=True)
-                chk.setFrame_(NSMakeRect(PADX, box_y - 1, BOX, 15))
+                chk.setFrame_(NSMakeRect(PADX, box_y + 1, BOX, 15))
                 chk.setAlignment_(1)
                 btn.addSubview_(chk)
 
@@ -2253,24 +2900,19 @@ if _APPKIT_AVAILABLE:
             return cy + row_h + 9
 
         @objc.python_method
-        def _build_handoff_bar(self, view, frame, n):
-            bar = _DashFlippedView.alloc().initWithFrame_(frame)
-            bar.setWantsLayer_(True)
-            if bar.layer() is not None:
-                # Redline E: bg rgba(0,0,0,.22) + white .08 hairline on top (the
-                # old terracotta-tinted strip was beta.17).
-                bar.layer().setBackgroundColor_(_c(0, 0, 0, 0.22).CGColor())
-            tdiv = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, _hairline()))
-            tdiv.setWantsLayer_(True)
-            if tdiv.layer() is not None:
-                tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
-            bar.addSubview_(tdiv)
-
+        def _build_dirbar(self, doc, cy, inner_w, n):
+            """C4 / U4 rev. 2 — the directions bar, inline UNDER the KIERUNKI
+            list (same width and left edge). Appears at >=1 selection; the
+            window footer never hosts the handoff CTA (anti-error 4)."""
             from src.ui import style
 
+            bar = _DirBarBG.alloc().initWithFrame_(
+                NSMakeRect(_READER_PAD_X, cy, inner_w, _BAR_H)
+            )
+
             CTA_H = 34.0
-            BTN_Y = (frame.size.height - CTA_H) / 2.0
-            pad = _READER_PAD_X
+            BTN_Y = (_BAR_H - CTA_H) / 2.0
+            pad = 13.0
             white = _c(255, 255, 255)
 
             tool = getattr(config, "LLM_HANDOFF_TOOL", "claude")
@@ -2278,23 +2920,15 @@ if _APPKIT_AVAILABLE:
                 tool = "claude"
             name = ho.tool_name(tool)
 
-            # Secondary actions live behind ONE ⋯ menu (redesign changelog cut:
-            # 'klaster 3 ikon zawsze → menu ⋯ + jeden split-CTA').
             ICON_W = 34.0
-            CARET_W = 28.0
-            GAP_CLUSTER = 16.0
-            sec_w = ICON_W
+            CARET_W = 24.0
+            GAP = 8.0
+            GAP_CLUSTER = 14.0
 
             def _cta_width(label):
                 # lead pad + white brand chip + gap + measured text + trail pad
-                return 10.0 + 18.0 + 8.0 + _text_width(label, 13.0) + 12.0
+                return 10.0 + 18.0 + 9.0 + _text_width(label, 13.0) + 12.0
 
-            def _cluster_width(cw):
-                return cw + CARET_W + GAP_CLUSTER + sec_w
-
-            # Measured, right-anchored layout; degrade so the actions never clip:
-            # drop the provider name from the CTA, then drop the status label.
-            avail = frame.size.width - 2 * pad
             # PL plurals per the redline: 1 kierunek · 2–4 kierunki · 5+ kierunków.
             if n == 1:
                 cnt = "1 kierunek wybrany"
@@ -2302,38 +2936,48 @@ if _APPKIT_AVAILABLE:
                 cnt = f"{n} kierunki wybrane"
             else:
                 cnt = f"{n} kierunków wybranych"
-            cnt_cloud = "   ✦ do chmury"
-            label_w = _text_width(cnt, 12.5) + _text_width(cnt_cloud, 10.5) + 10
+
+            icons_w = 3 * ICON_W + 2 * GAP
+            avail = inner_w - 2 * pad
             cta_label = "Kontynuuj w " + name
             cta_w = _cta_width(cta_label)
+            label_w = _text_width(cnt, 12.5) + 8
             show_label = True
-            if label_w + GAP_CLUSTER + _cluster_width(cta_w) > avail:
+            if label_w + GAP_CLUSTER + icons_w + GAP_CLUSTER + cta_w + CARET_W > avail:
                 cta_label = "Kontynuuj"
                 cta_w = _cta_width(cta_label)
-            if label_w + GAP_CLUSTER + _cluster_width(cta_w) > avail:
+            if label_w + GAP_CLUSTER + icons_w + GAP_CLUSTER + cta_w + CARET_W > avail:
                 show_label = False
 
             if show_label:
-                lab = _label(cnt, 12.0, _c(250, 243, 226, 0.6))
-                cw_ = _text_width(cnt, 12.0) + 6
-                lab.setFrame_(
-                    NSMakeRect(pad, frame.size.height / 2 - 8, cw_, 16)
+                lab = _typo_label(
+                    cnt, "dirbar_count",
+                    NSMakeRect(pad, _BAR_H / 2 - 8, label_w, 16), wrapping=False,
                 )
                 bar.addSubview_(lab)
-                cloud = _typo_label(
-                    "✦ do chmury", "cloud_chip",
-                    NSMakeRect(pad + cw_ + 10, frame.size.height / 2 - 7, 140, 14),
-                    wrapping=False,
-                )
-                bar.addSubview_(cloud)
 
-            x = max(pad, frame.size.width - pad - _cluster_width(cta_w))
+            # right-anchored: [icons] gap [split CTA]
+            x_cta = max(pad, inner_w - pad - cta_w - CARET_W)
+            sx = x_cta - GAP_CLUSTER - icons_w
+            for k, (symbol, tip, action) in enumerate((
+                ("checkmark.square", "Utwórz zadanie", "taskClicked:"),
+                ("calendar", "Do kalendarza", "calendarClicked:"),
+                ("doc.on.doc", "Kopiuj", "copyClicked:"),
+            )):
+                btn = _icon_button(
+                    style.sf_symbol(symbol, point=13.0, weight="regular"),
+                    tip,
+                    NSMakeRect(sx + k * (ICON_W + GAP), BTN_Y, ICON_W, CTA_H),
+                    _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
+                    self, action,
+                )
+                bar.addSubview_(btn)
 
             # --- primary CTA = split pill: [chip + label] | caret ---
             LEFT_CORNERS = 1 | 4   # MinXMinY | MinXMaxY
             RIGHT_CORNERS = 2 | 8  # MaxXMinY | MaxXMaxY
             go = _pill_button(
-                "", NSMakeRect(x, BTN_Y, cta_w, CTA_H),
+                "", NSMakeRect(x_cta, BTN_Y, cta_w, CTA_H),
                 white, _terra_deep(), _terra_deep(),
                 self, "continueLLMClicked:",
             )
@@ -2361,13 +3005,13 @@ if _APPKIT_AVAILABLE:
                 chip.addSubview_(biv)
             go.addSubview_(chip)
             golab = _label(cta_label, 13, white)
-            golab.setFrame_(NSMakeRect(36, (CTA_H - 16) / 2.0, cta_w - 44, 16))
+            golab.setFrame_(NSMakeRect(37, (CTA_H - 16) / 2.0, cta_w - 45, 16))
             go.addSubview_(golab)
             bar.addSubview_(go)
 
             caret = _pill_button(
                 "⌄",
-                NSMakeRect(x + cta_w, BTN_Y, CARET_W, CTA_H),
+                NSMakeRect(x_cta + cta_w, BTN_Y, CARET_W, CTA_H),
                 white, _terra_deep(), None,
                 self, "switchLLMClicked:",
             )
@@ -2375,7 +3019,7 @@ if _APPKIT_AVAILABLE:
                 caret.layer().setMaskedCorners_(RIGHT_CORNERS)
             # seam divider between go and caret
             seam = NSView.alloc().initWithFrame_(
-                NSMakeRect(x + cta_w, BTN_Y + 6, 1, CTA_H - 12)
+                NSMakeRect(x_cta + cta_w, BTN_Y + 6, 1, CTA_H - 12)
             )
             seam.setWantsLayer_(True)
             if seam.layer() is not None:
@@ -2384,24 +3028,19 @@ if _APPKIT_AVAILABLE:
             bar.addSubview_(caret)
             bar.addSubview_(seam)
 
-            # ⋯ menu = the former 3-icon cluster (task · calendar · clipboard).
-            sx = x + cta_w + CARET_W + GAP_CLUSTER
-            more = _icon_button(
-                style.sf_symbol("ellipsis", point=15.0, weight="regular"),
-                "Akcje wtórne (zadanie · kalendarz · schowek)",
-                NSMakeRect(sx, BTN_Y, ICON_W, CTA_H),
-                _c(201, 187, 166), _c(255, 255, 255, 0.05), _c(255, 255, 255, 0.16),
-                self, "handoffMoreClicked:",
-            )
-            bar.addSubview_(more)
-            view.addSubview_(bar)
-            # Reveal slide (spec §04): only on the 0→≥1 transition, not rebuilds.
+            doc.addSubview_(bar)
+            # Reveal (spec §04): fade + 8px slide, ~180ms — only on the 0→>=1
+            # transition, not on every rebuild; reduced-motion cuts instead.
             if not getattr(self, "_handoff_bar_shown", False):
-                _slide_in(bar, 10.0, 0.15)
+                _slide_in(bar, 8.0, 0.18)
             self._handoff_bar_shown = True
+            return cy + _BAR_H
 
         @objc.python_method
-        def _build_footer(self, view, frame):
+        def _build_footer(self, view, frame, overflow=False):
+            """C5 — the FIXED footer: Odrzuć (ghost) · „1 z N" · Zachowaj
+            (jade). Constant labels in every view; never morphs; never carries
+            the handoff CTA (anti-error 4). Hidden in Pytanie and on empty."""
             foot = _DashFlippedView.alloc().initWithFrame_(frame)
             foot.setWantsLayer_(True)
             if foot.layer() is not None:
@@ -2414,8 +3053,12 @@ if _APPKIT_AVAILABLE:
 
             from src.ui import style
 
-            # Center position counter "N z M" (redesign: lives in the footer, not
-            # the title-bar, which keeps only ⌕).
+            if overflow:  # quiet scroll hint (C5 .more) — only when it's true
+                more = _label("↓ przewiń, by zobaczyć resztę", 11.0, _c(111, 102, 90))
+                more.setFrame_(NSMakeRect(16, 16, 220, 14))
+                foot.addSubview_(more)
+
+            # Center position counter "N z M" — position in the current view.
             vis = self._deck.visible()
             if vis:
                 pos = next(
@@ -2430,51 +3073,125 @@ if _APPKIT_AVAILABLE:
                     ctr.setAlignment_(1)
                     foot.addSubview_(ctr)
 
-            # Redline A4: buttons 31pt / radius 6. Odrzuć = ghost WITH a border
-            # (rgba .16, text .7); Zachowaj = jade (bg .16, border .45, text
-            # #8BE0B5 bold) — text-only: an NSImage on the button forces a white
-            # bezel draw, which is what washed the old Zachowaj out.
+            # Buttons — the one 34px/r6 control family (C5 redline).
+            BTN_H = 34.0
+            BTN_Y = (frame.size.height - BTN_H) / 2.0
             dismiss = _pill_button(
-                "Odrzuć", NSMakeRect(frame.size.width - 226, 8, 86, 31),
-                _c(255, 255, 255, 0.7), None, _c(255, 255, 255, 0.16),
+                "Odrzuć", NSMakeRect(frame.size.width - 232, BTN_Y, 86, BTN_H),
+                _c(140, 130, 115), None, None,
                 self, "dismissClicked:", 12.5,
             )
             foot.addSubview_(dismiss)
             keep = _pill_button(
-                "Zachowaj", NSMakeRect(frame.size.width - 128, 8, 112, 31),
-                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(70, 177, 126, 0.45),
+                "", NSMakeRect(frame.size.width - 134, BTN_Y, 118, BTN_H),
+                _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(91, 196, 149, 0.5),
                 self, "keepClicked:", 12.5,
             )
-            keep.setFont_(NSFont.boldSystemFontOfSize_(12.5))
+            mark = style.sf_symbol("bookmark", point=11.0, weight="regular")
+            lx = 14.0
+            if mark is not None:
+                miv = NSImageView.alloc().initWithFrame_(
+                    NSMakeRect(lx, (BTN_H - 14) / 2.0, 12, 14)
+                )
+                miv.setImage_(mark)
+                try:
+                    miv.setContentTintColor_(_c(139, 224, 181))
+                except Exception:  # pragma: no cover
+                    pass
+                keep.addSubview_(miv)
+                lx += 18.0
+            klab = _label("Zachowaj", 12.5, _c(139, 224, 181), bold=True)
+            klab.setFrame_(NSMakeRect(lx, (BTN_H - 16) / 2.0, 118 - lx - 8, 16))
+            keep.addSubview_(klab)
             foot.addSubview_(keep)
             view.addSubview_(foot)
 
+        # Sigil grammar per view for the empty block (C6): each state
+        # inherits the view's sigil, muted to 85% opacity.
+        _EMPTY_SIGIL = {
+            "new": ("triad", "#E3C16B"),
+            "kept": ("shared", "#D6B033"),
+            "dismissed": ("contradiction", "#D9542A"),
+        }
+
         @objc.python_method
         def _build_empty(self, view, frame, title=None, subtitle=None):
+            """U10 — one centred column in the READER area (max 360px): sigil
+            46px → 14 → title 18 display → 7 → one sentence. Under it, +20px,
+            at most two quiet actions — never filled-primary. The triage
+            footer does not render on an empty view (caller returns early)."""
             title = title or "Cisza w korpusie"
             subtitle = subtitle or (
                 "Wszystkie połączenia przejrzane. Timshel czyta dalej — gdy coś "
                 "się zapali, wróci tu rozbłysk."
             )
-            view.addSubview_(
-                _sigil(
-                    NSMakeRect(frame.size.width / 2 - 27, frame.size.height / 2 - 96, 54, 54),
-                    "triad", "#E3C16B",
-                )
+            block_w = min(360.0, frame.size.width - 40.0)
+            bx = (frame.size.width - block_w) / 2.0
+            sub_h = max(20.0, _typo_measure(subtitle, "empty_desc", block_w))
+            block_h = 46.0 + 14.0 + 24.0 + 7.0 + sub_h
+            by = max((frame.size.height - block_h - 50.0) / 2.0, 20.0)
+
+            layout, hexcol = self._EMPTY_SIGIL.get(
+                self._deck.view, ("triad", "#E3C16B")
             )
+            sig = _sigil(
+                NSMakeRect(frame.size.width / 2 - 23, by, 46, 46), layout, hexcol
+            )
+            try:
+                sig.setAlphaValue_(0.85)
+            except Exception:  # pragma: no cover
+                pass
+            view.addSubview_(sig)
             h = _typo_label(
                 title, "empty_title",
-                NSMakeRect(0, frame.size.height / 2, frame.size.width, 24), wrapping=False,
+                NSMakeRect(bx, by + 46 + 14, block_w, 24), wrapping=False,
             )
             h.setAlignment_(1)
             view.addSubview_(h)
             p = _typo_label(
                 subtitle, "empty_desc",
-                NSMakeRect(frame.size.width / 2 - 170, frame.size.height / 2 + 28, 340, 50),
+                NSMakeRect(bx, by + 46 + 14 + 24 + 7, block_w, sub_h),
             )
             p.setAlignment_(1)
             view.addSubview_(p)
+
+            # „co dalej" row (max 2 quiet actions, 30px, never filled):
+            # a contextual bridge + „Zapytaj ⌘K".
+            ay = by + block_h + 20.0
+            counts = self._deck.counts()
+            actions = []
+            if self._deck.view == im.NEW and counts.get(im.KEPT, 0) > 0:
+                actions.append(
+                    (f"Zachowane · {counts[im.KEPT]}", "bridgeToKeptClicked:", True)
+                )
+            elif self._deck.view == im.KEPT and counts.get(im.NEW, 0) > 0:
+                actions.append(
+                    (f"Nowe · {counts[im.NEW]}", "bridgeToNewClicked:", True)
+                )
+            actions.append(("Zapytaj  ⌘K", "emptyAskClicked:", False))
+
+            widths = [max(96.0, _text_width(t, 12.0) + 30.0) for t, _a, _j in actions]
+            total = sum(widths) + 10.0 * (len(actions) - 1)
+            ax = (frame.size.width - total) / 2.0
+            for (text, action, jade), w in zip(actions, widths):
+                if jade:  # jade tinted — the bridge to saved insights
+                    btn = _pill_button(
+                        text, NSMakeRect(ax, ay, w, 30),
+                        _c(139, 224, 181), _c(70, 177, 126, 0.16),
+                        _c(91, 196, 149, 0.5), self, action, 12.0,
+                    )
+                else:  # ghost with a border — the ask entry
+                    btn = _pill_button(
+                        text, NSMakeRect(ax, ay, w, 30),
+                        _c(201, 187, 166), _c(255, 255, 255, 0.04),
+                        _c(255, 255, 255, 0.16), self, action, 12.0,
+                    )
+                view.addSubview_(btn)
+                ax += w + 10.0
             return view
+
+        def emptyAskClicked_(self, _sender):
+            self.focusAskField()
 
         # Per-view empty copy when the deck has items but the active view is empty.
         _EMPTY_VIEW_COPY = {
@@ -2586,29 +3303,6 @@ if _APPKIT_AVAILABLE:
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
 
-        def handoffMoreClicked_(self, sender):
-            """⋯ menu — the secondary handoff actions (redesign E3)."""
-            from AppKit import NSMenu, NSMenuItem
-
-            items = (
-                ("Utwórz zadanie", "taskClicked:"),
-                ("Dodaj do kalendarza", "calendarClicked:"),
-                ("Kopiuj do schowka", "copyClicked:"),
-            )
-            menu = NSMenu.alloc().init()
-            menu.setAutoenablesItems_(False)
-            for label, sel in items:
-                it = NSMenuItem.alloc().init()
-                it.setTarget_(self)
-                it.setAction_(sel)
-                v = _FilterItemView.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 28))
-                v._spec = dict(label=label, count="", checked=False, is_new=False)
-                it.setView_(v)
-                menu.addItem_(it)
-            menu.popUpMenuPositioningItem_atLocation_inView_(
-                None, NSMakePoint(0, sender.frame().size.height + 2), sender
-            )
-
         def taskClicked_(self, sender):
             self._do_handoff(ho.TASK)
 
@@ -2619,15 +3313,41 @@ if _APPKIT_AVAILABLE:
             self._do_handoff(ho.CLIPBOARD)
 
         def switchLLMClicked_(self, sender):
-            order = list(ho.LLM_TOOLS.keys())  # only prefill-capable tools
+            """C4 caret: the connected-tools menu (Claude / ChatGPT)."""
+            from AppKit import NSMenu, NSMenuItem
+
             cur = getattr(config, "LLM_HANDOFF_TOOL", "claude")
-            nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "claude"
-            config.LLM_HANDOFF_TOOL = nxt
-            try:
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+            head = NSMenuItem.alloc().init()
+            head.setTitle_("Podłączone narzędzie")
+            head.setEnabled_(False)
+            menu.addItem_(head)
+            for key in ho.LLM_TOOLS:
+                it = NSMenuItem.alloc().init()
+                it.setTitle_(ho.tool_name(key))
+                it.setTarget_(self)
+                it.setAction_("pickLLMClicked:")
+                it.setRepresentedObject_(key)
+                it.setState_(1 if key == cur else 0)
+                img = _brand_image(key, 13.0)
+                if img is not None:
+                    it.setImage_(img)
+                menu.addItem_(it)
+            menu.popUpMenuPositioningItem_atLocation_inView_(
+                None, NSMakePoint(0, sender.frame().size.height + 2), sender
+            )
+
+        def pickLLMClicked_(self, sender):
+            key = sender.representedObject()
+            if not key or key not in ho.LLM_TOOLS:
+                return
+            config.LLM_HANDOFF_TOOL = key
+            try:  # global, remembered — the same setting as in Ustawienia
                 from src.config.settings import UserSettings
 
                 s = UserSettings.load()
-                s.ai_handoff_tool = nxt
+                s.ai_handoff_tool = key
                 s.save()
             except Exception as exc:  # pragma: no cover - best effort
                 logger.debug("could not persist handoff tool: %s", exc)
@@ -2661,6 +3381,9 @@ if _APPKIT_AVAILABLE:
                 "sig": conn.sig or "",
                 "conn_type": conn.synthesis_type,  # raw type only — never the display constant (keeps the canonical sig joinable)
                 "notes": conn.notes,
+                # U4 rev. 2: every directions exit auto-keeps THIS insight —
+                # captured now, not whatever is active when the worker returns.
+                "index": self._deck.active_index,
             }
             import threading
 
@@ -2695,7 +3418,9 @@ if _APPKIT_AVAILABLE:
                 )
             except Exception as exc:  # pragma: no cover - signal is best-effort
                 logger.debug("record_action failed: %s", exc)
-            self._pending_handoff = {"toast": res.toast}
+            payload = dict(payload)
+            payload["toast"] = res.toast
+            self._pending_handoff = payload
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
                 "applyHandoff:", None, False
             )
@@ -2705,7 +3430,35 @@ if _APPKIT_AVAILABLE:
             if not payload:
                 return
             self._pending_handoff = None
-            self._show_toast(payload["toast"])
+            # U4 rev. 2 / anti-error 11: a handoff auto-keeps the insight — it
+            # may NOT stay in Nowych. In-memory retag + an explicit ``save``
+            # event so the decision survives restart (triage replay).
+            idx = payload.get("index", -1)
+            already_kept = self._deck.state_at(idx) == im.KEPT
+            if not already_kept and idx >= 0:
+                self._deck.retag_index(idx, im.KEPT)
+                try:
+                    vsig.record_action(
+                        vsig.TARGET_SAVE,
+                        sig=payload.get("sig", ""),
+                        conn_type=payload.get("conn_type", ""),
+                        notes=payload.get("notes"),
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.debug("auto-keep record_action failed: %s", exc)
+            # Checkboxes clear, the directions bar disappears (BEHAVIOR §4.5).
+            self._selected = set()
+            self._handoff_bar_shown = False
+            self._capture_scroll()
+            self._render()
+            target = payload.get("target")
+            if target == ho.CLIPBOARD:
+                toast = "Skopiowano"  # BEHAVIOR §9 — the copy channel's exact copy
+            elif already_kept:
+                toast = payload.get("toast") or "Przekazano"
+            else:
+                toast = "Przekazano · zachowano"
+            self._show_toast(toast)
 
         @objc.python_method
         def _reset_card_state(self):
@@ -2763,94 +3516,93 @@ if _APPKIT_AVAILABLE:
             )
 
         def keepClicked_(self, sender):
-            self._emit_action(vsig.TARGET_SAVE)
-            if not self._show_keep_flash():
-                self._deck.keep()
-                self._reset_card_state()
-                self._render()
+            """C5/BEHAVIOR §3: Zachowaj — also „odzyskaj" in the Odrzucone
+            view (constant label, meaning from context). Toast with Cofnij."""
+            conn = self._deck.active()
+            if conn is None:
                 return
-            from Foundation import NSTimer
-
-            self._keep_timer = (
-                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                    0.8, self, "afterKeepFlash:", None, False
-                )
-            )
-
-        def afterKeepFlash_(self, timer):
+            idx = self._deck.active_index
+            prev_view = self._deck.view
+            self._emit_action(vsig.TARGET_SAVE)
             self._deck.keep()
             self._reset_card_state()
             self._render()
-
-        def dismissClicked_(self, sender):
-            self._emit_action(vsig.TARGET_NONE)
-            if not self._show_dismiss_flash():
-                self._deck.dismiss()
-                self._reset_card_state()
-                self._render()
-                return
-            from Foundation import NSTimer
-
-            self._dismiss_timer = (
-                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                    0.7, self, "afterDismissFlash:", None, False
-                )
+            label = "Odzyskano" if prev_view == im.DISMISSED else "Zachowano"
+            self._show_toast(
+                label, undo=(idx, prev_view, conn.sig or "", conn.synthesis_type, conn.notes)
             )
 
-        def afterDismissFlash_(self, timer):
+        def dismissClicked_(self, sender):
+            conn = self._deck.active()
+            if conn is None:
+                return
+            # U4 rev. 2: dismissing an already-kept insight (which includes
+            # every handed-off one — handoff auto-keeps) undoes a decision, so
+            # it asks first. „Przekazać-a-potem-odrzucić" is a contradiction
+            # the system does not silently offer.
+            if self._deck.view == im.KEPT:
+                try:
+                    from AppKit import NSAlert
+
+                    alert = NSAlert.alloc().init()
+                    alert.setMessageText_("Odrzucić zachowany insight?")
+                    alert.setInformativeText_(
+                        "Ten insight jest w Zachowanych (mógł też zostać "
+                        "przekazany dalej). Odrzucenie cofnie zachowanie."
+                    )
+                    alert.addButtonWithTitle_("Odrzuć")
+                    alert.addButtonWithTitle_("Anuluj")
+                    if alert.runModal() != 1000:  # first button = proceed
+                        return
+                except Exception:  # pragma: no cover - headless/tests
+                    pass
+            idx = self._deck.active_index
+            prev_view = self._deck.view
+            self._emit_action(vsig.TARGET_NONE)
             self._deck.dismiss()
             self._reset_card_state()
             self._render()
-
-        @objc.python_method
-        def _show_flash(self, symbol, title, subtitle, color, bloom):
-            win = self._window
-            if win is None or win.contentView() is None:
-                return False
-            content = win.contentView()
-            b = content.bounds()
-            frame = NSMakeRect(
-                _RAIL_W, _HEADER_H, b.size.width - _RAIL_W, b.size.height - _HEADER_H
-            )
-            overlay = _FlashOverlay.alloc().initWithFrame_(frame)
-            overlay.bloom = bloom
-            spark = _label(symbol, 34, color, bold=False)
-            spark.setAlignment_(1)
-            spark.setFrame_(NSMakeRect(0, frame.size.height * 0.4 - 40, frame.size.width, 44))
-            overlay.addSubview_(spark)
-            lab = _label(title, 19, _cream(), bold=True)
-            lab.setAlignment_(1)
-            lab.setFrame_(NSMakeRect(0, frame.size.height * 0.4 + 6, frame.size.width, 26))
-            overlay.addSubview_(lab)
-            sub = _label(subtitle, 12.5, _muted())
-            sub.setAlignment_(1)
-            sub.setFrame_(NSMakeRect(0, frame.size.height * 0.4 + 34, frame.size.width, 18))
-            overlay.addSubview_(sub)
-            content.addSubview_(overlay)
-            return True
-
-        @objc.python_method
-        def _show_keep_flash(self):
-            return self._show_flash(
-                "✦", "Zachowane", "cichy schowek · następne połączenie",
-                _gold(), (244, 221, 142, 0.26),
+            self._show_toast(
+                "Odrzucono",
+                undo=(idx, prev_view, conn.sig or "", conn.synthesis_type, conn.notes),
             )
 
-        @objc.python_method
-        def _show_dismiss_flash(self):
-            return self._show_flash(
-                "✕", "Odrzucone", "następne połączenie",
-                _c(176, 162, 141), (176, 162, 141, 0.12),
-            )
+        def undoTriageClicked_(self, _sender):
+            """Toast „Cofnij": restore the pre-click state, in memory AND in
+            the signal log (a ``reset``/re-triage event — survives restart)."""
+            payload = getattr(self, "_undo_payload", None)
+            if not payload:
+                return
+            self._undo_payload = None
+            idx, prev_view, sig, conn_type, notes = payload
+            self._deck.retag_index(idx, prev_view)
+            target = {
+                im.NEW: vsig.TARGET_RESET,
+                im.KEPT: vsig.TARGET_SAVE,
+                im.DISMISSED: vsig.TARGET_NONE,
+            }.get(prev_view, vsig.TARGET_RESET)
+            try:
+                vsig.record_action(
+                    target, sig=sig, conn_type=conn_type, notes=notes
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("undo record_action failed: %s", exc)
+            self.removeToast_(None)
+            self._deck.set_view(prev_view)
+            self._deck.select(idx)
+            self._reset_card_state()
+            self._render()
 
-        @objc.python_method
-        def _show_toast(self, text):
+        def _show_toast(self, text, undo=None):
+            """Gold toast, 2s. With ``undo`` (BEHAVIOR §9: Zachowaj/Odrzuć),
+            a „Cofnij" button restores the pre-click state."""
             win = self._window
             if win is None or win.contentView() is None:
                 return
             content = win.contentView()
             b = content.bounds()
-            tw = min(420.0, 80.0 + 7.0 * len(text))
+            undo_w = 62.0 if undo is not None else 0.0
+            tw = min(440.0, 80.0 + 7.0 * len(text) + undo_w)
             toast = _DashFlippedView.alloc().initWithFrame_(
                 NSMakeRect(
                     _RAIL_W + (b.size.width - _RAIL_W - tw) / 2,
@@ -2864,8 +3616,26 @@ if _APPKIT_AVAILABLE:
                 toast.layer().setBackgroundColor_(_gold().CGColor())
             lab = _label(text, 12.5, _c(14, 13, 18), bold=True)
             lab.setAlignment_(1)
-            lab.setFrame_(NSMakeRect(8, 8, tw - 16, 16))
+            lab.setFrame_(NSMakeRect(8, 8, tw - 16 - undo_w, 16))
             toast.addSubview_(lab)
+            if undo is not None:
+                self._undo_payload = undo
+                ub = NSButton.alloc().initWithFrame_(
+                    NSMakeRect(tw - undo_w - 4, 4, undo_w, 24)
+                )
+                ub.setTitle_("")
+                ub.setBordered_(False)
+                ub.setTarget_(self)
+                ub.setAction_("undoTriageClicked:")
+                ub.setWantsLayer_(True)
+                if ub.layer() is not None:
+                    ub.layer().setCornerRadius_(6.0)
+                    ub.layer().setBackgroundColor_(_c(14, 13, 18, 0.14).CGColor())
+                ul = _label("Cofnij", 11.5, _c(14, 13, 18), bold=True)
+                ul.setAlignment_(1)
+                ul.setFrame_(NSMakeRect(0, 4, undo_w, 15))
+                ub.addSubview_(ul)
+                toast.addSubview_(ub)
             content.addSubview_(toast)
             if self._toast is not None:
                 self._toast.removeFromSuperview()
@@ -2874,7 +3644,7 @@ if _APPKIT_AVAILABLE:
 
             self._toast_timer = (
                 NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                    1.7, self, "removeToast:", None, False
+                    2.0, self, "removeToast:", None, False
                 )
             )
 
@@ -2887,7 +3657,14 @@ if _APPKIT_AVAILABLE:
         # -- public API ------------------------------------------------------ #
 
         def updateDeck_(self, deck):
+            prev_view = self._deck.view if self._deck is not None else None
             self._deck = deck if deck is not None else im.InsightDeck()
+            if self._window is not None and prev_view:
+                # An open window keeps the user's in-session view choice;
+                # a fresh window applies the first-non-empty rule (U9).
+                self._deck.set_view(prev_view)
+            else:
+                self._deck.focus_first_nonempty()
             self._reset_card_state()
             if self._window is not None and self._window.isVisible():
                 self._render()
