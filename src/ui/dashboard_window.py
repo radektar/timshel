@@ -30,6 +30,8 @@ from src.connections import handoff as ho
 from src.connections import validation_signal as vsig
 from src.logger import logger
 from src.ui import insight_model as im
+from src.ui import note_renderer as nrend
+from src.ui import obsidian_link
 
 try:
     import objc
@@ -70,6 +72,17 @@ try:
     _APPKIT_AVAILABLE = True
 except ImportError:  # pragma: no cover - non-mac
     _APPKIT_AVAILABLE = False
+
+try:  # WKWebView hosts the in-app note reader; optional like AppKit.
+    from WebKit import (
+        WKWebpagePreferences,
+        WKWebView,
+        WKWebViewConfiguration,
+    )
+
+    _WEBKIT_AVAILABLE = True
+except ImportError:  # pragma: no cover - non-mac / stripped env
+    _WEBKIT_AVAILABLE = False
 
 
 # Dimensions (points).
@@ -902,7 +915,13 @@ if _APPKIT_AVAILABLE:
             self._scroll = None
             self._scroll_y = 0.0
             # pull (recall) surface — Faza 3
-            self._mode = "insight"          # "insight" (push) | "recall" (pull)
+            self._mode = "insight"          # "insight" | "recall" | "note"
+            # in-app note reader (markdown-reader plan)
+            self._note_path = None          # Path of the note shown in "note" mode
+            self._note_html = ""            # rendered page for _note_path
+            self._note_stack: List = []     # wikilink breadcrumb (previous paths)
+            self._note_return_mode = "insight"  # mode „← Wróć" exits to
+            self._webview = None            # WKWebView while in "note" mode
             self._recall = None             # RecallResults view-model when in recall mode
             self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
             self._query = ""                # last query text (persists across rebuilds)
@@ -1491,8 +1510,8 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_notes_body(self, holder, frame):
-            # §7: corpus navigation, not an editor — a click opens the note in
-            # the user's opener; Timshel never edits notes.
+            # §7: corpus navigation, not an editor — a click renders the note
+            # in the in-app reader (read-only); editing stays in the opener.
             doc = _DashFlippedView.alloc().initWithFrame_(
                 NSMakeRect(0, 0, frame.size.width, 10)
             )
@@ -1517,7 +1536,7 @@ if _APPKIT_AVAILABLE:
             if 0 <= i < len(self._notes_rows):
                 path = self._notes_rows[i].get("path")
                 if path is not None:
-                    self._invoke_callback("open_transcript", path)
+                    self._open_note_in_reader(path)
 
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
@@ -1840,11 +1859,69 @@ if _APPKIT_AVAILABLE:
             # content now starts directly under the native titlebar. In Pytanie
             # the question becomes the reader title, not a field.
             top = 0.0
-            if self._mode == "recall":
+            if self._mode == "note":
+                self._build_note_reader(view, frame, top)
+            elif self._mode == "recall":
                 self._build_recall_reader(view, frame, top)
             else:
                 self._build_insight_reader(view, frame, top)
             return view
+
+        @objc.python_method
+        def _build_note_reader(self, view, frame, top):
+            """In-app note view: native header (Wróć / Otwórz w Obsidianie)
+            over a WKWebView with the rendered note. Read-only by design —
+            Timshel never edits notes; editing stays in the user's opener."""
+            head_h = 40.0
+            back = _pill_button(
+                "← Wróć", NSMakeRect(_READER_PAD_X, top + 7, 88, 26),
+                _c(200, 188, 168), None, None, self, "noteBackClicked:", 12.5,
+            )
+            view.addSubview_(back)
+            open_w = 176.0
+            ext = _pill_button(
+                "Otwórz w Obsidianie ↗",
+                NSMakeRect(
+                    frame.size.width - _READER_PAD_X - open_w, top + 7, open_w, 26
+                ),
+                _c(140, 130, 115), None, None, self, "noteOpenExternalClicked:", 12.5,
+            )
+            view.addSubview_(ext)
+            div = NSView.alloc().initWithFrame_(
+                NSMakeRect(0, top + head_h, frame.size.width, _hairline())
+            )
+            div.setWantsLayer_(True)
+            if div.layer() is not None:
+                div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+            view.addSubview_(div)
+
+            web_y = top + head_h + _hairline()
+            web_rect = NSMakeRect(
+                0, web_y, frame.size.width, frame.size.height - web_y
+            )
+            if not _WEBKIT_AVAILABLE:  # pragma: no cover - stripped env
+                lbl = _wrapping_label(
+                    "Podgląd niedostępny — otwórz notatkę w Obsidianie.",
+                    13.0, _muted(),
+                    NSMakeRect(_READER_PAD_X, web_y + 16,
+                               frame.size.width - 2 * _READER_PAD_X, 40),
+                )
+                view.addSubview_(lbl)
+                return
+            cfg = WKWebViewConfiguration.alloc().init()
+            prefs = WKWebpagePreferences.alloc().init()
+            prefs.setAllowsContentJavaScript_(False)
+            cfg.setDefaultWebpagePreferences_(prefs)
+            web = WKWebView.alloc().initWithFrame_configuration_(web_rect, cfg)
+            web.setNavigationDelegate_(self)
+            try:
+                # No white flash before the dark page paints.
+                web.setValue_forKey_(False, "drawsBackground")
+            except Exception:  # pragma: no cover - KVC key gone in a future OS
+                pass
+            web.loadHTMLString_baseURL_(self._note_html, None)
+            view.addSubview_(web)
+            self._webview = web
 
         @objc.python_method
         def _build_insight_reader(self, view, frame, top):
@@ -3363,7 +3440,15 @@ if _APPKIT_AVAILABLE:
         def noteClicked_(self, sender):
             names = getattr(self, "_note_basenames", [])
             i = int(sender.tag())
-            if 0 <= i < len(names):
+            if not (0 <= i < len(names)):
+                return
+            # Source chip on a connection → read the note in-app (the digest
+            # entry point of the markdown-reader plan); unresolvable basenames
+            # degrade to the external opener as before.
+            path = self._resolve_note_basename(names[i])
+            if path is not None:
+                self._open_note_in_reader(path)
+            else:
                 self._invoke_callback("open_note", names[i])
 
         def transcriptClicked_(self, sender):
@@ -3371,6 +3456,88 @@ if _APPKIT_AVAILABLE:
             i = int(sender.tag())
             if 0 <= i < len(paths) and paths[i] is not None:
                 self._invoke_callback("open_transcript", paths[i])
+
+        # -- in-app note reader (markdown-reader plan) ----------------------- #
+
+        @objc.python_method
+        def _resolve_note_basename(self, basename):
+            try:
+                return obsidian_link.resolve_note_path(
+                    basename, Path(config.TRANSCRIBE_DIR)
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("note resolve failed for %r: %s", basename, exc)
+                return None
+
+        @objc.python_method
+        def _open_note_in_reader(self, path):
+            """Render ``path`` in the in-app reader; degrade to the opener."""
+            try:
+                html = nrend.note_page_html(Path(path))
+            except Exception as exc:
+                logger.warning("in-app render failed for %s: %s", path, exc)
+                self._invoke_callback("open_transcript", path)
+                return
+            if self._mode != "note":
+                self._note_return_mode = self._mode
+                self._note_stack = []
+            elif self._note_path is not None and Path(path) != self._note_path:
+                self._note_stack.append(self._note_path)
+            self._note_path = Path(path)
+            self._note_html = html
+            self._mode = "note"
+            self._render()
+
+        def noteBackClicked_(self, _sender):
+            if self._note_stack:
+                prev = self._note_stack.pop()
+                self._note_path = None  # no breadcrumb push on the way back
+                self._open_note_in_reader(prev)
+                return
+            self._mode = self._note_return_mode
+            self._note_path = None
+            self._note_html = ""
+            self._webview = None
+            self._render()
+
+        def noteOpenExternalClicked_(self, _sender):
+            if self._note_path is not None:
+                self._invoke_callback("open_transcript", self._note_path)
+
+        def openNoteFromLink_(self, path_str):
+            """Deferred wikilink navigation (off the WKWebView delegate)."""
+            self._open_note_in_reader(Path(str(path_str)))
+
+        def webView_decidePolicyForNavigationAction_decisionHandler_(
+            self, _web, action, handler
+        ):
+            """Reader navigation policy: fragment jumps stay in the page,
+            wikilinks re-render in-app, http(s) goes to the browser, and
+            everything else is denied (the page is fully self-contained)."""
+            _ALLOW, _CANCEL = 1, 0
+            try:
+                url = action.request().URL()
+                s = str(url.absoluteString()) if url is not None else ""
+            except Exception:  # pragma: no cover - defensive
+                handler(_CANCEL)
+                return
+            if s == "" or s.startswith("about:"):
+                handler(_ALLOW)  # loadHTMLString page + #anchor jumps
+                return
+            handler(_CANCEL)
+            target = nrend.wikilink_target(s)
+            if target is not None:
+                path = self._resolve_note_basename(target)
+                if path is not None:
+                    # Defer: re-rendering tears the webview down mid-callback.
+                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                        "openNoteFromLink:", str(path), False
+                    )
+                else:
+                    self._invoke_callback("open_note", target)
+                return
+            if s.startswith(("http://", "https://")):
+                obsidian_link.open_url(s)
 
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
