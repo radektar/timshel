@@ -625,6 +625,9 @@ if _APPKIT_AVAILABLE:
             if self is None:
                 return None
             self.setBordered_(False)
+            # Kill the factory cell title ("Button") — pills composed of
+            # subview labels (keep, split-CTA, caret) otherwise draw BOTH.
+            self.setTitle_("")
             self.setWantsLayer_(True)
             self._bg = self._bg_hover = self._bg_press = None
             self._fg = self._fg_hover = None
@@ -1722,6 +1725,16 @@ if _APPKIT_AVAILABLE:
                 sheet.layer().setBackgroundColor_(_c(28, 27, 36, 0.98).CGColor())
                 sheet.layer().setBorderWidth_(1.0)
                 sheet.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
+                try:  # shape-based shadow — never rendered from sublayer text
+                    from Quartz import CGPathCreateWithRoundedRect
+
+                    sheet.layer().setShadowPath_(
+                        CGPathCreateWithRoundedRect(
+                            sheet.bounds(), _R_ROW, _R_ROW, None
+                        )
+                    )
+                except Exception:  # pragma: no cover
+                    pass
                 sheet.layer().setShadowOpacity_(0.5)
                 sheet.layer().setShadowRadius_(18.0)
                 sheet.layer().setShadowOffset_(NSMakeSize(0, -8))
@@ -2723,16 +2736,20 @@ if _APPKIT_AVAILABLE:
             )
             cy += th + 16
 
-            # note chips
+            # note chips — measured widths; a chip that would cross the right
+            # edge wraps to the next line BEFORE it is placed (never clipped).
             self._note_basenames = list(conn.notes)
             cx = _READER_PAD_X
+            right_edge = reader_w - _READER_PAD_X
             for i, note in enumerate(conn.notes):
-                chip = self._chip(note, NSMakePoint(cx, cy), i)
-                doc.addSubview_(chip)
-                cx += chip.frame().size.width + 6
-                if cx > reader_w - 130:
+                chip = self._chip(note, NSMakePoint(cx, cy), i, right_edge - _READER_PAD_X)
+                w = chip.frame().size.width
+                if cx + w > right_edge and cx > _READER_PAD_X:
                     cx = _READER_PAD_X
-                    cy += 30
+                    cy += 32
+                    chip.setFrameOrigin_(NSMakePoint(cx, cy))
+                doc.addSubview_(chip)
+                cx += w + 6
             cy += 34
 
             # NOTE: the beta.17 "✦ Zapytaj o to" pill is CUT — in the redesign
@@ -3125,12 +3142,19 @@ if _APPKIT_AVAILABLE:
                 self, "dismissClicked:", 12.5,
             )
             foot.addSubview_(dismiss)
+            in_kept = self._deck.view == im.KEPT
             keep = _pill_button(
                 "", NSMakeRect(frame.size.width - 134, BTN_Y, 118, BTN_H),
                 _c(139, 224, 181), _c(70, 177, 126, 0.16), _c(91, 196, 149, 0.5),
                 self, "keepClicked:", 12.5,
             )
-            mark = style.sf_symbol("bookmark", point=11.0, weight="regular")
+            keep_label = "Zachowano" if in_kept else "Zachowaj"
+            keep_symbol = "bookmark.fill" if in_kept else "bookmark"
+            if in_kept:
+                # State, not verb: already-kept — no action, quieter face.
+                keep.setEnabled_(False)
+                keep.setAlphaValue_(0.55)
+            mark = style.sf_symbol(keep_symbol, point=11.0, weight="regular")
             lx = 14.0
             if mark is not None:
                 miv = NSImageView.alloc().initWithFrame_(
@@ -3143,7 +3167,7 @@ if _APPKIT_AVAILABLE:
                     pass
                 keep.addSubview_(miv)
                 lx += 18.0
-            klab = _label("Zachowaj", 12.5, _c(139, 224, 181), bold=True)
+            klab = _label(keep_label, 12.5, _c(139, 224, 181), bold=True)
             klab.setFrame_(NSMakeRect(lx, (BTN_H - 16) / 2.0, 118 - lx - 8, 16))
             keep.addSubview_(klab)
             foot.addSubview_(keep)
@@ -3268,15 +3292,22 @@ if _APPKIT_AVAILABLE:
             return view
 
         @objc.python_method
-        def _chip(self, text, origin, index):
-            from AppKit import NSAttributedString, NSForegroundColorAttributeName
-
-            # dot inset (~20) + glyphs + trailing " ↗" (~18); cap keeps long
-            # basenames truncating instead of eating the row.
-            w = min(260.0, 38.0 + 7.0 * len(text))
+        def _chip(self, text, origin, index, max_w=300.0):
+            # Redline .nchip: 10px inset BOTH sides, 5pt terracotta dot, gap 8,
+            # label body .8 (tail-truncated), trailing ↗. Width is measured —
+            # the old glyph-count estimate gave lopsided padding.
+            PAD = 10.0
+            DOT = 5.0
+            GAP = 8.0
+            ARROW_W = 12.0
+            # +6 slack: NSTextField draws with ~2–3px internal inset per side,
+            # so a bare glyph measure truncates text that actually fits.
+            text_w = _text_width(text, 11.5) + 6.0
+            w = min(PAD + DOT + GAP + text_w + 6.0 + ARROW_W + PAD, max_w)
             btn = NSButton.alloc().initWithFrame_(
                 NSMakeRect(origin.x, origin.y, w, 26)
             )
+            btn.setTitle_("")
             btn.setBordered_(False)
             btn.setTarget_(self)
             btn.setAction_("noteClicked:")
@@ -3288,25 +3319,23 @@ if _APPKIT_AVAILABLE:
                 btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
                 btn.layer().setBorderWidth_(1.0)
                 btn.layer().setBorderColor_(_c(255, 255, 255, 0.14).CGColor())
-            # Redline .nchip: 5pt terracotta dot (not the beta.17 ◇ glyph),
-            # label body .8, trailing ↗.
-            dot = NSView.alloc().initWithFrame_(NSMakeRect(9, 10.5, 5, 5))
+            dot = NSView.alloc().initWithFrame_(NSMakeRect(PAD, 10.5, DOT, DOT))
             dot.setWantsLayer_(True)
             if dot.layer() is not None:
-                dot.layer().setCornerRadius_(2.5)
+                dot.layer().setCornerRadius_(DOT / 2.0)
                 dot.layer().setBackgroundColor_(_c(217, 84, 42).CGColor())
             btn.addSubview_(dot)
-            btn.setAttributedTitle_(
-                NSAttributedString.alloc().initWithString_attributes_(
-                    "      " + text + "  ↗",
-                    {NSForegroundColorAttributeName: _c(224, 213, 191)},
-                )
-            )
-            btn.setFont_(NSFont.systemFontOfSize_(11.5))
-            try:  # left-align so the label sits right of the 5pt dot (redline)
-                btn.cell().setAlignment_(0)
-            except Exception:  # pragma: no cover - defensive
+            tx = PAD + DOT + GAP
+            lab = _label(text, 11.5, _c(224, 213, 191))
+            lab.setFrame_(NSMakeRect(tx, 5, w - tx - PAD - ARROW_W - 4.0, 15))
+            try:
+                lab.cell().setLineBreakMode_(4)  # truncate tail inside max_w
+            except Exception:  # pragma: no cover
                 pass
+            btn.addSubview_(lab)
+            arr = _label("↗", 11.0, _muted())
+            arr.setFrame_(NSMakeRect(w - PAD - ARROW_W + 2.0, 5, ARROW_W, 15))
+            btn.addSubview_(arr)
             btn.setToolTip_("Otwórz w Obsidian: " + text)
             return btn
 
