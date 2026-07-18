@@ -145,9 +145,11 @@ def test_handoff_toast_marshalled_back_to_main(log_path, monkeypatch):
 
     assert shown == []  # nothing shown from the worker thread
     ctrl.applyHandoff_(None)  # what performSelectorOnMainThread delivers
-    assert shown == ["toast-msg"]
+    # U4 rev. 2: every directions exit auto-keeps; the copy toast is the
+    # spec copy ("Skopiowano" — BEHAVIOR §9), not the dispatcher's raw message.
+    assert shown == ["Skopiowano"]
     ctrl.applyHandoff_(None)  # idempotent: payload consumed
-    assert shown == ["toast-msg"]
+    assert shown == ["Skopiowano"]
 
 
 def test_switch_llm_cycles_and_persists(monkeypatch):
@@ -163,12 +165,22 @@ def test_switch_llm_cycles_and_persists(monkeypatch):
     monkeypatch.setattr("src.config.settings.UserSettings.load", classmethod(lambda cls: _S()))
 
     ctrl = _ctrl()
-    # full wraparound over the prefill-capable tools: claude → chatgpt → claude
-    ctrl.switchLLMClicked_(None)
+
+    # C4: the caret opens a tool menu; picking an entry persists globally.
+    class _MenuSender:
+        def __init__(self, key):
+            self._key = key
+
+        def representedObject(self):
+            return self._key
+
+    ctrl.pickLLMClicked_(_MenuSender("chatgpt"))
     assert config.LLM_HANDOFF_TOOL == "chatgpt"
-    ctrl.switchLLMClicked_(None)
+    ctrl.pickLLMClicked_(_MenuSender("claude"))
     assert config.LLM_HANDOFF_TOOL == "claude"
     assert saved["tool"] == "claude"
+    ctrl.pickLLMClicked_(_MenuSender("gemini"))  # not prefill-capable → ignored
+    assert config.LLM_HANDOFF_TOOL == "claude"
 
 
 def test_dismiss_is_signal_not_suppressor(log_path, tmp_path, monkeypatch):

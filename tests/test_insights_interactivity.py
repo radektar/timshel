@@ -72,14 +72,11 @@ def test_unwired_callback_click_is_silent():
     ctrl.transcriptClicked_(_Sender(0))  # no rows / callback — should no-op
 
 
-def test_dismiss_shows_feedback_then_advances():
+def test_dismiss_commits_at_click():
     ctrl = _ctrl({})
     before = len(ctrl._deck._items)
     dismissed_before = ctrl._deck.counts()["dismissed"]
-    ctrl.dismissClicked_(None)
-    # flash showing — state not yet committed
-    assert ctrl._deck.counts()["dismissed"] == dismissed_before
-    ctrl.afterDismissFlash_(None)
+    ctrl.dismissClicked_(None)  # 17.07: commits at click, toast carries Cofnij
     # Odrzuć is reversible now: nothing deleted, the item just moves to Dismissed.
     assert len(ctrl._deck._items) == before
     assert ctrl._deck.counts()["dismissed"] == dismissed_before + 1

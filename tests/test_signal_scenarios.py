@@ -45,8 +45,7 @@ def _ctrl():
 def test_us1_user_keeps_an_insight(log_path):
     ctrl = _ctrl()
     active = ctrl._deck.active()
-    ctrl.keepClicked_(None)
-    ctrl.afterKeepFlash_(None)  # the deferred mutation lands
+    ctrl.keepClicked_(None)  # commits at click (17.07: no deferred flash)
     rows = _rows(log_path)
     assert len(rows) == 1
     # Zachowaj is the quiet archive — a save signal, kind:none (ADR-004).
@@ -70,9 +69,6 @@ def test_us2_user_dismisses_an_insight(log_path):
     assert rows[0]["action"] == "action_taken"
     assert rows[0]["target"] == "none"
     assert rows[0]["conn_type"] == active.synthesis_type
-    # the signal is recorded at click; the deck retag lands after the flash
-    assert ctrl._deck.counts()["dismissed"] == dismissed_before  # flash showing
-    ctrl.afterDismissFlash_(None)
     # Nothing is deleted — Odrzuć is reversible (the Dismissed view recovers it).
     assert len(ctrl._deck._items) == before
     assert ctrl._deck.counts()["dismissed"] == dismissed_before + 1
@@ -82,26 +78,22 @@ def test_us3_user_triages_a_session(log_path):
     """Keep → Keep → Dismiss across the queue: 3 appended lines, right order."""
     ctrl = _ctrl()
     ctrl.keepClicked_(None)
-    ctrl.afterKeepFlash_(None)
     ctrl.keepClicked_(None)
-    ctrl.afterKeepFlash_(None)
     ctrl.dismissClicked_(None)
     targets = [r["target"] for r in _rows(log_path)]
     assert targets == ["save", "save", "none"]
 
 
-def test_us6_keep_is_recorded_at_click_not_after_flash(log_path):
-    """US-6: closing the window mid-flash still logs — the write is at click,
-    before the 0.8s timer that commits the keep."""
+def test_us6_keep_records_and_commits_at_click(log_path):
+    """US-6 (17.07): no deferred timer — the signal line AND the retag both
+    land at click, so closing the window right after loses nothing."""
     ctrl = _ctrl()
     active_index = ctrl._deck.active_index
-    ctrl.keepClicked_(None)  # do NOT fire afterKeepFlash_
+    ctrl.keepClicked_(None)
     rows = _rows(log_path)
     assert len(rows) == 1
     assert rows[0]["action"] == "action_taken"
-    # the mutation has NOT happened yet — proving the line predates the timer
-    assert ctrl._deck.active_index == active_index
-    assert not ctrl._deck.is_kept(active_index)
+    assert ctrl._deck.is_kept(active_index)
 
 
 def test_us7_empty_deck_records_nothing(log_path):

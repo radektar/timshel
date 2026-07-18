@@ -47,6 +47,9 @@ TARGET_CALENDAR = "calendar"
 TARGET_CLIPBOARD = "clipboard"
 TARGET_SAVE = "save"
 TARGET_NONE = "none"
+#: Undo (toast „Cofnij"): clears the connection's triage back to Nowe. A pure
+#: log-repair event — kind "none", so the action-rate KPI never counts it.
+TARGET_RESET = "reset"
 
 #: target → kind (develop | do | decide | none). The instrument's core axis.
 _KIND_FOR_TARGET = {
@@ -56,6 +59,7 @@ _KIND_FOR_TARGET = {
     TARGET_CALENDAR: "decide",
     TARGET_SAVE: "none",
     TARGET_NONE: "none",
+    TARGET_RESET: "none",
 }
 
 
@@ -128,17 +132,19 @@ def triage_state_by_sig(path: Optional[Path] = None) -> "dict":
             ):
                 continue
             target = rec.get("target")
-            if target not in (TARGET_SAVE, TARGET_NONE):
+            if target not in (TARGET_SAVE, TARGET_NONE, TARGET_RESET):
                 continue
             sig = str(rec.get("sig") or "")
             if not sig:
                 continue
             ts = str(rec.get("ts") or "")
-            state = "kept" if target == TARGET_SAVE else "dismissed"
+            # A winning reset (the undo toast) clears the sig back to Nowe —
+            # mapped to None here and dropped from the result below.
+            state = {TARGET_SAVE: "kept", TARGET_NONE: "dismissed"}.get(target)
             prev = latest.get(sig)
             if prev is None or ts >= prev[0]:
                 latest[sig] = (ts, state)
-        result = {sig: state for sig, (ts, state) in latest.items()}
+        result = {sig: state for sig, (ts, state) in latest.items() if state}
         if st is not None:
             _TRIAGE_CACHE[cache_key] = (st.st_mtime, st.st_size, dict(result))
         return result
