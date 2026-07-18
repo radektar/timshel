@@ -29,7 +29,7 @@ from urllib.parse import quote, unquote
 
 from markdown_it import MarkdownIt
 
-from src.markdown_frontmatter import read_frontmatter
+from src.markdown_frontmatter import parse_frontmatter
 from src.ui import theme
 
 #: Scheme the reader uses for note-to-note links; the WKWebView navigation
@@ -77,7 +77,9 @@ def _wikilink_rule(state, silent: bool) -> bool:
     if end == -1:
         return False
     inner = src[pos + 2 : end]
-    if not inner.strip() or "\n" in inner:
+    # A backtick inside means the ']]' likely sits in a code span — bail out
+    # so the backticks rule can parse it instead of us eating across it.
+    if not inner.strip() or "\n" in inner or "`" in inner:
         return False
     target, _, label = inner.partition("|")
     target = target.strip()
@@ -221,7 +223,8 @@ _PAGE = """<!doctype html>
 
 def _meta_line(fm: dict) -> str:
     parts = []
-    date = (fm.get("recording_date") or fm.get("date") or "").strip()
+    # Same priority as the digest layer (candidate_assembly): date first.
+    date = (fm.get("date") or fm.get("recording_date") or "").strip()
     if date and date.lower() not in ("none", "null"):
         parts.append(date[:16].replace("T", " · "))
     duration = (fm.get("duration") or "").strip()
@@ -242,7 +245,7 @@ def note_page_html(path: Path) -> str:
     to degrade (it falls back to the external opener).
     """
     text = path.read_text(encoding="utf-8")
-    fm = read_frontmatter(path)
+    fm = parse_frontmatter(text)  # one read — title/meta/body from one version
     title = (fm.get("title") or "").strip() or path.stem
     body_html = render_body(strip_frontmatter(text))
     jump = ""

@@ -141,3 +141,24 @@ def test_note_page_title_falls_back_to_stem(tmp_path):
     p.write_text("Tresc bez frontmattera.\n", encoding="utf-8")
     html = nr.note_page_html(p)
     assert "bez frontmattera" in html
+
+
+# --------------------------------------------------------------------------- #
+# Review follow-ups (code-review 2026-07-18)
+# --------------------------------------------------------------------------- #
+
+
+def test_wikilink_does_not_eat_across_code_spans():
+    html = nr.render_body("uzyj [[ w `kod ]] tutaj` reszta")
+    assert "timshel-note" not in html
+    assert "<code>" in html  # the backticks rule still gets its span
+
+
+def test_meta_date_priority_matches_digest_layer(tmp_path):
+    p = tmp_path / "n.md"
+    p.write_text(
+        '---\ntitle: "T"\ndate: 2026-07-18\nrecording_date: 2026-01-01\n---\n\nx',
+        encoding="utf-8",
+    )
+    html = nr.note_page_html(p)
+    assert "2026-07-18" in html and "2026-01-01" not in html
