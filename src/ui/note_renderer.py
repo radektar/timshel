@@ -48,7 +48,7 @@ def strip_frontmatter(text: str) -> str:
         return text
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
-            return "\n".join(lines[i + 1:]).lstrip("\n")
+            return "\n".join(lines[i + 1 :]).lstrip("\n")
     return text
 
 
@@ -64,19 +64,19 @@ def wikilink_target(url: str) -> Optional[str]:
     prefix = f"{WIKILINK_SCHEME}://"
     if not url.startswith(prefix):
         return None
-    return unquote(url[len(prefix):]).strip() or None
+    return unquote(url[len(prefix) :]).strip() or None
 
 
 def _wikilink_rule(state, silent: bool) -> bool:
     """Inline rule: ``[[Target]]`` / ``[[Target|Label]]`` → in-app anchor."""
     src = state.src
     pos = state.pos
-    if src[pos:pos + 2] != "[[":
+    if src[pos : pos + 2] != "[[":
         return False
     end = src.find("]]", pos + 2)
     if end == -1:
         return False
-    inner = src[pos + 2:end]
+    inner = src[pos + 2 : end]
     if not inner.strip() or "\n" in inner:
         return False
     target, _, label = inner.partition("|")

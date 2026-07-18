@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester smoke-bundle eval-synthesis signal-report magic-digest recall-eval
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester smoke-bundle preview-window eval-synthesis signal-report magic-digest recall-eval
 
 help:
 	@echo "Timshel - Development Commands"
@@ -17,6 +17,7 @@ help:
 	@echo "  make test-ui       - Run menu bar UI tests (L4)"
 	@echo "  make lint          - Run linters"
 	@echo "  make format        - Format code"
+	@echo "  make preview-window - Render Konstelacja states to dist/preview/ (visual QA)"
 	@echo "  make signal-report - Action-rate readout over the Insights signal log"
 	@echo ""
 	@echo "Distribution (macOS):"
@@ -173,6 +174,10 @@ release-tester:
 smoke-bundle:
 	@echo "Smoke-testing the built bundle under a fresh HOME..."
 	bash scripts/smoke_bundle.sh
+
+preview-window:
+	@echo "Rendering Konstelacja window states to dist/preview/ (visual QA)..."
+	./venv312/bin/python scripts/preview_window.py
 
 verify-tester:
 	@echo "Running the autonomous tester-build acceptance harness (A1-A8)..."

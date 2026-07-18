@@ -6,10 +6,10 @@ import pytest
 
 from src.ui import note_renderer as nr
 
-
 # --------------------------------------------------------------------------- #
 # Frontmatter stripping
 # --------------------------------------------------------------------------- #
+
 
 def test_strip_frontmatter_removes_block():
     text = '---\ntitle: "X"\ndate: 2026-07-18\n---\n\n# Body\n'
@@ -28,6 +28,7 @@ def test_strip_frontmatter_unclosed_block_passthrough():
 # --------------------------------------------------------------------------- #
 # Wikilinks
 # --------------------------------------------------------------------------- #
+
 
 def test_wikilink_renders_inapp_anchor():
     html = nr.render_body("Zobacz [[Rozmowa z Heliosem]].")
@@ -60,8 +61,9 @@ def test_wikilink_target_roundtrip():
 # Hardening: no raw HTML, no remote fetches
 # --------------------------------------------------------------------------- #
 
+
 def test_raw_html_is_escaped():
-    html = nr.render_body('<script>alert(1)</script>')
+    html = nr.render_body("<script>alert(1)</script>")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
 
@@ -76,6 +78,7 @@ def test_images_become_links_never_img_tags():
 # --------------------------------------------------------------------------- #
 # GFM coverage + anchors
 # --------------------------------------------------------------------------- #
+
 
 def test_table_renders():
     html = nr.render_body("| a | b |\n|---|---|\n| 1 | 2 |\n")
@@ -94,6 +97,7 @@ def test_heading_slug_handles_polish():
 # --------------------------------------------------------------------------- #
 # Full page assembly
 # --------------------------------------------------------------------------- #
+
 
 def _write_note(tmp_path: Path, body: str, title: str = "Testowa notatka") -> Path:
     p = tmp_path / "note.md"

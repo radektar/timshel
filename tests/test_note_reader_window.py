@@ -81,9 +81,7 @@ def test_chip_click_resolves_basename_inapp(tmp_path, monkeypatch):
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
     path = _note(tmp_path)
-    monkeypatch.setattr(
-        dw.obsidian_link, "resolve_note_path", lambda name, vault: path
-    )
+    monkeypatch.setattr(dw.obsidian_link, "resolve_note_path", lambda name, vault: path)
     ctrl._note_basenames = ["Rozmowa z Heliosem"]
     ctrl.noteClicked_(_fake_sender(0))
     assert ctrl._mode == "note"
@@ -96,9 +94,7 @@ def test_chip_click_unresolved_falls_back_to_callback(monkeypatch):
         callbacks={"open_note": lambda n: opened.append(n)}
     )
     ctrl._ensure_window()
-    monkeypatch.setattr(
-        dw.obsidian_link, "resolve_note_path", lambda name, vault: None
-    )
+    monkeypatch.setattr(dw.obsidian_link, "resolve_note_path", lambda name, vault: None)
     ctrl._note_basenames = ["Nieistniejaca"]
     ctrl.noteClicked_(_fake_sender(0))
     assert ctrl._mode != "note"
@@ -156,9 +152,7 @@ def test_policy_wikilink_cancels_then_renders_inapp(monkeypatch, tmp_path):
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
     path = _note(tmp_path)
-    monkeypatch.setattr(
-        dw.obsidian_link, "resolve_note_path", lambda name, vault: path
-    )
+    monkeypatch.setattr(dw.obsidian_link, "resolve_note_path", lambda name, vault: path)
     assert _policy(ctrl, "timshel-note://Rozmowa%20z%20Heliosem") == 0
     # The in-app open is deferred to the main runloop (re-rendering would tear
     # the webview down mid-delegate-callback). Early spins can be eaten by
