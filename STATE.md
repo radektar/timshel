@@ -1,6 +1,6 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-17 · Faza: test
+Data: 2026-07-18 · Faza: test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
 ## Kolejna faza: redesign UI (design → kod)
@@ -29,14 +29,27 @@ Assety: handoff wpięty `design-system/app-redesign-2026-07/`; tokeny w `src/ui/
 (rodziny akcentów + MESH_STOPS + SIGIL_BARS); nowa ikona (mesh sygnet na #141414,
 `assets/gen_icon.py`) — Radek zatwierdził kierunek; znak menu-bar mono
 (`assets/menu_bar/sigil.png` +@2x, wpięcie do menu_app = faza 3). Tester DMG
-**przebudowany po rundzie 3 poprawek 2026-07-17** (beta.17, build stamp
-`35298c9`, sha256 `8d0538d1…`); kopia na iCloud Drive `Timshel/` (+ test-assets:
+**przebudowany z portem okna Konstelacja U1–U10 2026-07-18** (beta.17, build
+stamp `e183251`, sha256 `16d28ca7…`); kopia na iCloud Drive `Timshel/` (+ test-assets:
 10 tekstów Helios/Nordfab/Vantage + 2 audio TTS PL/EN). Fonty handoffu NIE
 wdrożone (→ SF Pro).
 NIE ruszać w assetach: fonty Neue Haas/Montreal (mapują na SF Pro); port ekranów A–I
 (osobna faza kodu po testach).
 
 ## Ostatnia decyzja + dlaczego
+
+**Port pakietu Claude Design 17.07 (okno Konstelacja, U1–U10) — wdrożony
+2026-07-18.** Handoff `design_handoff_insights_2026_07_17` (spec C1–C8 +
+BEHAVIOR.md, w repo `design-system/insights-2026-07-17/`) przeniesiony 1:1 do
+PyObjC: akordeon szyny (Serendypacje/Zapytałeś/Notatki), segment triażu z
+licznikami, pasek kierunków pod listą ze split-CTA "Kontynuuj w Claude",
+**handoff ⇒ auto-Zachowaj** (domyka niespójność z review architektury
+triage/signal), stała stopka, toolbar ⌘K + arkusz historii pytań (nowy store
+`.timshel/ask_history.json`), sekcja Notatki (= brakujący podgląd
+transkrypcji z apki), koniec języka "chmury", stany puste z mostkami, undo
+przez nowy target `reset` w signal.jsonl. Świadome odchylenie: input zostaje
+w polu toolbara (arkusz nie dubluje wiersza inputu).
+
 
 **Runda 2 weryfikacji testerskiej (2026-07-16/17, drugi Mac) — naprawiona i
 domknięta.** Bugi znalezione TYLKO w bundlu, niewidoczne dla pytest: (1) crash
