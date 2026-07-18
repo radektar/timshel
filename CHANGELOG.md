@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-app markdown reader (Konstelacja).** Clicking a connection's source
+  chip or a row in the Notatki section now renders the note inside the window
+  (summary on top, "Przejdź do transkrypcji" jump, GFM tables), instead of
+  bouncing to Obsidian — the insight → source → judgement loop closes in one
+  window. `[[wikilinks]]` navigate note-to-note in-app with a breadcrumb
+  "← Wróć"; "Otwórz w Obsidianie ↗" keeps the editing escape hatch. Read-only
+  by design. Rendering is local and hardened: JavaScript disabled, raw HTML
+  escaped, images never fetched (rendered as links), http(s) links open in
+  the browser. New deps shipped in the bundle: `markdown-it-py`,
+  `pyobjc-framework-WebKit`.
+- **`make preview-window` (dev).** The visual-QA harness renders 4 canonical
+  window states (incl. the reader) to `dist/preview/` PNGs for pixel review
+  before any UI change is shown.
+
 ### Changed
 - **Insights window — pixel-perfect port of the Claude Design component redesign.**
   Implements `design-system/pages/insights-window-components-redesign.html` 1:1:

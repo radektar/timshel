@@ -1,7 +1,22 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-18 · Faza: test
+Data: 2026-07-18 (wieczór) · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Ostatnia zmiana: czytnik markdown w oknie — WDROŻONY
+
+Branch `feat/markdown-reader` (plan: `Docs/future/markdown-reader-plan.md`,
+zrealizowany 1:1). Klik w chip źródła na insightcie albo w notatkę w sekcji
+Notatki renderuje notatkę W OKNIE (podsumowanie na górze, „Przejdź do
+transkrypcji", tabele GFM, wikilinki jadeit → nawigacja in-app z breadcrumbem
+„← Wróć", „Otwórz w Obsidianie ↗" zostaje). Read-only z założenia; ścieżki
+edycji na później otwarte (research: edytor źródła / Milkdown w webview /
+mdformat). Hardening: JS off, raw HTML escapowany, obrazki bez fetchu,
+http(s) → przeglądarka, reszta deny. Nowe: `src/ui/note_renderer.py` (czysty,
+testowalny), zależności `markdown-it-py` + `pyobjc-framework-WebKit` w bundlu
+(probe zweryfikowany PRZED kodem), `make preview-window` (harness QA
+wypromowany — 4 stany do PNG, przejrzane przed pokazaniem). SMOKE PASS
+(stamp `6c10bec`); DMG `e8e0edb7…` na iCloud `Timshel/` (zastępuje `06d99e9c…`).
 
 ## Kolejna faza: redesign UI (design → kod)
 
@@ -127,10 +142,8 @@ Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding
 
 ## Nie ruszać (świadomie odłożone)
 
-- Harness `preview_window.py` (render okna → PNG per stan; użyty w rundzie 3
-  polish) — wpiąć do repo jako `make preview-window` przy następnej rundzie UI.
-- Czytnik markdown w oknie — research w vaultcie
-  (`research/2026-07-18 - Czytnik markdown w oknie`), decyzja przy planowaniu.
+- Edycja notatek w apce — czytnik jest read-only z założenia; decyzja
+  produktowa („apka pisze do vaultu") osobno, po H1. Stack jej nie blokuje.
 
 - Wspólny executor ciężkiej pracy + budżet wątków — po sygnale z H1.
 - Pełny rebuild okna Insights — po H1 (okno oceny).
