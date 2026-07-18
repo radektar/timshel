@@ -691,13 +691,30 @@ if _APPKIT_AVAILABLE:
 
             # Soft shadow on hover = the design's 1px "lift", without a frame
             # nudge (which would re-fire the tracking area and flicker).
+            # ALWAYS with an explicit shadowPath: a CALayer shadow without one
+            # is rendered from the layer's content INCLUDING sublayers, which
+            # duplicates any label subview as a blurred ghost.
             if self._hovering:
+                self._set_pill_shadow_path(layer)
                 layer.setShadowColor_(_c(0, 0, 0).CGColor())
                 layer.setShadowOpacity_(0.30)
                 layer.setShadowRadius_(5.0)
                 layer.setShadowOffset_(NSMakeSize(0, -2))
             else:
                 layer.setShadowOpacity_(0.0)
+
+        @objc.python_method
+        def _set_pill_shadow_path(self, layer):
+            try:
+                from Quartz import CGPathCreateWithRoundedRect
+
+                b = self.bounds()
+                r = min(layer.cornerRadius(), b.size.height / 2.0)
+                layer.setShadowPath_(
+                    CGPathCreateWithRoundedRect(b, r, r, None)
+                )
+            except Exception:  # pragma: no cover - shadow stays content-based
+                pass
 
         def updateTrackingAreas(self):
             objc.super(_PillButton, self).updateTrackingAreas()
@@ -1249,8 +1266,9 @@ if _APPKIT_AVAILABLE:
                 ix = 8.0
                 if img is not None:
                     iv = NSImageView.alloc().initWithFrame_(
-                        NSMakeRect(ix, (item_h - 13) / 2.0, 14, 13)
+                        NSMakeRect(ix, (item_h - 14) / 2.0, 14, 14)
                     )
+
                     iv.setImage_(img)
                     try:
                         iv.setContentTintColor_(tint)
@@ -1399,9 +1417,11 @@ if _APPKIT_AVAILABLE:
                 except Exception:  # pragma: no cover
                     pass
                 btn.addSubview_(iv)
+            text_w = width - 4 - 42
+            th = min(_typo_measure(text, "rail_title_quiet", text_w), h - 8)
             lab = _typo_label(
                 text, "rail_title_quiet",
-                NSMakeRect(34, 4, width - 4 - 42, h - 12),
+                NSMakeRect(34, max((h - 4 - th) / 2.0, 2.0), text_w, th),
             )
             lab.setMaximumNumberOfLines_(2)
             try:
@@ -2018,8 +2038,8 @@ if _APPKIT_AVAILABLE:
 
             if vm is None:
                 lbl = _wrapping_label(
-                    "Zapytaj swój korpus — ⌃⌥Space albo ⌕ w pasku tytułu. "
-                    "Przeszukam Twoje notatki lokalnie.",
+                    "Zapytaj swój korpus — ⌘K albo pole nad czytnikiem "
+                    "(globalnie: ⌃⌥Space). Przeszukam Twoje notatki lokalnie.",
                     15, _muted(), NSMakeRect(_READER_PAD_X, cy, inner_w, 26))
                 doc.addSubview_(lbl)
                 cy += 34
@@ -2983,6 +3003,16 @@ if _APPKIT_AVAILABLE:
             )
             if go.layer() is not None:
                 go.layer().setMaskedCorners_(LEFT_CORNERS)
+                try:  # explicit path — otherwise the label ghosts in the shadow
+                    from Quartz import CGPathCreateWithRoundedRect
+
+                    go.layer().setShadowPath_(
+                        CGPathCreateWithRoundedRect(
+                            go.bounds(), _R_CONTROL, _R_CONTROL, None
+                        )
+                    )
+                except Exception:  # pragma: no cover
+                    pass
                 go.layer().setShadowColor_(_terra_deep().CGColor())
                 go.layer().setShadowOpacity_(0.45)
                 go.layer().setShadowRadius_(9.0)
@@ -3010,11 +3040,24 @@ if _APPKIT_AVAILABLE:
             bar.addSubview_(go)
 
             caret = _pill_button(
-                "⌄",
+                "",
                 NSMakeRect(x_cta + cta_w, BTN_Y, CARET_W, CTA_H),
                 white, _terra_deep(), None,
                 self, "switchLLMClicked:",
             )
+            cimg = style.sf_symbol("chevron.down", point=9.0, weight="semibold")
+            if cimg is not None:
+                civ = NSImageView.alloc().initWithFrame_(
+                    NSMakeRect((CARET_W - 10) / 2.0, (CTA_H - 10) / 2.0, 10, 10)
+                )
+                civ.setImage_(cimg)
+                try:
+                    civ.setContentTintColor_(white)
+                except Exception:  # pragma: no cover
+                    pass
+                caret.addSubview_(civ)
+            else:  # pragma: no cover - symbol fallback
+                caret.setTitle_("⌄")
             if caret.layer() is not None:
                 caret.layer().setMaskedCorners_(RIGHT_CORNERS)
             # seam divider between go and caret
