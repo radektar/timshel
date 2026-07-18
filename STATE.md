@@ -15,8 +15,15 @@ mdformat). Hardening: JS off, raw HTML escapowany, obrazki bez fetchu,
 http(s) → przeglądarka, reszta deny. Nowe: `src/ui/note_renderer.py` (czysty,
 testowalny), zależności `markdown-it-py` + `pyobjc-framework-WebKit` w bundlu
 (probe zweryfikowany PRZED kodem), `make preview-window` (harness QA
-wypromowany — 4 stany do PNG, przejrzane przed pokazaniem). SMOKE PASS
-(stamp `6c10bec`); DMG `e8e0edb7…` na iCloud `Timshel/` (zastępuje `06d99e9c…`).
+wypromowany — 4 stany do PNG, przejrzane przed pokazaniem).
+**Code-review (8 kątów × weryfikacja): 10 potwierdzonych findingów — wszystkie
+naprawione** (trwały webview = pozycja czytania przeżywa resize/digest; epoka
+przy wejściu; teardown na każdym wyjściu z trybu; breadcrumb odporny na
+skasowane notatki; polityka `about:`/mailto/obsidian; wikilink nie przechodzi
+przez code-spany; 1 odczyt pliku + wspólny `parse_frontmatter`; label
+respektuje NOTE_OPENER; zdeterminizowany test chipów). Baterie: fuzz PASS,
+korpus realny 181/181, suita 1109 + mypy, SMOKE PASS (stamp `3178667`);
+DMG `6fdcc961…` na iCloud `Timshel/` (zastępuje `06d99e9c…`).
 
 ## Kolejna faza: redesign UI (design → kod)
 
