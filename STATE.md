@@ -16,14 +16,23 @@ http(s) → przeglądarka, reszta deny. Nowe: `src/ui/note_renderer.py` (czysty,
 testowalny), zależności `markdown-it-py` + `pyobjc-framework-WebKit` w bundlu
 (probe zweryfikowany PRZED kodem), `make preview-window` (harness QA
 wypromowany — 4 stany do PNG, przejrzane przed pokazaniem).
-**Code-review (8 kątów × weryfikacja): 10 potwierdzonych findingów — wszystkie
-naprawione** (trwały webview = pozycja czytania przeżywa resize/digest; epoka
-przy wejściu; teardown na każdym wyjściu z trybu; breadcrumb odporny na
-skasowane notatki; polityka `about:`/mailto/obsidian; wikilink nie przechodzi
-przez code-spany; 1 odczyt pliku + wspólny `parse_frontmatter`; label
-respektuje NOTE_OPENER; zdeterminizowany test chipów). Baterie: fuzz PASS,
-korpus realny 181/181, suita 1109 + mypy, SMOKE PASS (stamp `3178667`);
-DMG `6fdcc961…` na iCloud `Timshel/` (zastępuje `06d99e9c…`).
+**Code-review R1 (8 kątów): 10 findingów naprawionych** (trwały webview,
+epoka, teardown, breadcrumb, polityka `about:`/mailto/obsidian, wikilink vs
+code-spany, 1 odczyt pliku, label NOTE_OPENER, zdeterminizowany test chipów).
+**Pętla review (nowa reguła: fix → review → build, aż runda czysta):**
+R2 na poprawkach R1 → 10 findingów (wieczny spinner recall, stale-content
+przy re-open tej samej notatki, klik insightu martwy w trybie note, breadcrumb,
+polityka, czas w nagłówku…) → naprawione. R3 na poprawkach R2 → 6 findingów
+(windowWillClose nie zwalniał webview NAPRAWDĘ, deny-bias zabijałby initial
+load, semantyka niedomkniętego frontmattera psuła dedupe transcribera
+i ręczne dismissale, wipe zaznaczeń przy geście powrotu, frankenstein
+timestamp) → naprawione. **R4 → PUSTA (konwergencja).** PR #76.
+Baterie: fuzz PASS, korpus 181/181, suita **1126** + mypy. Checklist testów
+manualnych: `Docs/READER-TEST-CHECKLIST.md` (15 punktów, ~15 min).
+Follow-upy odłożone (nie blokują): wyniki wyszukiwania/cytaty syntezy wciąż
+otwierają się zewnętrznie (decyzja produktowa), cache resolvera wikilinków
+(rglob per klik — OK dla małych vaultów H1), konsolidacja splittera recall
+(wymaga przemyślenia reindeksu), wspólna gramatyka wikilinków z entities.py.
 
 ## Kolejna faza: redesign UI (design → kod)
 
