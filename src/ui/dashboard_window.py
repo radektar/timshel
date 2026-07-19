@@ -1381,7 +1381,13 @@ if _APPKIT_AVAILABLE:
 
         def triageSegClicked_(self, sender):
             key = (im.NEW, im.KEPT, im.DISMISSED)[int(sender.tag()) % 3]
-            if key != self._deck.view or self._mode == "note":
+            if self._mode == "note" and key == self._deck.view:
+                # Same-view segment while reading = "back to insights" gesture:
+                # behave like „← Wróć" — keep ticked directions and scroll.
+                self._leave_note_for_insights()
+                self._render()
+                return
+            if key != self._deck.view:
                 self._leave_note_for_insights()
                 self._deck.set_view(key)
                 self._reset_card_state()
@@ -3745,8 +3751,15 @@ if _APPKIT_AVAILABLE:
         def railRowClicked_(self, sender):
             # Picking an insight while reading a note must SHOW that insight —
             # leave the reader first or the click looks like a no-op.
+            idx = int(sender.tag())
+            if self._mode == "note" and idx == self._deck.active_index:
+                # The ACTIVE insight's row = "back to it" gesture — keep the
+                # ticked directions and the captured scroll, like „← Wróć".
+                self._leave_note_for_insights()
+                self._render()
+                return
             self._leave_note_for_insights()
-            self._deck.select(int(sender.tag()))
+            self._deck.select(idx)
             self._reset_card_state()
             self._render()
 
@@ -3806,6 +3819,10 @@ if _APPKIT_AVAILABLE:
             the view or the trail. ``fallback_external=False`` suppresses the
             opener fallback (back-navigation must not steal focus for a note
             it is skipping)."""
+            if breadcrumb not in ("push", "reset", "replace"):
+                # A typo'd mode would silently behave like "replace" — fail
+                # loud instead so tests catch it at the call site.
+                raise ValueError(f"unknown breadcrumb mode: {breadcrumb!r}")
             try:
                 html = nrend.note_page_html(Path(path))
             except Exception as exc:
@@ -3856,7 +3873,15 @@ if _APPKIT_AVAILABLE:
         def _exit_note_mode(self):
             """Drop all reader state (webview incl.) — every path that leaves
             "note" mode goes through here so nothing keeps retaining the
-            out-of-process web content."""
+            out-of-process web content. The webview must also LEAVE the view
+            hierarchy: on window close no re-render replaces the content
+            view, so dropping the Python ref alone would let the closed
+            window's tree keep the WebContent process pinned."""
+            if self._webview is not None:
+                try:
+                    self._webview.removeFromSuperview()
+                except Exception:  # pragma: no cover - defensive
+                    pass
             self._note_path = None
             self._note_html = ""
             self._note_stack = []
@@ -3902,9 +3927,13 @@ if _APPKIT_AVAILABLE:
             try:
                 link_click = int(action.navigationType()) == _WK_LINK_CLICK
             except Exception:
-                # Deny-biased: if the bridge can't tell, treat it as a click —
-                # a broken getter must not open the bare-about: ALLOW branch.
-                link_click = True
+                # If the bridge can't tell, keep the reader ALIVE: classifying
+                # everything as a click would also cancel the initial
+                # loadHTMLString navigation and permanently blank the pane.
+                # Worst case of allowing here: a clicked [x](about:blank)
+                # blanks one view, recoverable with „← Wróć".
+                logger.warning("navigationType unavailable — assuming page load")
+                link_click = False
             if s.startswith("about:blank#"):
                 handler(_WK_ALLOW)  # in-document #anchor jump
                 return
@@ -4302,15 +4331,11 @@ if _APPKIT_AVAILABLE:
                 self._deck.set_view(prev_view)
             else:
                 self._deck.focus_first_nonempty()
-            if self._mode == "note":
-                # The deck changed under the reader — reset the card state
-                # but keep the scroll offset captured at note entry, or
-                # „← Wróć" lands at the top instead of where the user left.
-                keep = self._scroll_y
-                self._reset_card_state()
-                self._scroll_y = keep
-            else:
-                self._reset_card_state()
+            # Reset the card state; under the reader keep the scroll offset
+            # captured at note entry, or „← Wróć" lands at the top.
+            keep = self._scroll_y if self._mode == "note" else 0.0
+            self._reset_card_state()
+            self._scroll_y = keep
             if self._window is not None and self._window.isVisible():
                 self._render()
 

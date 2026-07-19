@@ -363,9 +363,13 @@ def test_window_close_releases_webview(tmp_path):
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
     ctrl._open_note_in_reader(_note(tmp_path))
-    assert ctrl._webview is not None
+    web = ctrl._webview
+    assert web is not None
     ctrl.windowWillClose_(None)
+    # The Python ref is dropped AND the view left the (surviving) window's
+    # hierarchy — otherwise the closed window would pin WebContent forever.
     assert ctrl._webview is None
+    assert web.superview() is None
     assert ctrl._mode == "insight"
 
 
@@ -378,3 +382,70 @@ def test_webcontent_crash_triggers_reload(tmp_path):
     ctrl.webViewWebContentProcessDidTerminate_(None)
     # Handler invalidates and re-renders → page reloaded for the same note.
     assert ctrl._mode == "note" and ctrl._webview_path == p
+
+
+# ── review round 3 contracts ───────────────────────────────────────────────
+
+
+def test_same_view_segment_click_returns_without_wiping_state(tmp_path):
+    # Clicking the CURRENT view's segment while reading = "back to insights";
+    # ticked directions and the captured scroll must survive, like „← Wróć".
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    ctrl._selected = {0, 1}
+    ctrl._open_note_in_reader(_note(tmp_path))
+    ctrl._scroll_y = 333.0
+    ctrl.triageSegClicked_(_fake_sender(0))  # Nowe == current view
+    assert ctrl._mode == "insight"
+    assert ctrl._selected == {0, 1}
+    assert ctrl._scroll_y == 333.0
+
+
+def test_active_rail_row_click_returns_without_wiping_state(tmp_path):
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    ctrl._selected = {1}
+    active = ctrl._deck.active_index
+    ctrl._open_note_in_reader(_note(tmp_path))
+    ctrl._scroll_y = 250.0
+    ctrl.railRowClicked_(_fake_sender(active))
+    assert ctrl._mode == "insight"
+    assert ctrl._selected == {1}
+    assert ctrl._scroll_y == 250.0
+
+
+def test_other_rail_row_click_still_resets(tmp_path):
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    ctrl._open_note_in_reader(_note(tmp_path))
+    n = ctrl._deck.visible_count
+    if n < 2:
+        pytest.skip("sample deck too small")
+    other = (ctrl._deck.active_index + 1) % n
+    ctrl.railRowClicked_(_fake_sender(other))
+    assert ctrl._mode == "insight"
+    assert ctrl._deck.active_index == other
+
+
+def test_unknown_breadcrumb_mode_raises(tmp_path):
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+    with pytest.raises(ValueError):
+        ctrl._open_note_in_reader(_note(tmp_path), breadcrumb="pushed")
+
+
+def test_policy_broken_navigation_type_keeps_reader_alive():
+    # A raising navigationType() must NOT cancel the initial page load —
+    # a degraded bridge should degrade to a working reader, not a blank pane.
+    ctrl = dw.build_dashboard_window()
+    ctrl._ensure_window()
+
+    class _RaisingAction(_FakeAction):
+        def navigationType(self):
+            raise RuntimeError("bridge down")
+
+    decisions = []
+    ctrl.webView_decidePolicyForNavigationAction_decisionHandler_(
+        None, _RaisingAction("about:blank"), decisions.append
+    )
+    assert decisions[0] == dw._WK_ALLOW

@@ -218,13 +218,19 @@ _PAGE = """<!doctype html>
 def _meta_line(fm: dict) -> str:
     parts = []
     # Day: same priority as the digest layer (candidate_assembly), date first.
-    # Time-of-day lives only in recording_date (date is day-only in the note
-    # template) — keep showing it so same-day recordings stay distinguishable.
+    # Time comes from the SAME field when it carries one; otherwise from
+    # recording_date only when it names the SAME day — a day from one field
+    # glued to a clock time from another would be a timestamp that never
+    # happened (recording near midnight + user-edited date).
     date = (fm.get("date") or fm.get("recording_date") or "").strip()
     rec = (fm.get("recording_date") or "").strip()
+
+    def _time_of(value: str) -> str:
+        return value[11:16] if len(value) >= 16 and value[10] in "T " else ""
+
     day = date[:10]
     if day and day.lower() not in ("none", "null"):
-        time_part = rec[11:16] if len(rec) >= 16 and rec[10] in "T " else ""
+        time_part = _time_of(date) or (_time_of(rec) if rec[:10] == day else "")
         parts.append(f"{day} · {time_part}" if time_part else day)
     duration = (fm.get("duration") or "").strip()
     if duration and duration not in ("00:00:00", "None"):
