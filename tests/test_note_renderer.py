@@ -162,3 +162,34 @@ def test_meta_date_priority_matches_digest_layer(tmp_path):
     )
     html = nr.note_page_html(p)
     assert "2026-07-18" in html and "2026-01-01" not in html
+
+
+def test_unclosed_frontmatter_still_harvests_keys_for_pipeline():
+    # Load-bearing for transcriber dedupe and Obsidian-edited dismissals:
+    # a truncated note must still expose its keys (body keeps the full text).
+    from src.markdown_frontmatter import parse_frontmatter, split_frontmatter
+
+    text = '---\ntitle: "X"\nfingerprint: abc\ndismissed: [2]\nbody line\n'
+    fm, body = split_frontmatter(text)
+    assert fm["fingerprint"] == "abc" and fm["dismissed"] == "[2]"
+    assert body == text  # nothing swallowed
+    assert parse_frontmatter(text)["title"] == "X"
+
+
+def test_meta_time_from_date_field_itself(tmp_path):
+    p = tmp_path / "n.md"
+    p.write_text(
+        '---\ntitle: "T"\ndate: 2026-07-08T14:30:00\n---\n\nx', encoding="utf-8"
+    )
+    assert "2026-07-08 · 14:30" in nr.note_page_html(p)
+
+
+def test_meta_no_frankenstein_timestamp_across_days(tmp_path):
+    p = tmp_path / "n.md"
+    p.write_text(
+        '---\ntitle: "T"\ndate: 2026-07-08\n'
+        "recording_date: 2026-07-07T23:55:00\n---\n\nx",
+        encoding="utf-8",
+    )
+    html = nr.note_page_html(p)
+    assert "2026-07-08" in html and "23:55" not in html

@@ -29,7 +29,7 @@ from urllib.parse import quote, unquote
 
 from markdown_it import MarkdownIt
 
-from src.markdown_frontmatter import parse_frontmatter
+from src.markdown_frontmatter import split_frontmatter
 from src.ui import theme
 
 #: Scheme the reader uses for note-to-note links; the WKWebView navigation
@@ -43,13 +43,7 @@ TRANSCRIPT_ANCHOR = "transkrypcja"
 
 def strip_frontmatter(text: str) -> str:
     """Body of a note without its leading ``---`` frontmatter block."""
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return text
-    for i, line in enumerate(lines[1:], start=1):
-        if line.strip() == "---":
-            return "\n".join(lines[i + 1 :]).lstrip("\n")
-    return text
+    return split_frontmatter(text)[1]
 
 
 def heading_slug(text: str) -> str:
@@ -223,10 +217,21 @@ _PAGE = """<!doctype html>
 
 def _meta_line(fm: dict) -> str:
     parts = []
-    # Same priority as the digest layer (candidate_assembly): date first.
+    # Day: same priority as the digest layer (candidate_assembly), date first.
+    # Time comes from the SAME field when it carries one; otherwise from
+    # recording_date only when it names the SAME day — a day from one field
+    # glued to a clock time from another would be a timestamp that never
+    # happened (recording near midnight + user-edited date).
     date = (fm.get("date") or fm.get("recording_date") or "").strip()
-    if date and date.lower() not in ("none", "null"):
-        parts.append(date[:16].replace("T", " · "))
+    rec = (fm.get("recording_date") or "").strip()
+
+    def _time_of(value: str) -> str:
+        return value[11:16] if len(value) >= 16 and value[10] in "T " else ""
+
+    day = date[:10]
+    if day and day.lower() not in ("none", "null"):
+        time_part = _time_of(date) or (_time_of(rec) if rec[:10] == day else "")
+        parts.append(f"{day} · {time_part}" if time_part else day)
     duration = (fm.get("duration") or "").strip()
     if duration and duration not in ("00:00:00", "None"):
         parts.append(duration)
@@ -245,9 +250,11 @@ def note_page_html(path: Path) -> str:
     to degrade (it falls back to the external opener).
     """
     text = path.read_text(encoding="utf-8")
-    fm = parse_frontmatter(text)  # one read — title/meta/body from one version
+    # One read AND one split — header and body can never disagree about
+    # where the frontmatter ends.
+    fm, body = split_frontmatter(text)
     title = (fm.get("title") or "").strip() or path.stem
-    body_html = render_body(strip_frontmatter(text))
+    body_html = render_body(body)
     jump = ""
     if f'id="{TRANSCRIPT_ANCHOR}"' in body_html:
         jump = (
