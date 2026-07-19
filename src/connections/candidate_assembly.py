@@ -89,23 +89,10 @@ class CandidateSet:
 # Parsing helpers
 # --------------------------------------------------------------------------- #
 def _frontmatter(full: str) -> Dict[str, str]:
-    """Flat key/value frontmatter parse from already-read text.
+    """Flat key/value frontmatter parse from already-read text (shared impl)."""
+    from src.markdown_frontmatter import parse_frontmatter
 
-    Mirrors :func:`src.markdown_frontmatter.read_frontmatter` but works on the
-    text we already hold, avoiding a second disk read per note.
-    """
-    data: Dict[str, str] = {}
-    lines = full.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return data
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        data[key.strip()] = value.strip().strip('"')
-    return data
+    return parse_frontmatter(full)
 
 
 def _parse_tags(raw: str) -> List[str]:

@@ -1030,6 +1030,15 @@ if _APPKIT_AVAILABLE:
             except Exception:  # pragma: no cover
                 pass
 
+        def windowWillClose_(self, _note):
+            # Closing while reading must release the WKWebView (and its
+            # out-of-process WebContent) — the window object itself survives
+            # (setReleasedWhenClosed False) and would pin it for the session.
+            if self._mode == "note":
+                mode = self._note_return_mode
+                self._exit_note_mode()
+                self._mode = mode
+
         def windowDidResize_(self, _note):
             # Absolute layout + rebuild beats autoresizing math for a
             # pinned-footer/scrolling reader — but coalesce the rebuild so a
@@ -1372,7 +1381,8 @@ if _APPKIT_AVAILABLE:
 
         def triageSegClicked_(self, sender):
             key = (im.NEW, im.KEPT, im.DISMISSED)[int(sender.tag()) % 3]
-            if key != self._deck.view:
+            if key != self._deck.view or self._mode == "note":
+                self._leave_note_for_insights()
                 self._deck.set_view(key)
                 self._reset_card_state()
                 self._render()
@@ -1436,11 +1446,13 @@ if _APPKIT_AVAILABLE:
             holder.addSubview_(btn)
 
         def bridgeToKeptClicked_(self, _sender):
+            self._leave_note_for_insights()
             self._deck.set_view(im.KEPT)
             self._reset_card_state()
             self._render()
 
         def bridgeToNewClicked_(self, _sender):
+            self._leave_note_for_insights()
             self._deck.set_view(im.NEW)
             self._reset_card_state()
             self._render()
@@ -1608,8 +1620,8 @@ if _APPKIT_AVAILABLE:
                 if path is not None:
                     # A rail row is a fresh entry, not a wikilink hop — it must
                     # not grow the breadcrumb („← Wróć" exits in one press).
-                    self._note_stack = []
-                    self._open_note_in_reader(path, push=False)
+                    # The reset happens inside, only after a successful render.
+                    self._open_note_in_reader(path, breadcrumb="reset")
 
         def _add_rail_row(self, view, conn, index, frame):
             from src.ui.hover import make_hover_button
@@ -2638,15 +2650,12 @@ if _APPKIT_AVAILABLE:
                 self._invoke_callback("open_note", ids[i])
 
         def backToInsightsClicked_(self, sender):
-            self._epoch += 1  # invalidate any in-flight search/synthesis
+            self._reset_recall_flight()  # bump epoch + clear ALL query state
             if self._mode == "note":
                 self._exit_note_mode()
             self._mode = "insight"
             self._section = "serendypacje"
-            self._recall = None
             self._recall_loading = False
-            self._answer = None
-            self._answer_loading = False
             self._query = ""
             self._render()
 
@@ -3734,6 +3743,9 @@ if _APPKIT_AVAILABLE:
         # -- actions --------------------------------------------------------- #
 
         def railRowClicked_(self, sender):
+            # Picking an insight while reading a note must SHOW that insight —
+            # leave the reader first or the click looks like a no-op.
+            self._leave_note_for_insights()
             self._deck.select(int(sender.tag()))
             self._reset_card_state()
             self._render()
@@ -3785,32 +3797,60 @@ if _APPKIT_AVAILABLE:
                 return None
 
         @objc.python_method
-        def _open_note_in_reader(self, path, push=True):
-            """Render ``path`` in the in-app reader; degrade to the opener.
+        def _open_note_in_reader(self, path, breadcrumb="push", fallback_external=True):
+            """Render ``path`` in the in-app reader; returns True on success.
 
-            ``push=False`` replaces the shown note without touching the
-            breadcrumb (back-navigation, fresh rail entries)."""
+            ``breadcrumb``: "push" (wikilink hop), "reset" (fresh rail entry),
+            "replace" (back-navigation — no stack mutation). State mutates
+            only AFTER a successful render, so a failed open never corrupts
+            the view or the trail. ``fallback_external=False`` suppresses the
+            opener fallback (back-navigation must not steal focus for a note
+            it is skipping)."""
             try:
                 html = nrend.note_page_html(Path(path))
             except Exception as exc:
                 logger.warning("in-app render failed for %s: %s", path, exc)
-                self._invoke_callback("open_transcript", path)
-                return
+                if fallback_external:
+                    self._invoke_callback("open_transcript", path)
+                return False
             if self._mode != "note":
                 # Save where the user was — both the mode to return to and
                 # the reader scroll offset restored on „← Wróć"; the epoch
                 # bump drops in-flight recall/synthesis deliveries so they
-                # can't re-render (and yank) the note view.
+                # can't re-render (and yank) the note view. The dropped
+                # deliveries can't clear their own loading flags — clear them
+                # here or the restored recall view spins forever.
                 self._capture_scroll()
                 self._epoch += 1
+                self._recall_loading = False
+                self._answer_loading = False
                 self._note_return_mode = self._mode
                 self._note_stack = []
-            elif push and self._note_path is not None and Path(path) != self._note_path:
+            elif breadcrumb == "reset":
+                self._note_stack = []
+            elif (
+                breadcrumb == "push"
+                and self._note_path is not None
+                and Path(path) != self._note_path
+            ):
                 self._note_stack.append(self._note_path)
             self._note_path = Path(path)
             self._note_html = html
+            # Fresh HTML must reach the webview even when the SAME note is
+            # re-opened (the file may have changed on disk) — invalidate the
+            # loaded-page marker so _build_note_reader reloads.
+            self._webview_path = None
             self._mode = "note"
             self._render()
+            return True
+
+        @objc.python_method
+        def _leave_note_for_insights(self):
+            """No-op outside note mode; otherwise exit the reader into the
+            insight view (rail rows / triage segments / bridges)."""
+            if self._mode == "note":
+                self._exit_note_mode()
+                self._mode = "insight"
 
         @objc.python_method
         def _exit_note_mode(self):
@@ -3824,17 +3864,16 @@ if _APPKIT_AVAILABLE:
             self._webview_path = None
 
         def noteBackClicked_(self, _sender):
-            # Skip breadcrumb entries whose note vanished from disk since the
-            # push (deleted/renamed in Obsidian) instead of desyncing the view.
+            # Walk the breadcrumb until an entry actually renders — a note
+            # deleted, renamed, or corrupted since the push is skipped instead
+            # of desyncing the view or bouncing to the external opener.
             while self._note_stack:
                 prev = self._note_stack.pop()
-                try:
-                    if Path(prev).exists():
-                        self._open_note_in_reader(prev, push=False)
-                        return
-                except OSError:  # pragma: no cover - defensive
-                    pass
-                logger.info("breadcrumb note gone, skipping: %s", prev)
+                if self._open_note_in_reader(
+                    prev, breadcrumb="replace", fallback_external=False
+                ):
+                    return
+                logger.info("breadcrumb note unreadable, skipping: %s", prev)
             mode = self._note_return_mode
             self._exit_note_mode()
             self._mode = mode
@@ -3863,7 +3902,9 @@ if _APPKIT_AVAILABLE:
             try:
                 link_click = int(action.navigationType()) == _WK_LINK_CLICK
             except Exception:
-                link_click = False
+                # Deny-biased: if the bridge can't tell, treat it as a click —
+                # a broken getter must not open the bare-about: ALLOW branch.
+                link_click = True
             if s.startswith("about:blank#"):
                 handler(_WK_ALLOW)  # in-document #anchor jump
                 return
@@ -3887,6 +3928,14 @@ if _APPKIT_AVAILABLE:
                 return
             if s.startswith(("http://", "https://", "mailto:", "obsidian://")):
                 obsidian_link.open_url(s)
+
+        def webViewWebContentProcessDidTerminate_(self, _web):
+            """macOS killed the reader's WebContent process (memory pressure,
+            long sleep) — reload instead of leaving a permanently blank pane."""
+            logger.warning("reader web content terminated — reloading")
+            self._webview_path = None
+            if self._mode == "note":
+                self._render()
 
         def continueLLMClicked_(self, sender):
             self._do_handoff(ho.LLM)
@@ -4253,7 +4302,15 @@ if _APPKIT_AVAILABLE:
                 self._deck.set_view(prev_view)
             else:
                 self._deck.focus_first_nonempty()
-            self._reset_card_state()
+            if self._mode == "note":
+                # The deck changed under the reader — reset the card state
+                # but keep the scroll offset captured at note entry, or
+                # „← Wróć" lands at the top instead of where the user left.
+                keep = self._scroll_y
+                self._reset_card_state()
+                self._scroll_y = keep
+            else:
+                self._reset_card_state()
             if self._window is not None and self._window.isVisible():
                 self._render()
 
