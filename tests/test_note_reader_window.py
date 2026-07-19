@@ -178,47 +178,46 @@ class _FakeURL:
 
 
 class _FakeAction:
-    def __init__(self, s, nav_type=-1):  # -1 = WKNavigationTypeOther
+    def __init__(self, s):
         self._s = s
-        self._nav = nav_type
 
     def request(self):
         return types.SimpleNamespace(URL=lambda: _FakeURL(self._s))
 
-    def navigationType(self):
-        return self._nav
 
-
-def _policy(ctrl, url, nav_type=-1):
+def _policy(ctrl, url):
     decisions = []
     ctrl.webView_decidePolicyForNavigationAction_decisionHandler_(
-        None, _FakeAction(url, nav_type), decisions.append
+        None, _FakeAction(url), decisions.append
     )
     return decisions[0]
 
 
-def test_policy_allows_page_and_fragment_jumps(tmp_path):
+def test_policy_allows_own_page_and_fragment_jumps(tmp_path):
+    # The reader is loaded via loadFileURL — a real file:// URL — so the
+    # policy matches it exactly; no navigationType heuristics involved.
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
-    assert _policy(ctrl, "about:blank") == dw._WK_ALLOW  # initial page
-    # In-document anchor jumps are allowed even as link clicks.
-    assert (
-        _policy(ctrl, "about:blank#transkrypcja", nav_type=dw._WK_LINK_CLICK)
-        == dw._WK_ALLOW
-    )
+    ctrl._open_note_in_reader(_note(tmp_path))
+    page = ctrl._reader_page_url
+    assert page and page.startswith("file://")
+    assert _policy(ctrl, page) == dw._WK_ALLOW  # the page itself
+    assert _policy(ctrl, page + "#transkrypcja") == dw._WK_ALLOW  # anchor jump
 
 
-def test_policy_denies_about_blank_content_link():
-    # A note body containing [x](about:blank) must NOT blank the reader:
-    # a *clicked* bare about: URL is denied (nav_type 0 = link activated).
+def test_policy_denies_about_blank_content_link(tmp_path):
+    # A note body containing [x](about:blank) must not do anything — it can
+    # never match our own (real, unique) file:// page URL.
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
-    assert _policy(ctrl, "about:blank", nav_type=dw._WK_LINK_CLICK) == dw._WK_CANCEL
+    ctrl._open_note_in_reader(_note(tmp_path))
+    assert _policy(ctrl, "about:blank") == dw._WK_CANCEL
 
 
-def test_policy_cancels_external_and_unknown(monkeypatch):
+def test_policy_cancels_external_and_unknown(monkeypatch, tmp_path):
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
+    ctrl._open_note_in_reader(_note(tmp_path))
     sent = []
     monkeypatch.setattr(dw.obsidian_link, "open_url", lambda u: sent.append(u))
     assert _policy(ctrl, "https://example.com/x") == dw._WK_CANCEL
@@ -227,16 +226,14 @@ def test_policy_cancels_external_and_unknown(monkeypatch):
     assert _policy(ctrl, "ftp://weird") == dw._WK_CANCEL
 
 
-def test_policy_mailto_and_obsidian_dispatch_to_system(monkeypatch):
+def test_policy_mailto_and_obsidian_dispatch_to_system(monkeypatch, tmp_path):
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
+    ctrl._open_note_in_reader(_note(tmp_path))
     sent = []
     monkeypatch.setattr(dw.obsidian_link, "open_url", lambda u: sent.append(u))
-    assert _policy(ctrl, "mailto:x@y.z", nav_type=dw._WK_LINK_CLICK) == dw._WK_CANCEL
-    assert (
-        _policy(ctrl, "obsidian://open?vault=V", nav_type=dw._WK_LINK_CLICK)
-        == dw._WK_CANCEL
-    )
+    assert _policy(ctrl, "mailto:x@y.z") == dw._WK_CANCEL
+    assert _policy(ctrl, "obsidian://open?vault=V") == dw._WK_CANCEL
     assert sent == ["mailto:x@y.z", "obsidian://open?vault=V"]
 
 
@@ -434,18 +431,18 @@ def test_unknown_breadcrumb_mode_raises(tmp_path):
         ctrl._open_note_in_reader(_note(tmp_path), breadcrumb="pushed")
 
 
-def test_policy_broken_navigation_type_keeps_reader_alive():
-    # A raising navigationType() must NOT cancel the initial page load —
-    # a degraded bridge should degrade to a working reader, not a blank pane.
+def test_policy_url_getter_failure_denies_safely(tmp_path):
+    # If reading the request URL itself raises, deny rather than crash.
     ctrl = dw.build_dashboard_window()
     ctrl._ensure_window()
+    ctrl._open_note_in_reader(_note(tmp_path))
 
-    class _RaisingAction(_FakeAction):
-        def navigationType(self):
+    class _RaisingAction:
+        def request(self):
             raise RuntimeError("bridge down")
 
     decisions = []
     ctrl.webView_decidePolicyForNavigationAction_decisionHandler_(
-        None, _RaisingAction("about:blank"), decisions.append
+        None, _RaisingAction(), decisions.append
     )
-    assert decisions[0] == dw._WK_ALLOW
+    assert decisions[0] == dw._WK_CANCEL

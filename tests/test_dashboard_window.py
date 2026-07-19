@@ -33,7 +33,7 @@ def test_builds_with_sample_deck():
     ctrl = dw.build_dashboard_window()
     assert ctrl is not None
     _render(ctrl)
-    assert ctrl._window.title() == "Timshel — Konstelacja"
+    assert ctrl._window.title() == "Timshel"
 
 
 def test_navigation_and_triage_render():
