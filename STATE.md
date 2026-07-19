@@ -27,8 +27,10 @@ polityka, czas w nagłówku…) → naprawione. R3 na poprawkach R2 → 6 findin
 load, semantyka niedomkniętego frontmattera psuła dedupe transcribera
 i ręczne dismissale, wipe zaznaczeń przy geście powrotu, frankenstein
 timestamp) → naprawione. **R4 → PUSTA (konwergencja).** PR #76.
-Baterie: fuzz PASS, korpus 181/181, suita **1126** + mypy. Checklist testów
-manualnych: `Docs/READER-TEST-CHECKLIST.md` (15 punktów, ~15 min).
+Baterie: fuzz PASS, korpus 181/181, suita **1126** + mypy; SMOKE PASS.
+**Finalny tester DMG: `3a8fe462…` (stamp `6d960bf`) na iCloud `Timshel/`** —
+zastępuje wszystkie wcześniejsze. Checklist testów manualnych:
+`Docs/READER-TEST-CHECKLIST.md` (15 punktów, ~15 min).
 Follow-upy odłożone (nie blokują): wyniki wyszukiwania/cytaty syntezy wciąż
 otwierają się zewnętrznie (decyzja produktowa), cache resolvera wikilinków
 (rglob per klik — OK dla małych vaultów H1), konsolidacja splittera recall
