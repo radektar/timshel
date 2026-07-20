@@ -339,11 +339,16 @@ def test_auto_mode_falls_back_when_dense_import_breaks(vault, monkeypatch):
 
 def test_backfill_aborts_quietly_when_store_closed(vault):
     # Engine reset mid-backfill closes the store; the run must abort after the
-    # FIRST failure instead of grinding a warning per remaining note.
+    # FIRST failure instead of grinding a warning per remaining note. Pinned
+    # via the progress callback: a revert to per-note continue would fire it
+    # once per note (2), the abort fires it zero times (break skips it).
     eng = engine_mod.RecallEngine(vault, dense=False)
     eng._store.close()
+    progressed = []
     try:
-        assert eng.backfill() == 0  # aborted, no raise, no per-note grind
+        n = eng.backfill(progress=lambda done, total, path: progressed.append(done))
+        assert n == 0  # aborted, no raise
+        assert progressed == []  # broke out at the FIRST note, no grind
     finally:
         eng.close()
 

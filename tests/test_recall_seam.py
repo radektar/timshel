@@ -70,11 +70,13 @@ def _reset_seam_engine():
     seam._INDEX_STARTED = False
     seam._BACKFILL_ACTIVE = False
     seam._BACKFILL_PENDING = False
+    seam._LAST_HEAL_MONO = 0.0
     yield
     seam._ENGINE = None
     seam._INDEX_STARTED = False
     seam._BACKFILL_ACTIVE = False
     seam._BACKFILL_PENDING = False
+    seam._LAST_HEAL_MONO = 0.0
 
 
 def test_engine_singleton_concurrent_init(monkeypatch):
@@ -152,7 +154,9 @@ def test_reset_engine_restarts_background_index_only_after_launch(monkeypatch):
     # A reset mid-backfill leaves READY over a partial index, and a vault
     # change needs the new vault indexed — reset must restart the background
     # index, but ONLY in a process that actually launched it (never in bare
-    # test/CLI resets).
+    # test/CLI resets). It restarts even when NO engine is cached: a failed
+    # initial build followed by a settings fix must not stay dead until
+    # relaunch.
     calls = {"count": 0}
     monkeypatch.setattr(
         seam,
@@ -174,8 +178,8 @@ def test_reset_engine_restarts_background_index_only_after_launch(monkeypatch):
     seam.reset_engine()
     assert calls["count"] == 1  # launched -> reset restarts it
 
-    seam.reset_engine()  # no engine cached -> nothing to restart
-    assert calls["count"] == 1
+    seam.reset_engine()  # launched + no engine (failed initial build)
+    assert calls["count"] == 2  # -> STILL restarts
 
 
 def test_lexical_only_unknown_is_none():
@@ -247,8 +251,11 @@ def test_search_detailed_heals_corrupt_store(monkeypatch):
         def rebuild_store(self):
             calls["rebuild"] += 1
 
-    monkeypatch.setattr(seam, "_engine", lambda: _CorruptEngine())
-    seam._ENGINE = _CorruptEngine()
+    eng = _CorruptEngine()
+    # Identity matters: heal only fires when the failing engine IS the
+    # published one — a closed predecessor's error must not wipe a fresh store.
+    monkeypatch.setattr(seam, "_engine", lambda: eng)
+    seam._ENGINE = eng
     monkeypatch.setattr(
         seam,
         "start_background_index",
@@ -259,10 +266,14 @@ def test_search_detailed_heals_corrupt_store(monkeypatch):
     assert calls["rebuild"] == 1
     assert calls["restart"] == 1
 
+    # Second corruption within the cooldown window: no second wipe.
+    assert seam.search_detailed("pytanie") == ([], 0.0, "unavailable")
+    assert calls["rebuild"] == 1
 
-def test_heal_ignores_transient_lock_errors(monkeypatch):
-    # OperationalError (locked/busy) is transient — wiping the index on it
-    # would destroy healthy data.
+
+def test_heal_skips_stale_engine(monkeypatch):
+    # The failure belongs to a closed predecessor — the fresh engine's healthy
+    # store must survive.
     import sqlite3
 
     calls = {"rebuild": 0}
@@ -271,9 +282,37 @@ def test_heal_ignores_transient_lock_errors(monkeypatch):
         def rebuild_store(self):
             calls["rebuild"] += 1
 
-    seam._ENGINE = _Eng()
+    stale, current = _Eng(), _Eng()
+    seam._ENGINE = current
+    exc = sqlite3.DatabaseError("database disk image is malformed")
+    assert seam._heal_if_corrupt(exc, stale) is False
+    assert seam._heal_if_corrupt(exc, None) is False
+    assert calls["rebuild"] == 0
+
+
+def test_heal_ignores_transient_and_closed_store_errors(monkeypatch):
+    # OperationalError (locked/busy) is transient, and ProgrammingError is a
+    # reset closing the store under an in-flight op — wiping the index on
+    # either would destroy healthy data.
+    import sqlite3
+
+    calls = {"rebuild": 0}
+
+    class _Eng:
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    eng = _Eng()
+    seam._ENGINE = eng
     assert (
-        seam._heal_if_corrupt(sqlite3.OperationalError("database is locked")) is False
+        seam._heal_if_corrupt(sqlite3.OperationalError("database is locked"), eng)
+        is False
     )
-    assert seam._heal_if_corrupt(RuntimeError("boom")) is False
+    assert (
+        seam._heal_if_corrupt(
+            sqlite3.ProgrammingError("Cannot operate on a closed database"), eng
+        )
+        is False
+    )
+    assert seam._heal_if_corrupt(RuntimeError("boom"), eng) is False
     assert calls["rebuild"] == 0

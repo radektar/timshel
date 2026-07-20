@@ -57,7 +57,8 @@ class RecallResults:
     rows: List[RecallRow]
     is_empty: bool                 # True → render the abstinence state
     nearest: Optional[RecallRow]   # closest weak match to show dimmed when empty
-    confidence: float              # top dense cosine similarity (0..1)
+    confidence: float              # 0..1: max(dense cosine, overlap net) in hybrid;
+                                   # pure idf-weighted literal overlap in lexical-only
     lexical_only: bool = False     # search ran without the semantic channel
 
     @property

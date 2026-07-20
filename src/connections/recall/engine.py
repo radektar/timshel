@@ -18,6 +18,7 @@ effect of searching.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -96,6 +97,7 @@ class RecallEngine:
             self._db_path = self._resolve_db_path(db_path)
             self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
+        self._rebuild_lock = threading.Lock()
 
     def _resolve_db_path(self, db_path) -> Path:
         if db_path:
@@ -154,14 +156,19 @@ class RecallEngine:
         leaving a file that opens cleanly but fails every search/index with
         'database disk image is malformed'; without this the bundle stays
         broken until the user hand-deletes a hidden dotfile. Callers restart
-        the background backfill to refill the fresh store."""
-        try:
-            self._store.close()
-        except Exception:  # noqa: BLE001 - the store may already be broken
-            pass
-        self._remove_db_files()
-        self._store = self._open_store()
-        self._retriever = HybridRetriever(self._store, self._embedder)
+        the background backfill to refill the fresh store.
+
+        Serialized: two threads healing at once (search + transcription)
+        would otherwise interleave close/unlink/reopen and leave one of them
+        writing into an unlinked inode."""
+        with self._rebuild_lock:
+            try:
+                self._store.close()
+            except Exception:  # noqa: BLE001 - the store may already be broken
+                pass
+            self._remove_db_files()
+            self._store = self._open_store()
+            self._retriever = HybridRetriever(self._store, self._embedder)
 
     def _remove_db_files(self) -> None:
         """Drop the store file AND its sqlite sidecars. A leftover hot
@@ -201,7 +208,8 @@ class RecallEngine:
         return self._retriever.search(query, k=k)
 
     def search_scored(self, query: str, k: int = 8) -> Tuple[List[Result], float]:
-        """Hybrid search plus the top dense cosine similarity (confidence signal)."""
+        """Search plus a confidence signal: max(top dense cosine, term-overlap
+        net) in hybrid mode; pure idf-weighted literal overlap in lexical-only."""
         return self._retriever.search_scored(query, k=k)
 
     def knn_note_ids(self, query: str, k: int = 20) -> List[str]:

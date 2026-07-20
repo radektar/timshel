@@ -103,49 +103,98 @@ def start_background_index() -> None:
             with _BACKFILL_LOCK:
                 if _BACKFILL_PENDING:
                     _BACKFILL_PENDING = False
+                    # Narrow the READY flicker: pass N's ready() already fired
+                    # inside run_backfill — flip back to INDEXING before the
+                    # coalesced pass starts.
+                    _STATE.begin()
                     continue  # one more pass with the current engine
                 _BACKFILL_ACTIVE = False
                 return
 
-    threading.Thread(target=_run, name="RecallBackfill", daemon=True).start()
+    try:
+        threading.Thread(target=_run, name="RecallBackfill", daemon=True).start()
+    except Exception as exc:  # noqa: BLE001 - thread/fd exhaustion
+        # Roll the flag back or every future request would coalesce into a
+        # worker that does not exist — backfill dead until relaunch.
+        with _BACKFILL_LOCK:
+            _BACKFILL_ACTIVE = False
+            _BACKFILL_PENDING = False
+        _STATE.failed(exc)
+        logger.warning("recall: could not start backfill thread: %s", exc)
 
 
-def _heal_if_corrupt(exc) -> bool:
+# Heal throttling: one destructive rebuild per window. A persistently
+# corrupting disk (or any misclassification) must not loop wipe → full
+# re-embed at CPU-melting cost while the user retries ⌘K.
+_HEAL_COOLDOWN_S = 120.0
+_LAST_HEAL_MONO = 0.0
+
+
+def _heal_if_corrupt(exc, eng) -> bool:
     """Rebuild the store when the FILE itself is bad at query time.
 
     An iCloud-synced vault can rewrite pages under us: the store then opens
     cleanly but every operation raises 'database disk image is malformed' —
     permanently, across relaunches, with no CLI escape hatch in the bundle.
-    OperationalError (locked/busy) is transient and never a reason to wipe.
+
+    NEVER heals on: OperationalError (locked/busy — transient),
+    ProgrammingError ('Cannot operate on a closed database' — that's a reset
+    closing the store under an in-flight op, and this PR's backfill treats it
+    as exactly that), an engine that is no longer the published one (the
+    failure belongs to a closed predecessor — wiping the fresh engine's
+    healthy store would be the bug), or within the cooldown window.
     Returns True when a rebuild was triggered (backfill restarted).
     """
     import sqlite3
+    import time
 
-    if not isinstance(exc, sqlite3.DatabaseError) or isinstance(
-        exc, sqlite3.OperationalError
+    global _LAST_HEAL_MONO
+
+    if (
+        not isinstance(exc, sqlite3.DatabaseError)
+        or isinstance(exc, sqlite3.OperationalError)
+        or isinstance(exc, sqlite3.ProgrammingError)
     ):
         return False
-    eng = _ENGINE
+    if eng is None or eng is not _ENGINE:
+        return False
     rebuild = getattr(eng, "rebuild_store", None)
     if rebuild is None:
         return False
+    now = time.monotonic()
+    if now - _LAST_HEAL_MONO < _HEAL_COOLDOWN_S:
+        logger.warning(
+            "recall: store corrupt again within cooldown (%s) — not rebuilding", exc
+        )
+        return False
+    _LAST_HEAL_MONO = now
     logger.warning("recall: store corrupt at query time (%s); rebuilding", exc)
     try:
         rebuild()
     except Exception as exc2:  # noqa: BLE001
         logger.warning("recall: store rebuild failed: %s", exc2)
         return False
+    # The digest lane's cached engine still holds a handle on the deleted
+    # corrupt inode — same hazard reset_engine guards against.
+    try:
+        from src.connections.candidate_assembly import reset_recall_engines
+
+        reset_recall_engines()
+    except Exception as exc2:  # noqa: BLE001 - pragma: no cover
+        logger.debug("recall: digest engine cache reset failed: %s", exc2)
     start_background_index()
     return True
 
 
 def index_transcript_safe(path) -> None:
     """Index one freshly-written transcript. Best-effort; logs and swallows failures."""
+    eng = None
     try:
-        _engine().index_path(Path(path))
+        eng = _engine()
+        eng.index_path(Path(path))
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall index_transcript failed: %s", exc)
-        _heal_if_corrupt(exc)
+        _heal_if_corrupt(exc, eng)
 
 
 def search_detailed(query: str, k: int = 8):
@@ -170,14 +219,14 @@ def search_detailed(query: str, k: int = 8):
             return [], 0.0, "empty"
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall count failed: %s", exc)
-        _heal_if_corrupt(exc)
+        _heal_if_corrupt(exc, eng)
         return [], 0.0, "unavailable"
     try:
         results, confidence = eng.search_scored(query, k=k)
         return results, confidence, "ok"
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall search failed: %s", exc)
-        _heal_if_corrupt(exc)
+        _heal_if_corrupt(exc, eng)
         return [], 0.0, "unavailable"
 
 
@@ -214,13 +263,16 @@ def reset_engine() -> None:
     # the generation bump already guarantees that build gets discarded.
     acquired = _ENGINE_LOCK.acquire(timeout=1.0)
     old = None
-    try:
-        old = _ENGINE
-        _ENGINE = None
-    finally:
-        if acquired:
+    if acquired:
+        try:
+            old = _ENGINE
+            _ENGINE = None
+        finally:
             _ENGINE_LOCK.release()
-    had_engine = old is not None
+    # NOT acquired → a builder holds the lock, so _ENGINE is either None or a
+    # freshly-published NEW-generation engine. Touching it unlocked could
+    # steal-and-close that valid engine (or orphan it) — skip the swap; the
+    # gen bump alone retires the in-flight build.
     if old is not None:
         try:
             old.close()
@@ -234,5 +286,8 @@ def reset_engine() -> None:
         reset_recall_engines()
     except Exception as exc:  # noqa: BLE001 - pragma: no cover
         logger.debug("recall: digest engine cache reset failed: %s", exc)
-    if had_engine and _INDEX_STARTED:
+    # Gate on _INDEX_STARTED alone: gating on had_engine too would leave
+    # recall permanently unindexed when the INITIAL build failed (transient
+    # lock at launch), the user fixed settings, and reset found no engine.
+    if _INDEX_STARTED:
         start_background_index()
