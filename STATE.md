@@ -1,7 +1,19 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-18 (wieczór) · Faza: kod → test
+Data: 2026-07-20 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Decyzja i18n (2026-07-20): wersja EN na bramce pre-waitlist
+
+Audyt na pytanie „czy mamy wersję angielską": **treść już dwujęzyczna**
+(`summarizer.detect_language` + Whisper multilingual — EN nagranie = EN
+notatka), **chrome UI = tylko PL, zero warstwy i18n** (`settings.language`
+to język Whispera, nie locale), **Stanowiska dostrojone pod PL** (rdzenie
+fleksyjne w `stance.py` — tuning, nie bloker). Decyzja: **EN UI = bramka
+przed waitlistą, obok Developer ID/notaryzacji — NIE na H1** (panel H1 = PL).
+Wyjątek: nie-PL tester → EN UI przed wysyłką do niego. Realizacja gdy przyjdzie
+czas: lekki `t(key)` JSON pl/en (nie gettext), ~1–1.5 dnia. Pełny zapis:
+Obsidian → [[2026-07-20 - Wersja angielska UI - kiedy i jak]].
 
 ## Runda testów ręcznych (2026-07-20) — poprawki + spójność wizualna
 
@@ -196,6 +208,8 @@ Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding
 - Kanonizacja pola `title:` w frontmatterze starych notatek.
 - **Notaryzacja / Developer ID** — tester DMG zostaje ad-hoc (right-click→Open);
   Developer ID dopiero przed waitlistą, nie przed małą grupą.
+- **Wersja angielska UI (i18n)** — bramka pre-waitlist obok Developer ID; NIE na
+  H1 (panel PL). Flip tylko gdy pierwszy tester jest nie-PL. Decyzja 2026-07-20.
 - **DONE (PR #66):** alias-canonicalizacja w prod (judge/retry) · rename Malinche→Timshel.
 
 ## Kontekst dla nowej sesji
