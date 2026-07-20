@@ -124,6 +124,15 @@ _R_CHECK = 5.0  # checkbox
 _R_ROW = 12.0  # rows, cards
 _R_CARD = 14.0  # rail card / panels
 
+# Neutral scale (visual-identity review 2026-07-20): ONE hairline + three fills,
+# on white-over-dark. Replaces six ad-hoc alphas (0.04/0.055/0.06/0.07/0.08/
+# 0.018) that made every divider and surface a slightly different grey. Every
+# thin separator uses _HAIRLINE_A — no exceptions — so lines never mismatch.
+_HAIRLINE_A = 0.07  # every thin divider / rule / separator / border
+_FILL_SUBTLE_A = 0.04  # recessed strips: segment track, quiet fills
+_FILL_RAISED_A = 0.055  # cards, panels, active rows
+_FILL_GHOST_A = 0.02  # ghost-button rest state
+
 # The reader is loaded via loadFileURL (not loadHTMLString with a nil
 # baseURL): a page with no real document URL makes in-page "#anchor" jumps
 # ("Przejdź do transkrypcji") unreliable on some WebKit builds. A real
@@ -510,7 +519,7 @@ if _APPKIT_AVAILABLE:
         v = NSView.alloc().initWithFrame_(frame)
         v.setWantsLayer_(True)
         if v.layer() is not None:
-            v.layer().setBackgroundColor_(_c(255, 255, 255, 0.06).CGColor())
+            v.layer().setBackgroundColor_(_c(255, 255, 255, _FILL_RAISED_A).CGColor())
             v.layer().setCornerRadius_(radius)
         return v
 
@@ -1122,14 +1131,12 @@ if _APPKIT_AVAILABLE:
 
         @objc.python_method
         def _build_rail(self, frame):
+            # The rail sits on the SAME continuous window field as the reader —
+            # no darkening wash. The radial glow is centered on the reader
+            # column (0.64·W), so the rail is naturally a touch dimmer (it's in
+            # the gradient's tail): recessed, but the same material. A single
+            # hairline (in _build_reader) is the only rail↔reader boundary.
             view = _DashFlippedView.alloc().initWithFrame_(frame)
-            wash = NSView.alloc().initWithFrame_(
-                NSMakeRect(0, 0, frame.size.width, frame.size.height)
-            )
-            wash.setWantsLayer_(True)
-            if wash.layer() is not None:
-                wash.layer().setBackgroundColor_(_c(0, 0, 0, 0.16).CGColor())
-            view.addSubview_(wash)
 
             from src.connections import ask_history
 
@@ -1296,7 +1303,9 @@ if _APPKIT_AVAILABLE:
             track.setWantsLayer_(True)
             if track.layer() is not None:
                 track.layer().setCornerRadius_(_R_CONTROL)
-                track.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
+                track.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _FILL_SUBTLE_A).CGColor()
+                )
                 track.layer().setBorderWidth_(1.0)
                 track.layer().setBorderColor_(_c(255, 255, 255, 0.10).CGColor())
 
@@ -1503,7 +1512,9 @@ if _APPKIT_AVAILABLE:
             if btn.layer() is not None:
                 btn.layer().setCornerRadius_(_R_ROW)
                 if active:
-                    btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                    btn.layer().setBackgroundColor_(
+                        _c(255, 255, 255, _FILL_RAISED_A).CGColor()
+                    )
             if active:
                 bar = NSView.alloc().initWithFrame_(NSMakeRect(1, 7, 2.5, h - 18))
                 bar.setWantsLayer_(True)
@@ -1651,10 +1662,12 @@ if _APPKIT_AVAILABLE:
             active = index == self._deck.active_index
             kept = self._deck.is_kept(index)
             if btn.layer() is not None:
-                # C2 redline: row radius 12, active bg .07 + gold bar 2.5.
+                # C2 redline: row radius 12, active bg = raised fill + gold bar 2.5.
                 btn.layer().setCornerRadius_(_R_ROW)
                 if active:
-                    btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                    btn.layer().setBackgroundColor_(
+                        _c(255, 255, 255, _FILL_RAISED_A).CGColor()
+                    )
 
             if active:
                 # Gold bar = the insight role; the label lights gold-glow (C2).
@@ -1730,7 +1743,7 @@ if _APPKIT_AVAILABLE:
             )
             bd.setWantsLayer_(True)
             if bd.layer() is not None:
-                bd.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, _HAIRLINE_A).CGColor())
             bar.addSubview_(bd)
 
             FLD_H = 28.0
@@ -1743,7 +1756,9 @@ if _APPKIT_AVAILABLE:
             cont.setWantsLayer_(True)
             if cont.layer() is not None:
                 cont.layer().setCornerRadius_(_R_CONTROL)
-                cont.layer().setBackgroundColor_(_c(255, 255, 255, 0.04).CGColor())
+                cont.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _FILL_SUBTLE_A).CGColor()
+                )
                 cont.layer().setBorderWidth_(1.0)
                 cont.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
             bar.addSubview_(cont)
@@ -1964,7 +1979,9 @@ if _APPKIT_AVAILABLE:
             )
             div.setWantsLayer_(True)
             if div.layer() is not None:
-                div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                div.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             view.addSubview_(div)
 
             # Stały ask-bar cut per redesign (changelog): the pull entry moves to
@@ -2024,7 +2041,9 @@ if _APPKIT_AVAILABLE:
             )
             div.setWantsLayer_(True)
             if div.layer() is not None:
-                div.layer().setBackgroundColor_(_c(255, 255, 255, 0.07).CGColor())
+                div.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             view.addSubview_(div)
 
             web_y = top + head_h + _hairline()
@@ -2160,7 +2179,7 @@ if _APPKIT_AVAILABLE:
             )
             bd.setWantsLayer_(True)
             if bd.layer() is not None:
-                bd.layer().setBackgroundColor_(_c(255, 255, 255, 0.06).CGColor())
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, _HAIRLINE_A).CGColor())
             strip.addSubview_(bd)
 
             pad = 15.0
@@ -2172,7 +2191,7 @@ if _APPKIT_AVAILABLE:
                     "‹ Podsunięte",
                     NSMakeRect(pad, fy + 6, 118, 26),
                     _cream_soft(),
-                    _c(255, 255, 255, 0.05),
+                    _c(255, 255, 255, _FILL_RAISED_A),
                     _c(255, 255, 255, 0.16),
                     self,
                     "backToInsightsClicked:",
@@ -2185,7 +2204,9 @@ if _APPKIT_AVAILABLE:
             cont = NSView.alloc().initWithFrame_(NSMakeRect(left, fy, fld_w, field_h))
             cont.setWantsLayer_(True)
             if cont.layer() is not None:
-                cont.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
+                cont.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _FILL_RAISED_A).CGColor()
+                )
                 cont.layer().setCornerRadius_(6.0)
                 cont.layer().setBorderWidth_(1.0)
                 cont.layer().setBorderColor_(_c(255, 255, 255, 0.16).CGColor())
@@ -2340,7 +2361,9 @@ if _APPKIT_AVAILABLE:
             )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
-                rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
+                rule.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             doc.addSubview_(rule)
             cy += 16
 
@@ -2456,7 +2479,7 @@ if _APPKIT_AVAILABLE:
                 "‹ tylko wyniki",
                 NSMakeRect(reader_w - _READER_PAD_X - 118, cy - 4, 118, 24),
                 _cream_soft(),
-                _c(255, 255, 255, 0.05),
+                _c(255, 255, 255, _FILL_RAISED_A),
                 _c(255, 255, 255, 0.16),
                 self,
                 "clearAnswerClicked:",
@@ -2619,7 +2642,9 @@ if _APPKIT_AVAILABLE:
             )
             sep.setWantsLayer_(True)
             if sep.layer() is not None:
-                sep.layer().setBackgroundColor_(_c(255, 255, 255, 0.055).CGColor())
+                sep.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             doc.addSubview_(sep)
             cy += 12
             return cy
@@ -3159,7 +3184,9 @@ if _APPKIT_AVAILABLE:
             )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
-                rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.10).CGColor())
+                rule.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             doc.addSubview_(rule)
             cy += 16
 
@@ -3267,7 +3294,9 @@ if _APPKIT_AVAILABLE:
                 if selected:  # U7: one signal — checkbox + tint, NO frame
                     btn.layer().setBackgroundColor_(_c(217, 84, 42, 0.09).CGColor())
                 else:
-                    btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.018).CGColor())
+                    btn.layer().setBackgroundColor_(
+                        _c(255, 255, 255, _FILL_GHOST_A).CGColor()
+                    )
 
             # U3: margin-top 3px puts the box on the optical centre of the
             # FIRST text line (15px × 1.5 − 18) / 2 ≈ 2.6 → 3.
@@ -3386,7 +3415,7 @@ if _APPKIT_AVAILABLE:
                     tip,
                     NSMakeRect(sx + k * (ICON_W + GAP), BTN_Y, ICON_W, CTA_H),
                     _c(201, 187, 166),
-                    _c(255, 255, 255, 0.05),
+                    _c(255, 255, 255, _FILL_RAISED_A),
                     _c(255, 255, 255, 0.16),
                     self,
                     action,
@@ -3502,7 +3531,9 @@ if _APPKIT_AVAILABLE:
             )
             tdiv.setWantsLayer_(True)
             if tdiv.layer() is not None:
-                tdiv.layer().setBackgroundColor_(_c(255, 255, 255, 0.08).CGColor())
+                tdiv.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             foot.addSubview_(tdiv)
 
             from src.ui import style
@@ -3670,7 +3701,7 @@ if _APPKIT_AVAILABLE:
                         text,
                         NSMakeRect(ax, ay, w, 30),
                         _c(201, 187, 166),
-                        _c(255, 255, 255, 0.04),
+                        _c(255, 255, 255, _FILL_SUBTLE_A),
                         _c(255, 255, 255, 0.16),
                         self,
                         action,
@@ -3737,7 +3768,9 @@ if _APPKIT_AVAILABLE:
             if btn.layer() is not None:
                 # radius 6 (native macOS feel — NOT a pill) per the redline.
                 btn.layer().setCornerRadius_(_R_CONTROL)
-                btn.layer().setBackgroundColor_(_c(255, 255, 255, 0.05).CGColor())
+                btn.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _FILL_RAISED_A).CGColor()
+                )
                 btn.layer().setBorderWidth_(1.0)
                 btn.layer().setBorderColor_(_c(255, 255, 255, 0.14).CGColor())
             dot = NSView.alloc().initWithFrame_(NSMakeRect(PAD, 10.5, DOT, DOT))
