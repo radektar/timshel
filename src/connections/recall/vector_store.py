@@ -46,6 +46,11 @@ class VaultVectorStore:
     def __init__(self, db_path: Path, dim: int, *, dense: bool = True):
         self.dense = bool(dense)
         self.dim = int(dim)
+        if self.dense and self.dim <= 0:
+            # Reject the representable-invalid state early: a caller that read
+            # a lexical DB's meta and reused its dim would otherwise create a
+            # zero-width vec0 table with an obscure DDL error far from the bug.
+            raise ValueError("dense store requires dim > 0")
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # The lazy engine is shared across threads (UI search + daemon indexing),
@@ -93,13 +98,18 @@ class VaultVectorStore:
     ) -> None:
         """Replace all stored chunks for ``note_id`` with a fresh set (incremental).
 
-        ``vectors`` is required in dense mode and ignored in lexical-only mode.
+        ``vectors`` is required in dense mode and REJECTED in lexical-only mode —
+        a caller handing vectors to a lexical store is a mode-wiring bug (paying
+        full embedding cost for vectors silently dropped), and it must be loud
+        in both directions.
         """
         if self.dense:
             if vectors is None:
                 raise ValueError("dense store requires vectors")
             if len(chunks) != len(vectors):
                 raise ValueError("chunks and vectors length mismatch")
+        elif vectors is not None:
+            raise ValueError("lexical-only store does not accept vectors")
         with self._lock:
             self.delete_note(note_id)
             cur = self._db.cursor()
@@ -109,7 +119,7 @@ class VaultVectorStore:
                     "VALUES (?,?,?,?,?,?,?)",
                     (note_id, ch.seq, ch.text, ch.parent_text, ch.char_start, ch.char_end, ch.version_hash),
                 )
-                if self.dense and vectors is not None:
+                if vectors is not None:
                     vec = vectors[i]
                     if len(vec) != self.dim:
                         raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")

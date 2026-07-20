@@ -56,6 +56,7 @@ class RecallResults:
     is_empty: bool                 # True → render the abstinence state
     nearest: Optional[RecallRow]   # closest weak match to show dimmed when empty
     confidence: float              # top dense cosine similarity (0..1)
+    lexical_only: bool = False     # search ran without the semantic channel
 
     @property
     def count(self) -> int:
@@ -117,6 +118,7 @@ def present(
     confidence: float,
     *,
     floor: Optional[float] = None,
+    lexical_only: Optional[bool] = None,
     max_rows: int = 8,
     per_note_cap: int = 2,
     quote_limit: int = 240,
@@ -129,19 +131,26 @@ def present(
     Otherwise returns up to ``max_rows`` ranked rows, capping any single note to
     ``per_note_cap`` fragments so one chatty note can't crowd out the rest.
 
-    ``floor=None`` picks the calibrated floor for the evidence at hand: when no
-    hit came through the dense channel (lexical-only engine, or dense simply found
-    nothing), confidence is pure term overlap and the lexical floor applies.
+    ``lexical_only`` is the engine's mode (thread it from seam.lexical_only());
+    ``None`` falls back to inferring it from the hits' channels. ``floor=None``
+    picks the calibrated floor for that evidence: pure term overlap (no dense
+    channel) gets the lexical floor, dense-backed confidence the default one.
     """
     query = (query or "").strip()
     hits = list(results or [])
+    if lexical_only is None:
+        lexical_only = bool(hits) and not any(
+            "dense" in getattr(r, "channels", "") for r in hits
+        )
     if floor is None:
-        has_dense = any("dense" in getattr(r, "channels", "") for r in hits)
-        floor = DEFAULT_ABSTAIN_FLOOR if has_dense else LEXICAL_ABSTAIN_FLOOR
+        floor = LEXICAL_ABSTAIN_FLOOR if lexical_only else DEFAULT_ABSTAIN_FLOOR
 
     if not hits or confidence < floor:
         nearest = _row(hits[0], 1, quote_limit=quote_limit, dimmed=True) if hits else None
-        return RecallResults(query=query, rows=[], is_empty=True, nearest=nearest, confidence=confidence)
+        return RecallResults(
+            query=query, rows=[], is_empty=True, nearest=nearest,
+            confidence=confidence, lexical_only=lexical_only,
+        )
 
     rows: List[RecallRow] = []
     per_note: dict = {}
@@ -153,4 +162,7 @@ def present(
         if len(rows) >= max_rows:
             break
 
-    return RecallResults(query=query, rows=rows, is_empty=False, nearest=None, confidence=confidence)
+    return RecallResults(
+        query=query, rows=rows, is_empty=False, nearest=None,
+        confidence=confidence, lexical_only=lexical_only,
+    )

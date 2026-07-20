@@ -1396,6 +1396,7 @@ class TimshelMenuApp(rumps.App):
             "recall_synthesize": self._recall_synthesize,
             "recall_save_answer": self._recall_save_answer,
             "recall_index_status": self._recall_index_status,
+            "recall_lexical_only": self._recall_lexical_only,
         }
 
     def _recall_index_status(self):
@@ -1419,6 +1420,16 @@ class TimshelMenuApp(rumps.App):
         from src.connections.recall import seam
 
         return seam.search_detailed(query)
+
+    def _recall_lexical_only(self):
+        """True when search runs without the semantic channel (bundled app) —
+        the window tells the user a paraphrase miss may be the mode, not the vault."""
+        try:
+            from src.connections.recall import seam
+
+            return seam.lexical_only()
+        except Exception:  # pragma: no cover - defensive
+            return False
 
     def _recall_synthesize(self, query, results):
         """The one LLM in the pull path: synthesize a grounded answer from the

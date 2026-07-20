@@ -48,7 +48,9 @@ def test_search_detailed_unavailable_when_search_raises(monkeypatch):
 
 
 def test_search_safe_is_the_two_tuple_wrapper(monkeypatch):
-    monkeypatch.setattr(seam, "_engine", lambda: _FakeEngine(count=2, result=(["h"], 0.7)))
+    monkeypatch.setattr(
+        seam, "_engine", lambda: _FakeEngine(count=2, result=(["h"], 0.7))
+    )
     assert seam.search_safe("q") == (["h"], 0.7)
     monkeypatch.setattr(seam, "_engine", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert seam.search_safe("q") == ([], 0.0)
@@ -84,9 +86,7 @@ def test_engine_singleton_concurrent_init(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(
-        "src.connections.recall.engine.RecallEngine", _SlowEngine
-    )
+    monkeypatch.setattr("src.connections.recall.engine.RecallEngine", _SlowEngine)
     # get_config() stays real — the fake engine ignores the root path.
 
     results = []
@@ -120,3 +120,21 @@ def test_reset_engine_closes_once():
 
     assert closes["count"] == 1
     assert seam._ENGINE is None
+
+
+def test_reset_engine_clears_digest_engine_cache(monkeypatch):
+    # The digest lane's cached engine would otherwise keep an open handle on a
+    # store file the fresh seam engine may have replaced.
+    from src.connections import candidate_assembly as ca
+
+    class _Closeable:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    eng = _Closeable()
+    monkeypatch.setitem(ca._ENGINE_CACHE, "/some/vault", eng)
+    seam.reset_engine()
+    assert ca._ENGINE_CACHE == {}
+    assert eng.closed is True

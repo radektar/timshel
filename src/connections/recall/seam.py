@@ -108,6 +108,15 @@ def search_safe(query: str, k: int = 8):
     return results, confidence
 
 
+def lexical_only() -> bool:
+    """True when the ACTIVE engine runs lexical-only (dense stack absent).
+
+    Reads the cached singleton without constructing one — call it after a
+    search, when the engine already exists. False when unknown.
+    """
+    return bool(getattr(_ENGINE, "lexical_only", False))
+
+
 def reset_engine() -> None:
     """Drop the cached engine (e.g. after a settings change)."""
     global _ENGINE
@@ -118,3 +127,11 @@ def reset_engine() -> None:
             except Exception:  # noqa: BLE001
                 pass
         _ENGINE = None
+    # The digest lane keeps its own engine cache — reset it too, or it keeps
+    # an open handle on a store file a fresh engine may have replaced.
+    try:
+        from src.connections.candidate_assembly import reset_recall_engines
+
+        reset_recall_engines()
+    except Exception as exc:  # noqa: BLE001 - pragma: no cover
+        logger.debug("recall: digest engine cache reset failed: %s", exc)

@@ -23,13 +23,25 @@ from src.config.defaults import SIDECAR_DIR_NAME
 from src.logger import logger
 
 DB_FILENAME = "vault_vectors.db"
+# Lexical mode gets its OWN default store file. One shared file would make the
+# modes destroy each other's index whenever the same vault is touched from two
+# environments (bundled app = lexical, dev venv/CLI = dense) — with separate
+# files both indexes coexist and a deps flip costs nothing.
+LEXICAL_DB_FILENAME = "vault_lexical.db"
 
 
 def dense_stack_available() -> bool:
-    """True when the dense channel's optional deps import (fastembed + sqlite-vec)."""
+    """True when the dense channel can actually run: a Python with loadable
+    sqlite extensions AND importable fastembed + sqlite-vec. The extension
+    check comes first — with deps installed on a Python that can't load them,
+    the dense path would crash in ``_load_extension`` instead of degrading."""
+    import sqlite3
+
+    if not hasattr(sqlite3.Connection, "enable_load_extension"):
+        return False
     from src.runtime_deps import ensure_importable
 
-    return ensure_importable("fastembed") and ensure_importable("sqlite_vec")
+    return ensure_importable("sqlite_vec") and ensure_importable("fastembed")
 
 
 class RecallEngine:
@@ -44,11 +56,19 @@ class RecallEngine:
             resolve_embedder(provider, model) if self._dense else None
         )
         if not self._dense:
+            if provider or model:
+                logger.warning(
+                    "recall: explicit provider/model (%s/%s) ignored — dense "
+                    "stack unavailable, running lexical-only",
+                    provider,
+                    model,
+                )
             logger.info("recall: dense stack unavailable — lexical-only mode")
+        default_name = DB_FILENAME if self._dense else LEXICAL_DB_FILENAME
         self._db_path = (
             Path(db_path)
             if db_path
-            else self._vault / SIDECAR_DIR_NAME / DB_FILENAME
+            else self._vault / SIDECAR_DIR_NAME / default_name
         )
         self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
@@ -62,7 +82,15 @@ class RecallEngine:
         dim = self._embedder.dim if self._embedder is not None else 0
         if self._db_path.exists():
             stored_mode, stored_dim = self._probe_meta()
-            if stored_mode != mode or (self._dense and stored_dim not in (None, dim)):
+            # A None (unreadable) probe must NOT rebuild: a transient error
+            # (locked DB, second process) defaulting to a mode would wipe a
+            # healthy index. Mode mismatch is only reachable with an explicit
+            # db_path shared across modes — default paths are per-mode.
+            mode_mismatch = stored_mode is not None and stored_mode != mode
+            dim_mismatch = (
+                self._dense and stored_dim is not None and stored_dim != dim
+            )
+            if mode_mismatch or dim_mismatch:
                 logger.info(
                     "recall: store mode/dim changed (%s/%s -> %s/%s); rebuilding",
                     stored_mode,
@@ -70,32 +98,47 @@ class RecallEngine:
                     mode,
                     dim,
                 )
-                self._db_path.unlink()
+                self._remove_db_files()
         store = VaultVectorStore(self._db_path, dim, dense=self._dense)
         store.set_meta("mode", mode)
-        store.set_meta("dim", str(dim))
         if self._embedder is not None:
+            store.set_meta("dim", str(dim))
             store.set_meta("model", self._embedder.model_id)
         return store
 
-    def _probe_meta(self) -> Tuple[str, Optional[int]]:
-        """(mode, dim) stored in an existing DB. Pre-mode DBs were always dense."""
+    def _remove_db_files(self) -> None:
+        """Drop the store file AND its sqlite sidecars. A leftover hot
+        -journal would roll stale pages of the old store into the freshly
+        created file — which then gets stamped with the new mode/dim meta
+        and the corruption becomes undetectable."""
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(self._db_path) + suffix).unlink(missing_ok=True)
+
+    def _probe_meta(self) -> Tuple[Optional[str], Optional[int]]:
+        """(mode, dim) stored in an existing DB; (None, None) when unreadable.
+
+        Pre-mode DBs carry only ``dim`` and were always dense.
+        """
         import sqlite3
 
-        mode, dim = "dense", None
+        db = None
         try:
             db = sqlite3.connect(str(self._db_path))
-            for key, value in db.execute(
-                "SELECT key, value FROM meta WHERE key IN ('mode', 'dim')"
-            ).fetchall():
-                if key == "mode":
-                    mode = value
-                elif key == "dim":
-                    dim = int(value)
-            db.close()
-        except sqlite3.Error:  # pragma: no cover - defensive
-            pass
-        return mode, dim
+            rows = dict(
+                db.execute(
+                    "SELECT key, value FROM meta WHERE key IN ('mode', 'dim')"
+                ).fetchall()
+            )
+        except sqlite3.Error:
+            return None, None
+        finally:
+            if db is not None:
+                db.close()
+        try:
+            dim = int(rows["dim"]) if "dim" in rows else None
+        except ValueError:  # pragma: no cover - defensive
+            dim = None
+        return rows.get("mode", "dense"), dim
 
     def search(self, query: str, k: int = 8) -> List[Result]:
         return self._retriever.search(query, k=k)

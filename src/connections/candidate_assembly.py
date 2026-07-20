@@ -373,6 +373,22 @@ def _get_recall_engine(vault_dir: Path):
     return _ENGINE_CACHE[key]
 
 
+def reset_recall_engines() -> None:
+    """Drop (and close) the cached engines — called on settings changes via
+    seam.reset_engine. Without this, a cached engine keeps an open handle on
+    a store file that a freshly-built engine may have replaced, silently
+    writing to the orphaned inode."""
+    for eng in _ENGINE_CACHE.values():
+        close = getattr(eng, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
+    _ENGINE_CACHE.clear()
+
+
 def _dense_neighbors(
     vault_dir: Path,
     window: List[NoteRef],

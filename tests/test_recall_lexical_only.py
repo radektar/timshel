@@ -27,10 +27,20 @@ def _note(root, name, title, date, body):
 
 @pytest.fixture()
 def vault(tmp_path):
-    _note(tmp_path, "okna", "Okna i fundamenty", "14.06",
-          "Dostepnosc okien niepewna, producenci okien nie odpowiadaja, dach stoi.")
-    _note(tmp_path, "skala", "Skalowanie", "01.06",
-          "Automatyzacja daje zasieg ale gubi reczna robote.")
+    _note(
+        tmp_path,
+        "okna",
+        "Okna i fundamenty",
+        "14.06",
+        "Dostepnosc okien niepewna, producenci okien nie odpowiadaja, dach stoi.",
+    )
+    _note(
+        tmp_path,
+        "skala",
+        "Skalowanie",
+        "01.06",
+        "Automatyzacja daje zasieg ale gubi reczna robote.",
+    )
     d = tmp_path / "Timshel Digests"
     d.mkdir()
     (d / "digest.md").write_text(
@@ -46,8 +56,13 @@ def vault(tmp_path):
 
 def _chunk(seq, text):
     return Chunk(
-        note_id="n", seq=seq, text=text, parent_text=text,
-        char_start=0, char_end=len(text), version_hash="v1",
+        note_id="n",
+        seq=seq,
+        text=text,
+        parent_text=text,
+        char_start=0,
+        char_end=len(text),
+        version_hash="v1",
     )
 
 
@@ -76,9 +91,12 @@ def test_lexical_store_has_no_vec_table(tmp_path):
     store = VaultVectorStore(tmp_path / "v.db", 0, dense=False)
     store.close()
     db = sqlite3.connect(str(tmp_path / "v.db"))
-    names = {r[0] for r in db.execute(
-        "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
-    ).fetchall()}
+    names = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+        ).fetchall()
+    }
     db.close()
     assert "chunks" in names
     assert not any(n.startswith("chunk_vec") for n in names)
@@ -97,6 +115,24 @@ def test_dense_store_still_requires_vectors(tmp_path):
         store.close()
 
 
+def test_lexical_store_rejects_vectors(tmp_path):
+    # Symmetric contract: handing vectors to a lexical store is a mode-wiring
+    # bug (full embedding cost paid, vectors dropped) and must be loud.
+    store = VaultVectorStore(tmp_path / "v.db", 0, dense=False)
+    try:
+        with pytest.raises(ValueError):
+            store.upsert_note("n", [_chunk(0, "alfa")], [[0.1, 0.2]])
+    finally:
+        store.close()
+
+
+def test_dense_store_rejects_nonpositive_dim(tmp_path):
+    # dim=0 belongs to lexical mode only; a dense store built from a lexical
+    # DB's meta must fail here, not with an obscure vec0 DDL error.
+    with pytest.raises(ValueError):
+        VaultVectorStore(tmp_path / "v.db", 0, dense=True)
+
+
 # --------------------------------------------------------------------------- #
 # Retriever without an embedder.
 # --------------------------------------------------------------------------- #
@@ -105,7 +141,9 @@ def test_dense_store_still_requires_vectors(tmp_path):
 def test_retriever_lexical_only_ranks_and_scores(tmp_path):
     store = VaultVectorStore(tmp_path / "v.db", 0, dense=False)
     try:
-        store.upsert_note("okna", [_chunk(0, "producenci okien nie odpowiadaja dach stoi")])
+        store.upsert_note(
+            "okna", [_chunk(0, "producenci okien nie odpowiadaja dach stoi")]
+        )
         store.upsert_note("skala", [_chunk(0, "automatyzacja daje zasieg")])
         retriever = HybridRetriever(store, None)
         results, confidence = retriever.search_scored("producenci okien", k=5)
@@ -155,27 +193,75 @@ def test_engine_lexical_incremental_backfill(vault):
         eng.close()
 
 
-def test_engine_rebuilds_store_on_mode_change(vault):
-    # A pre-existing dense store (e.g. built before the deps vanished) must be
-    # rebuilt, not half-read: its chunk_vec table is unreadable without sqlite-vec.
-    db_path = Path(vault) / ".timshel" / "vault_vectors.db"
-    db_path.parent.mkdir(parents=True)
+def _fake_dense_db(db_path):
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(db_path))
     db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
     db.execute("INSERT INTO meta VALUES ('dim', '384')")  # pre-mode DBs were dense
-    db.execute("CREATE TABLE chunks(id INTEGER PRIMARY KEY, note_id TEXT NOT NULL, "
-               "seq INTEGER, text TEXT, parent_text TEXT, char_start INTEGER, "
-               "char_end INTEGER, version_hash TEXT)")
-    db.execute("INSERT INTO chunks(note_id, seq, text, parent_text, char_start, "
-               "char_end, version_hash) VALUES ('stale', 0, 'x', 'x', 0, 1, 'h')")
+    db.execute(
+        "CREATE TABLE chunks(id INTEGER PRIMARY KEY, note_id TEXT NOT NULL, "
+        "seq INTEGER, text TEXT, parent_text TEXT, char_start INTEGER, "
+        "char_end INTEGER, version_hash TEXT)"
+    )
+    db.execute(
+        "INSERT INTO chunks(note_id, seq, text, parent_text, char_start, "
+        "char_end, version_hash) VALUES ('stale', 0, 'x', 'x', 0, 1, 'h')"
+    )
     db.commit()
     db.close()
 
+
+def test_lexical_engine_leaves_dense_db_untouched(vault):
+    # Per-mode store files: a lexical engine must NOT wipe the dense index a
+    # dev environment built — the two coexist and a deps flip costs nothing.
+    dense_path = Path(vault) / ".timshel" / "vault_vectors.db"
+    _fake_dense_db(dense_path)
+    before = dense_path.read_bytes()
+
     eng = engine_mod.RecallEngine(vault, dense=False)
     try:
-        assert eng.count() == 0  # stale dense rows dropped, not misread
+        eng.backfill()
+        assert eng.count() > 0
     finally:
         eng.close()
+    assert dense_path.read_bytes() == before  # dense index intact
+    assert (Path(vault) / ".timshel" / "vault_lexical.db").exists()
+
+
+def test_engine_rebuilds_on_mode_mismatch_with_explicit_db_path(vault):
+    # An explicit db_path shared across modes is the one remaining mismatch
+    # path: the old-mode file must be rebuilt, not half-read (chunk_vec is
+    # unreadable without sqlite-vec) — and sqlite sidecars must go with it.
+    db_path = Path(vault) / ".timshel" / "shared.db"
+    _fake_dense_db(db_path)
+    journal = Path(str(db_path) + "-journal")
+    journal.write_bytes(b"stale hot journal")
+
+    eng = engine_mod.RecallEngine(vault, db_path=db_path, dense=False)
+    try:
+        assert eng.count() == 0  # stale dense rows dropped, not misread
+        assert not journal.exists()  # sidecar removed with the DB
+    finally:
+        eng.close()
+
+
+def test_unreadable_probe_does_not_wipe_index(vault, monkeypatch):
+    # A transient meta-read error must mean 'unknown — do not rebuild';
+    # defaulting to a mode would wipe a healthy index.
+    e1 = engine_mod.RecallEngine(vault, dense=False)
+    e1.backfill()
+    n = e1.count()
+    assert n > 0
+    e1.close()
+
+    monkeypatch.setattr(
+        engine_mod.RecallEngine, "_probe_meta", lambda self: (None, None)
+    )
+    e2 = engine_mod.RecallEngine(vault, dense=False)
+    try:
+        assert e2.count() == n  # index survived the unreadable probe
+    finally:
+        e2.close()
 
 
 def test_engine_lexical_reopen_keeps_index(vault):
