@@ -378,7 +378,13 @@ def reset_recall_engines() -> None:
     seam.reset_engine. Without this, a cached engine keeps an open handle on
     a store file that a freshly-built engine may have replaced, silently
     writing to the orphaned inode."""
-    for eng in _ENGINE_CACHE.values():
+    # Clear FIRST, close after: a concurrent _get_recall_engine then builds a
+    # fresh engine instead of grabbing one that is about to be closed. (A
+    # thread already holding an old reference is covered by the channel's
+    # never-break-assembly try/except.)
+    engines = list(_ENGINE_CACHE.values())
+    _ENGINE_CACHE.clear()
+    for eng in engines:
         close = getattr(eng, "close", None)
         if close is None:
             continue
@@ -386,7 +392,6 @@ def reset_recall_engines() -> None:
             close()
         except Exception:  # noqa: BLE001 - best-effort teardown
             pass
-    _ENGINE_CACHE.clear()
 
 
 def _dense_neighbors(
@@ -413,6 +418,11 @@ def _dense_neighbors(
         return []
     engine = _get_recall_engine(vault_dir)
     if engine is None:
+        return []
+    if getattr(engine, "lexical_only", False):
+        # Silent zeros here would read as "dense channel found nothing" in a
+        # digest quality report — name the real reason once per assembly.
+        logger.info("dense channel skipped — recall engine is lexical-only")
         return []
     older_by_name = {n.basename: n for n in older if n.basename not in exclude}
     if not older_by_name:
