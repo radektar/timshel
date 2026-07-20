@@ -7,6 +7,10 @@ KNN is sub-millisecond, so no ANN index is needed. One ``sqlite-vec`` file lives
 
 Incremental by note: ``upsert_note`` replaces a note's chunks; ``delete_note``
 drops them. Pin the ``sqlite-vec`` version you ship — it is pre-1.0.
+
+``dense=False`` opens the store without sqlite-vec at all (plain ``chunks`` table
+only) — the lexical-only degradation the bundled app runs when the optional dense
+deps aren't shipped. ``knn`` then honestly returns nothing.
 """
 
 from __future__ import annotations
@@ -39,7 +43,8 @@ class Hit:
 class VaultVectorStore:
     """sqlite-vec store: metadata in ``chunks``, vectors in the ``chunk_vec`` vec0 table."""
 
-    def __init__(self, db_path: Path, dim: int):
+    def __init__(self, db_path: Path, dim: int, *, dense: bool = True):
+        self.dense = bool(dense)
         self.dim = int(dim)
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,7 +53,8 @@ class VaultVectorStore:
         # access — sqlite3 is not safe for concurrent use of one connection.
         self._db = sqlite3.connect(str(self._path), check_same_thread=False)
         self._lock = threading.RLock()
-        self._load_extension()
+        if self.dense:
+            self._load_extension()
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS chunks("
             "id INTEGER PRIMARY KEY, note_id TEXT NOT NULL, seq INTEGER, "
@@ -56,9 +62,10 @@ class VaultVectorStore:
             "version_hash TEXT)"
         )
         self._db.execute("CREATE INDEX IF NOT EXISTS ix_chunks_note ON chunks(note_id)")
-        self._db.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(embedding float[{self.dim}])"
-        )
+        if self.dense:
+            self._db.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(embedding float[{self.dim}])"
+            )
         self._db.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         self._db.commit()
 
@@ -78,38 +85,54 @@ class VaultVectorStore:
 
         return sqlite_vec.serialize_float32(list(vec))
 
-    def upsert_note(self, note_id: str, chunks: Sequence[Chunk], vectors: Sequence[Sequence[float]]) -> None:
-        """Replace all stored chunks for ``note_id`` with a fresh set (incremental)."""
-        if len(chunks) != len(vectors):
-            raise ValueError("chunks and vectors length mismatch")
+    def upsert_note(
+        self,
+        note_id: str,
+        chunks: Sequence[Chunk],
+        vectors: Optional[Sequence[Sequence[float]]] = None,
+    ) -> None:
+        """Replace all stored chunks for ``note_id`` with a fresh set (incremental).
+
+        ``vectors`` is required in dense mode and ignored in lexical-only mode.
+        """
+        if self.dense:
+            if vectors is None:
+                raise ValueError("dense store requires vectors")
+            if len(chunks) != len(vectors):
+                raise ValueError("chunks and vectors length mismatch")
         with self._lock:
             self.delete_note(note_id)
             cur = self._db.cursor()
-            for ch, vec in zip(chunks, vectors):
-                if len(vec) != self.dim:
-                    raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")
+            for i, ch in enumerate(chunks):
                 cur.execute(
                     "INSERT INTO chunks(note_id, seq, text, parent_text, char_start, char_end, version_hash) "
                     "VALUES (?,?,?,?,?,?,?)",
                     (note_id, ch.seq, ch.text, ch.parent_text, ch.char_start, ch.char_end, ch.version_hash),
                 )
-                cur.execute(
-                    "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
-                    (cur.lastrowid, self._serialize(vec)),
-                )
+                if self.dense and vectors is not None:
+                    vec = vectors[i]
+                    if len(vec) != self.dim:
+                        raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")
+                    cur.execute(
+                        "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
+                        (cur.lastrowid, self._serialize(vec)),
+                    )
             self._db.commit()
 
     def delete_note(self, note_id: str) -> None:
         with self._lock:
             cur = self._db.cursor()
-            ids = [r[0] for r in cur.execute("SELECT id FROM chunks WHERE note_id=?", (note_id,)).fetchall()]
-            for cid in ids:
-                cur.execute("DELETE FROM chunk_vec WHERE rowid=?", (cid,))
+            if self.dense:
+                ids = [r[0] for r in cur.execute("SELECT id FROM chunks WHERE note_id=?", (note_id,)).fetchall()]
+                for cid in ids:
+                    cur.execute("DELETE FROM chunk_vec WHERE rowid=?", (cid,))
             cur.execute("DELETE FROM chunks WHERE note_id=?", (note_id,))
             self._db.commit()
 
     def knn(self, query_vec: Sequence[float], k: int = 50) -> List[Hit]:
-        """Top-``k`` chunks by vector distance (ascending)."""
+        """Top-``k`` chunks by vector distance (ascending). Empty in lexical-only mode."""
+        if not self.dense:
+            return []
         with self._lock:
             rows = self._db.execute(
                 "SELECT rowid, distance FROM chunk_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",

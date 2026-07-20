@@ -8,7 +8,7 @@ escalation (outside this package) is the only path that reaches an LLM.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.connections.candidate_assembly import _tokenize
 from src.connections.recall.embedding import EmbeddingProvider
@@ -49,12 +49,16 @@ def cosine_from_l2(distance: float) -> float:
 
 
 class HybridRetriever:
-    """Fuse dense KNN and BM25 over the vault's chunks."""
+    """Fuse dense KNN and BM25 over the vault's chunks.
+
+    ``embedder=None`` = lexical-only mode: the dense channel is skipped entirely
+    and results/confidence come from BM25 + literal term overlap alone.
+    """
 
     def __init__(
         self,
         store: VaultVectorStore,
-        embedder: EmbeddingProvider,
+        embedder: Optional[EmbeddingProvider],
         *,
         dense_k: int = 50,
         lexical_k: int = 50,
@@ -87,8 +91,11 @@ class HybridRetriever:
             return [], 0.0
         by_id: Dict[int, Hit] = {h.chunk_id: h for h in all_hits}
 
-        query_vec = self._embedder.embed_query(query)
-        dense_hits = self._store.knn(query_vec, self._dense_k)
+        if self._embedder is not None:
+            query_vec = self._embedder.embed_query(query)
+            dense_hits = self._store.knn(query_vec, self._dense_k)
+        else:
+            dense_hits = []
         dense_ids = [h.chunk_id for h in dense_hits]
         top_sim = cosine_from_l2(dense_hits[0].distance) if dense_hits else 0.0
         # Fold the note_id (the filename/title) into each chunk's lexical doc. Proper

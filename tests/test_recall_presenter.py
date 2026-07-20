@@ -91,3 +91,16 @@ def test_clean_quote_strips_markdown_and_leading_noise():
 def test_clean_quote_keeps_real_words_intact():
     # must NOT drop a legitimate lowercase-leading fragment
     assert rp.clean_quote("dostawa okien niepewna, dach stoi") == "dostawa okien niepewna, dach stoi"
+
+
+def test_auto_floor_lexical_when_no_dense_channel():
+    # Lexical-only evidence: one strong term of a two-term query (0.50) is a real
+    # hit and must show under the lexical floor, though it fails the dense one.
+    r = [_res("n", "tekst", channels="lexical")]
+    assert rp.present("q", r, confidence=0.50).is_empty is False
+    assert rp.present("q", r, confidence=0.33).is_empty is True
+
+
+def test_auto_floor_dense_unchanged():
+    r = [_res("n", "tekst", channels="dense+lexical")]
+    assert rp.present("q", r, confidence=0.50).is_empty is True  # dense floor 0.60 holds

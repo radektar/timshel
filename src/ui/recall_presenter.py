@@ -24,6 +24,12 @@ from typing import List, Optional, Sequence
 # than showing one marginal row. Module constant so it can be retuned per model.
 DEFAULT_ABSTAIN_FLOOR = 0.60
 
+# Floor when the evidence is literal term overlap alone — no dense channel to
+# rescue a paraphrase, so 0.60 starves real hits. Tuned on the same vault in
+# lexical-only mode: one strong term of a two-term query (a real hit) scores
+# 0.50; junk neighbours land ≤0.33. 0.45 splits those classes.
+LEXICAL_ABSTAIN_FLOOR = 0.45
+
 _DATE_PREFIX = re.compile(r"^(\d{2}-\d{2}-\d{2})\s*[-–]\s*(.*)$")
 
 
@@ -110,7 +116,7 @@ def present(
     results: Sequence,
     confidence: float,
     *,
-    floor: float = DEFAULT_ABSTAIN_FLOOR,
+    floor: Optional[float] = None,
     max_rows: int = 8,
     per_note_cap: int = 2,
     quote_limit: int = 240,
@@ -122,9 +128,16 @@ def present(
     UI can say "nothing about X — closest match:" honestly instead of inventing one.
     Otherwise returns up to ``max_rows`` ranked rows, capping any single note to
     ``per_note_cap`` fragments so one chatty note can't crowd out the rest.
+
+    ``floor=None`` picks the calibrated floor for the evidence at hand: when no
+    hit came through the dense channel (lexical-only engine, or dense simply found
+    nothing), confidence is pure term overlap and the lexical floor applies.
     """
     query = (query or "").strip()
     hits = list(results or [])
+    if floor is None:
+        has_dense = any("dense" in getattr(r, "channels", "") for r in hits)
+        floor = DEFAULT_ABSTAIN_FLOOR if has_dense else LEXICAL_ABSTAIN_FLOOR
 
     if not hits or confidence < floor:
         nearest = _row(hits[0], 1, quote_limit=quote_limit, dimmed=True) if hits else None

@@ -40,11 +40,14 @@ def _title_and_date(frontmatter: str, fallback: str) -> tuple:
 def index_note(
     path: Path,
     store: VaultVectorStore,
-    embedder: EmbeddingProvider,
+    embedder: Optional[EmbeddingProvider],
     *,
     note_id: Optional[str] = None,
 ) -> int:
-    """(Re)index one note. Returns the number of chunks stored (0 if empty)."""
+    """(Re)index one note. Returns the number of chunks stored (0 if empty).
+
+    ``embedder=None`` = lexical-only mode: chunks are stored without vectors.
+    """
     path = Path(path)
     nid = note_id or path.stem
     try:
@@ -66,7 +69,10 @@ def index_note(
         store.delete_note(nid)
         return 0
 
-    inputs = [f"{header}\n{c.text}" for c in chunks]
-    vectors = embedder.embed_documents(inputs)
+    if embedder is not None:
+        inputs = [f"{header}\n{c.text}" for c in chunks]
+        vectors: Optional[list] = embedder.embed_documents(inputs)
+    else:
+        vectors = None
     store.upsert_note(nid, chunks, vectors)
     return len(chunks)

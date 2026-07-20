@@ -3,6 +3,11 @@
 Search is local and LLM-free. ``backfill`` indexes an existing vault once;
 ``index_path`` keeps the store fresh at transcription time. If the configured
 embedding model changes (different dim), the store is rebuilt rather than corrupted.
+
+When the dense stack (fastembed + sqlite-vec) is unavailable — the bundled app
+ships without it and has no pip — the engine degrades to **lexical-only** mode:
+same store file, chunks without vectors, pure-BM25 search. Switching modes
+(deps appear or disappear) rebuilds the store; the background backfill refills it.
 """
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from src.connections.recall.embedding import resolve_embedder
+from src.connections.recall.embedding import EmbeddingProvider, resolve_embedder
 from src.connections.recall.indexer import index_note
 from src.connections.recall.retriever import HybridRetriever, Result
 from src.connections.recall.vector_store import VaultVectorStore
@@ -20,12 +25,26 @@ from src.logger import logger
 DB_FILENAME = "vault_vectors.db"
 
 
+def dense_stack_available() -> bool:
+    """True when the dense channel's optional deps import (fastembed + sqlite-vec)."""
+    from src.runtime_deps import ensure_importable
+
+    return ensure_importable("fastembed") and ensure_importable("sqlite_vec")
+
+
 class RecallEngine:
     """Local recall over a vault: backfill/index -> hybrid search. No LLM."""
 
-    def __init__(self, vault_dir, *, db_path=None, provider=None, model=None):
+    def __init__(
+        self, vault_dir, *, db_path=None, provider=None, model=None, dense=None
+    ):
         self._vault = Path(vault_dir)
-        self._embedder = resolve_embedder(provider, model)
+        self._dense = dense_stack_available() if dense is None else bool(dense)
+        self._embedder: Optional[EmbeddingProvider] = (
+            resolve_embedder(provider, model) if self._dense else None
+        )
+        if not self._dense:
+            logger.info("recall: dense stack unavailable — lexical-only mode")
         self._db_path = (
             Path(db_path)
             if db_path
@@ -34,31 +53,49 @@ class RecallEngine:
         self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
 
+    @property
+    def lexical_only(self) -> bool:
+        return not self._dense
+
     def _open_store(self) -> VaultVectorStore:
+        mode = "dense" if self._dense else "lexical"
+        dim = self._embedder.dim if self._embedder is not None else 0
         if self._db_path.exists():
-            existing = self._probe_dim()
-            if existing is not None and existing != self._embedder.dim:
+            stored_mode, stored_dim = self._probe_meta()
+            if stored_mode != mode or (self._dense and stored_dim not in (None, dim)):
                 logger.info(
-                    "recall: embedding dim changed (%s -> %s); rebuilding store",
-                    existing,
-                    self._embedder.dim,
+                    "recall: store mode/dim changed (%s/%s -> %s/%s); rebuilding",
+                    stored_mode,
+                    stored_dim,
+                    mode,
+                    dim,
                 )
                 self._db_path.unlink()
-        store = VaultVectorStore(self._db_path, self._embedder.dim)
-        store.set_meta("dim", str(self._embedder.dim))
-        store.set_meta("model", self._embedder.model_id)
+        store = VaultVectorStore(self._db_path, dim, dense=self._dense)
+        store.set_meta("mode", mode)
+        store.set_meta("dim", str(dim))
+        if self._embedder is not None:
+            store.set_meta("model", self._embedder.model_id)
         return store
 
-    def _probe_dim(self) -> Optional[int]:
+    def _probe_meta(self) -> Tuple[str, Optional[int]]:
+        """(mode, dim) stored in an existing DB. Pre-mode DBs were always dense."""
         import sqlite3
 
+        mode, dim = "dense", None
         try:
             db = sqlite3.connect(str(self._db_path))
-            row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+            for key, value in db.execute(
+                "SELECT key, value FROM meta WHERE key IN ('mode', 'dim')"
+            ).fetchall():
+                if key == "mode":
+                    mode = value
+                elif key == "dim":
+                    dim = int(value)
             db.close()
-            return int(row[0]) if row else None
         except sqlite3.Error:  # pragma: no cover - defensive
-            return None
+            pass
+        return mode, dim
 
     def search(self, query: str, k: int = 8) -> List[Result]:
         return self._retriever.search(query, k=k)
@@ -72,7 +109,10 @@ class RecallEngine:
 
         The seam the digest lane's dense preselection channel uses — no BM25,
         no fusion, just 'which notes live near this text in embedding space'.
+        Empty in lexical-only mode — the digest lane's other channels still run.
         """
+        if self._embedder is None:
+            return []
         hits = self._store.knn(self._embedder.embed_query(query), k=k * 4)
         out: List[str] = []
         seen = set()
