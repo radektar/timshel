@@ -314,3 +314,47 @@ def test_idf_weighted_confidence_rejects_generic_word_match(tmp_path):
         assert conf < 0.45  # generic 'spotkanie' carries almost no idf weight
     finally:
         store.close()
+
+
+def test_auto_mode_falls_back_when_dense_import_breaks(vault, monkeypatch):
+    # Passive probe can pass on a half-installed dep; auto mode must degrade
+    # to a WORKING lexical engine, not die 'unavailable'.
+    monkeypatch.setattr(engine_mod, "dense_stack_available", lambda: True)
+    monkeypatch.setattr(
+        engine_mod,
+        "resolve_embedder",
+        lambda *a, **k: (_ for _ in ()).throw(ImportError("broken onnxruntime")),
+    )
+    eng = engine_mod.RecallEngine(vault)  # auto
+    try:
+        assert eng.lexical_only
+        assert eng.backfill() == 2
+        assert eng.search("producenci okien", k=3)
+    finally:
+        eng.close()
+
+    with pytest.raises(ImportError):
+        engine_mod.RecallEngine(vault, dense=True)  # explicit stays loud
+
+
+def test_backfill_aborts_quietly_when_store_closed(vault):
+    # Engine reset mid-backfill closes the store; the run must abort after the
+    # FIRST failure instead of grinding a warning per remaining note.
+    eng = engine_mod.RecallEngine(vault, dense=False)
+    eng._store.close()
+    try:
+        assert eng.backfill() == 0  # aborted, no raise, no per-note grind
+    finally:
+        eng.close()
+
+
+def test_rebuild_store_reopens_empty_and_working(vault):
+    eng = engine_mod.RecallEngine(vault, dense=False)
+    try:
+        eng.backfill()
+        assert eng.count() > 0
+        eng.rebuild_store()
+        assert eng.count() == 0
+        assert eng.backfill() == 2  # fresh store works end to end
+    finally:
+        eng.close()

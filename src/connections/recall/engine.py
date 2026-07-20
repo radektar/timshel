@@ -61,10 +61,29 @@ class RecallEngine:
         self, vault_dir, *, db_path=None, provider=None, model=None, dense=None
     ):
         self._vault = Path(vault_dir)
-        self._dense = dense_stack_available() if dense is None else bool(dense)
-        self._embedder: Optional[EmbeddingProvider] = (
-            resolve_embedder(provider, model) if self._dense else None
-        )
+        auto = dense is None
+        self._dense = dense_stack_available() if auto else bool(dense)
+        self._embedder: Optional[EmbeddingProvider] = None
+        if self._dense:
+            try:
+                self._embedder = resolve_embedder(provider, model)
+                self._db_path = self._resolve_db_path(db_path)
+                self._store = self._open_store()
+            except sqlite3.OperationalError:
+                raise  # locked/busy — transient, not a reason to change mode
+            except Exception as exc:
+                # A passive probe can pass on a half-installed dep (spec
+                # present, body unimportable) — in auto mode degrade to a
+                # WORKING lexical engine instead of dying 'unavailable'.
+                if not auto:
+                    raise
+                logger.warning(
+                    "recall: dense stack failed to load (%s) — falling back "
+                    "to lexical-only",
+                    exc,
+                )
+                self._dense = False
+                self._embedder = None
         if not self._dense:
             if provider or model:
                 logger.warning(
@@ -74,14 +93,15 @@ class RecallEngine:
                     model,
                 )
             logger.info("recall: dense stack unavailable — lexical-only mode")
-        default_name = DB_FILENAME if self._dense else LEXICAL_DB_FILENAME
-        self._db_path = (
-            Path(db_path)
-            if db_path
-            else self._vault / SIDECAR_DIR_NAME / default_name
-        )
-        self._store = self._open_store()
+            self._db_path = self._resolve_db_path(db_path)
+            self._store = self._open_store()
         self._retriever = HybridRetriever(self._store, self._embedder)
+
+    def _resolve_db_path(self, db_path) -> Path:
+        if db_path:
+            return Path(db_path)
+        name = DB_FILENAME if self._dense else LEXICAL_DB_FILENAME
+        return self._vault / SIDECAR_DIR_NAME / name
 
     @property
     def lexical_only(self) -> bool:
@@ -127,6 +147,21 @@ class RecallEngine:
             store.set_meta("dim", str(dim))
             store.set_meta("model", self._embedder.model_id)
         return store
+
+    def rebuild_store(self) -> None:
+        """Drop the store file and reopen it empty — the QUERY-TIME corruption
+        escape hatch. An iCloud-synced vault can rewrite pages under us,
+        leaving a file that opens cleanly but fails every search/index with
+        'database disk image is malformed'; without this the bundle stays
+        broken until the user hand-deletes a hidden dotfile. Callers restart
+        the background backfill to refill the fresh store."""
+        try:
+            self._store.close()
+        except Exception:  # noqa: BLE001 - the store may already be broken
+            pass
+        self._remove_db_files()
+        self._store = self._open_store()
+        self._retriever = HybridRetriever(self._store, self._embedder)
 
     def _remove_db_files(self) -> None:
         """Drop the store file AND its sqlite sidecars. A leftover hot
@@ -213,6 +248,13 @@ class RecallEngine:
                 else:
                     self.index_path(path)
                     indexed += 1
+            except sqlite3.ProgrammingError as exc:
+                # Store closed under the run (engine reset mid-backfill) —
+                # every remaining note fails identically; abort quietly with
+                # ONE line instead of a warning per note. The restarted pass
+                # redoes the work incrementally.
+                logger.info("recall backfill aborted (%s)", exc)
+                break
             except Exception as exc:  # noqa: BLE001
                 logger.warning("recall backfill failed for %s: %s", path, exc)
             if progress:

@@ -134,21 +134,33 @@ class HybridRetriever:
 
         confidence = top_sim
         q_tokens = set(_tokenize(query))
-        total_w = sum(idf.get(t, 0.0) for t in q_tokens)
-        if results and q_tokens and total_w > 0:
+        if results and q_tokens:
             # Scan the top few fused hits, not just rank 0: a named-entity/title match
             # can land at rank ≥2 behind dense chunks, and checking only results[0]
             # would miss it and wrongly abstain — the exact case this net exists for.
-            # Idf-weighted, not a raw token count: on a two-token query a shared
-            # vault-frequent word ("spotkanie") must not score the same 0.5 as a
-            # matched rare name — the rare term carries the evidence.
-            best_overlap = max(
-                sum(
-                    idf.get(t, 0.0)
-                    for t in q_tokens & set(_tokenize(f"{r.note_id}\n{r.quote}"))
+            doc_tokens = [
+                set(_tokenize(f"{r.note_id}\n{r.quote}")) for r in results[:5]
+            ]
+            if self._embedder is None:
+                # Lexical-only: idf-weighted, not a raw token count — on a
+                # two-token query a shared vault-frequent word ("spotkanie")
+                # must not score the same 0.5 as a matched rare name. The
+                # 0.45 lexical floor is calibrated against THIS metric.
+                total_w = sum(idf.get(t, 0.0) for t in q_tokens)
+                if total_w > 0:
+                    best_overlap = max(
+                        sum(idf.get(t, 0.0) for t in q_tokens & d) / total_w
+                        for d in doc_tokens
+                    )
+                    confidence = max(confidence, best_overlap)
+            else:
+                # Hybrid: keep the ORIGINAL raw fraction — the 0.60 dense
+                # floor was tuned against it, and idf-weighting here would
+                # silently retune it (one out-of-vocabulary typo'd term gets
+                # corpus-max idf and sinks a legitimate named-entity match
+                # that the dense channel won't rescue).
+                best_overlap = max(
+                    len(q_tokens & d) / len(q_tokens) for d in doc_tokens
                 )
-                / total_w
-                for r in results[:5]
-            )
-            confidence = max(confidence, best_overlap)
+                confidence = max(confidence, best_overlap)
         return results, confidence

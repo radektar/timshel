@@ -63,10 +63,18 @@ def test_search_safe_is_the_two_tuple_wrapper(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_seam_engine():
-    """Isolate the module-global engine between tests."""
+    """Isolate ALL of seam's module globals between tests — a leaked
+    _INDEX_STARTED=True would make bare reset_engine() calls spawn a REAL
+    backfill thread over the developer's actual vault."""
     seam._ENGINE = None
+    seam._INDEX_STARTED = False
+    seam._BACKFILL_ACTIVE = False
+    seam._BACKFILL_PENDING = False
     yield
     seam._ENGINE = None
+    seam._INDEX_STARTED = False
+    seam._BACKFILL_ACTIVE = False
+    seam._BACKFILL_PENDING = False
 
 
 def test_engine_singleton_concurrent_init(monkeypatch):
@@ -181,3 +189,91 @@ def test_lexical_only_unknown_is_none():
 
     seam._ENGINE = _Eng()
     assert seam.lexical_only() is True
+
+
+def test_start_background_index_single_flight(monkeypatch):
+    # N rapid requests must not stack N threads: while a pass runs, later
+    # calls coalesce into exactly ONE more pass with the current engine.
+    import threading as th
+
+    gate = th.Event()
+    passes = {"count": 0}
+
+    def _fake_backfill(engine, state, incremental=True):
+        passes["count"] += 1
+        gate.wait(timeout=5)
+
+    monkeypatch.setattr(seam, "run_backfill", _fake_backfill)
+    monkeypatch.setattr(seam, "_engine", lambda: object())
+
+    seam.start_background_index()  # pass 1 starts and blocks on the gate
+    for _ in range(20):
+        if passes["count"] == 1:
+            break
+        import time
+
+        time.sleep(0.05)
+    assert passes["count"] == 1
+
+    seam.start_background_index()  # coalesces
+    seam.start_background_index()  # coalesces into the SAME single pending pass
+    assert seam._BACKFILL_PENDING is True
+
+    gate.set()
+    for _ in range(40):
+        if not seam._BACKFILL_ACTIVE:
+            break
+        import time
+
+        time.sleep(0.05)
+    assert passes["count"] == 2  # 1 initial + 1 coalesced, never 3
+    assert seam._BACKFILL_ACTIVE is False
+
+
+def test_search_detailed_heals_corrupt_store(monkeypatch):
+    # Query-time corruption (iCloud rewrote pages) must trigger a rebuild and
+    # a backfill restart — not a permanent 'unavailable'.
+    import sqlite3
+
+    calls = {"rebuild": 0, "restart": 0}
+
+    class _CorruptEngine:
+        def count(self):
+            return 5
+
+        def search_scored(self, query, k=8):
+            raise sqlite3.DatabaseError("database disk image is malformed")
+
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    monkeypatch.setattr(seam, "_engine", lambda: _CorruptEngine())
+    seam._ENGINE = _CorruptEngine()
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: calls.__setitem__("restart", calls["restart"] + 1),
+    )
+
+    assert seam.search_detailed("pytanie") == ([], 0.0, "unavailable")
+    assert calls["rebuild"] == 1
+    assert calls["restart"] == 1
+
+
+def test_heal_ignores_transient_lock_errors(monkeypatch):
+    # OperationalError (locked/busy) is transient — wiping the index on it
+    # would destroy healthy data.
+    import sqlite3
+
+    calls = {"rebuild": 0}
+
+    class _Eng:
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    seam._ENGINE = _Eng()
+    assert (
+        seam._heal_if_corrupt(sqlite3.OperationalError("database is locked")) is False
+    )
+    assert seam._heal_if_corrupt(RuntimeError("boom")) is False
+    assert calls["rebuild"] == 0

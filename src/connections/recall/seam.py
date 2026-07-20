@@ -27,19 +27,41 @@ _STATE = IndexingState()
 # True once the app launched the background index — reset_engine only restarts
 # it then, so bare resets (tests, CLI) never spawn a surprise indexing thread.
 _INDEX_STARTED = False
+# Bumped by reset_engine: a construction that started before the bump is
+# discarded instead of published, so a reset never has to WAIT on a slow
+# in-flight engine build (model load/download) to invalidate it.
+_ENGINE_GEN = 0
+# Single-flight backfill: one worker at a time, later requests coalesce into
+# one more pass — N rapid settings saves must not stack N threads racing on
+# the shared IndexingState.
+_BACKFILL_LOCK = threading.Lock()
+_BACKFILL_ACTIVE = False
+_BACKFILL_PENDING = False
 
 
 def _engine():
     global _ENGINE
     if _ENGINE is not None:  # unlocked fast path — plain reference read
         return _ENGINE
-    with _ENGINE_LOCK:
-        if _ENGINE is None:
+    while True:
+        with _ENGINE_LOCK:
+            if _ENGINE is not None:
+                return _ENGINE
+            gen = _ENGINE_GEN
             from src.config.config import get_config
             from src.connections.recall.engine import RecallEngine
 
-            _ENGINE = RecallEngine(get_config().TRANSCRIBE_DIR)
-        return _ENGINE
+            eng = RecallEngine(get_config().TRANSCRIBE_DIR)
+            if gen == _ENGINE_GEN:
+                _ENGINE = eng
+                return eng
+        # A reset landed mid-construction: this engine was built from the OLD
+        # config — publishing it would resurrect the old vault. Discard and
+        # rebuild fresh.
+        try:
+            eng.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def index_state() -> IndexingState:
@@ -53,20 +75,68 @@ def start_background_index() -> None:
     First launch embeds the whole vault (incremental on later runs), so recall "just
     works" without a manual backfill. Constructing the engine may download the model,
     which is exactly why this runs off the main thread. Best-effort; never raises.
-    """
-    import threading
 
-    global _INDEX_STARTED
+    Single-flight: while a pass is running, further calls just request ONE more
+    pass with the then-current engine (a reset mid-run would otherwise stack
+    threads all writing the shared IndexingState). ``_STATE.begin()`` fires at
+    request time, not after the engine builds — a vault switch must not keep
+    showing the OLD vault's READY while the new engine constructs.
+    """
+    global _INDEX_STARTED, _BACKFILL_ACTIVE, _BACKFILL_PENDING
     _INDEX_STARTED = True
+    with _BACKFILL_LOCK:
+        if _BACKFILL_ACTIVE:
+            _BACKFILL_PENDING = True
+            _STATE.begin()
+            return
+        _BACKFILL_ACTIVE = True
+    _STATE.begin()
 
     def _run():
-        try:
-            run_backfill(_engine(), _STATE, incremental=True)
-        except Exception as exc:  # noqa: BLE001 - pragma: no cover
-            logger.debug("recall background index failed to start: %s", exc)
-            _STATE.failed(exc)
+        global _BACKFILL_ACTIVE, _BACKFILL_PENDING
+        while True:
+            try:
+                run_backfill(_engine(), _STATE, incremental=True)
+            except Exception as exc:  # noqa: BLE001 - pragma: no cover
+                logger.debug("recall background index failed to start: %s", exc)
+                _STATE.failed(exc)
+            with _BACKFILL_LOCK:
+                if _BACKFILL_PENDING:
+                    _BACKFILL_PENDING = False
+                    continue  # one more pass with the current engine
+                _BACKFILL_ACTIVE = False
+                return
 
     threading.Thread(target=_run, name="RecallBackfill", daemon=True).start()
+
+
+def _heal_if_corrupt(exc) -> bool:
+    """Rebuild the store when the FILE itself is bad at query time.
+
+    An iCloud-synced vault can rewrite pages under us: the store then opens
+    cleanly but every operation raises 'database disk image is malformed' —
+    permanently, across relaunches, with no CLI escape hatch in the bundle.
+    OperationalError (locked/busy) is transient and never a reason to wipe.
+    Returns True when a rebuild was triggered (backfill restarted).
+    """
+    import sqlite3
+
+    if not isinstance(exc, sqlite3.DatabaseError) or isinstance(
+        exc, sqlite3.OperationalError
+    ):
+        return False
+    eng = _ENGINE
+    rebuild = getattr(eng, "rebuild_store", None)
+    if rebuild is None:
+        return False
+    logger.warning("recall: store corrupt at query time (%s); rebuilding", exc)
+    try:
+        rebuild()
+    except Exception as exc2:  # noqa: BLE001
+        logger.warning("recall: store rebuild failed: %s", exc2)
+        return False
+    start_background_index()
+    return True
 
 
 def index_transcript_safe(path) -> None:
@@ -75,6 +145,7 @@ def index_transcript_safe(path) -> None:
         _engine().index_path(Path(path))
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall index_transcript failed: %s", exc)
+        _heal_if_corrupt(exc)
 
 
 def search_detailed(query: str, k: int = 8):
@@ -99,12 +170,14 @@ def search_detailed(query: str, k: int = 8):
             return [], 0.0, "empty"
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall count failed: %s", exc)
+        _heal_if_corrupt(exc)
         return [], 0.0, "unavailable"
     try:
         results, confidence = eng.search_scored(query, k=k)
         return results, confidence, "ok"
     except Exception as exc:  # noqa: BLE001
         logger.debug("recall search failed: %s", exc)
+        _heal_if_corrupt(exc)
         return [], 0.0, "unavailable"
 
 
@@ -134,15 +207,25 @@ def reset_engine() -> None:
     and a vault-folder change needs the NEW vault indexed — relaunch was
     otherwise the only path that ever re-triggered the backfill.
     """
-    global _ENGINE
-    with _ENGINE_LOCK:
-        had_engine = _ENGINE is not None
-        if _ENGINE is not None:
-            try:
-                _ENGINE.close()
-            except Exception:  # noqa: BLE001
-                pass
+    global _ENGINE, _ENGINE_GEN
+    _ENGINE_GEN += 1  # invalidate any in-flight construction (old config)
+    # Bounded wait: if a slow construction holds the lock (model download),
+    # do NOT beachball the caller (settings save runs on the main thread) —
+    # the generation bump already guarantees that build gets discarded.
+    acquired = _ENGINE_LOCK.acquire(timeout=1.0)
+    old = None
+    try:
+        old = _ENGINE
         _ENGINE = None
+    finally:
+        if acquired:
+            _ENGINE_LOCK.release()
+    had_engine = old is not None
+    if old is not None:
+        try:
+            old.close()
+        except Exception:  # noqa: BLE001
+            pass
     # The digest lane keeps its own engine cache — reset it too, or it keeps
     # an open handle on a store file a fresh engine may have replaced.
     try:
