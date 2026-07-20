@@ -3,6 +3,29 @@
 Data: 2026-07-18 (wieczór) · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
+## Runda testów ręcznych (2026-07-20) — poprawki + spójność wizualna
+
+Z testów na drugim Macu (DMG serii dzisiejszej): (A.2) link „Przejdź do
+transkrypcji" nie działał — root cause: strona ładowana `loadHTMLString` bez
+realnego URL-a, kotwice `#` zawodzą; fix: render do pliku +
+`loadFileURL` (przy okazji uproszczona polityka nawigacji — znikła cała
+heurystyka `about:blank`). Tytuł okna „Timshel — Konstelacja" → **„Timshel"**
+(Konstelacja = wewnętrzna nazwa kodowa, wyciekła). **Review wizualny
+(/visual-identity):** rail był zimnym, płaskim slabem (wash `black @ 0.16`
++ blask przesunięty pod czytnik) ze schodkiem na szwie, a linie miały 6
+różnych alf — fix: usunięty wash (rail = ta sama ciągła powierzchnia),
+**skala neutralna** (jeden `_HAIRLINE_A` + 3 fille jako tokeny) egzekwowana
+na wszystkich cienkich liniach. PR #78/#79. Suita **1126** + mypy, SMOKE PASS.
+**DMG `a691e6af…` (stamp `e29b8bb`) na iCloud `Timshel/`** — do testów A–E.
+Checklist: `Docs/READER-TEST-CHECKLIST.md`.
+
+**ZNANY, NIENAPRAWIONY (osobna praca, plan zatwierdzony): wyszukiwarka
+(Zapytałeś/⌘K) nie działa w żadnym bundlu** — silnik recall wymaga
+`fastembed`+`sqlite-vec`+`numpy`, których bundel nie pakuje (pip-autoinstall
+wyłączony). Fix = tryb **lexical-only** (BM25, czysty Python): degradacja
+silnika bez embeddera → BM25 po treści; lekki indeks tekstowy niezależny od
+bazy wektorowej; retriever pomija kanał gęsty; UI działa. Bramka: przed kodem.
+
 ## Ostatnia zmiana: czytnik markdown w oknie — WDROŻONY
 
 Branch `feat/markdown-reader` (plan: `Docs/future/markdown-reader-plan.md`,
