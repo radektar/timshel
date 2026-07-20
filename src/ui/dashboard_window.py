@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 from src.config import config
+from src.config.defaults import APP_SUPPORT_DIR
 from src.connections import handoff as ho
 from src.connections import validation_signal as vsig
 from src.logger import logger
@@ -67,7 +68,7 @@ try:
         NSWindowStyleMaskResizable,
         NSWindowStyleMaskTitled,
     )
-    from Foundation import NSObject
+    from Foundation import NSObject, NSURL
 
     _APPKIT_AVAILABLE = True
 except ImportError:  # pragma: no cover - non-mac
@@ -83,14 +84,13 @@ try:  # WKWebView hosts the in-app note reader; optional like AppKit.
     try:
         from WebKit import WKNavigationActionPolicyAllow as _WK_ALLOW
         from WebKit import WKNavigationActionPolicyCancel as _WK_CANCEL
-        from WebKit import WKNavigationTypeLinkActivated as _WK_LINK_CLICK
     except ImportError:  # pragma: no cover - constants absent in old wrappers
-        _WK_ALLOW, _WK_CANCEL, _WK_LINK_CLICK = 1, 0, 0
+        _WK_ALLOW, _WK_CANCEL = 1, 0
 
     _WEBKIT_AVAILABLE = True
 except ImportError:  # pragma: no cover - non-mac / stripped env
     _WEBKIT_AVAILABLE = False
-    _WK_ALLOW, _WK_CANCEL, _WK_LINK_CLICK = 1, 0, 0
+    _WK_ALLOW, _WK_CANCEL = 1, 0
 
 
 # Dimensions (points).
@@ -123,6 +123,13 @@ _R_CONTROL = 6.0  # buttons, segment track, CTA, icons
 _R_CHECK = 5.0  # checkbox
 _R_ROW = 12.0  # rows, cards
 _R_CARD = 14.0  # rail card / panels
+
+# The reader is loaded via loadFileURL (not loadHTMLString with a nil
+# baseURL): a page with no real document URL makes in-page "#anchor" jumps
+# ("Przejdź do transkrypcji") unreliable on some WebKit builds. A real
+# file:// URL fixes that outright and also makes the navigation policy exact
+# — content can never spoof "this is our own page" (see the policy delegate).
+_READER_HTML_PATH = APP_SUPPORT_DIR / "runtime" / "reader" / "note.html"
 
 
 def _initial_window_size():
@@ -953,6 +960,7 @@ if _APPKIT_AVAILABLE:
             self._note_return_mode = "insight"  # mode „← Wróć" exits to
             self._webview = None  # persistent WKWebView (note mode)
             self._webview_path = None  # note whose HTML the webview holds
+            self._reader_page_url = None  # the loaded file:// URL, for policy
             self._recall = None  # RecallResults view-model when in recall mode
             self._recall_note_ids: List[str] = []  # tag -> note_id for ↗ open
             self._query = ""  # last query text (persists across rebuilds)
@@ -991,7 +999,7 @@ if _APPKIT_AVAILABLE:
             win = _DashWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, win_w, win_h), mask, NSBackingStoreBuffered, False
             )
-            win.setTitle_("Timshel — Konstelacja")
+            win.setTitle_("Timshel")
             win.setReleasedWhenClosed_(False)
             win.setTitlebarAppearsTransparent_(True)
             win.setMovableByWindowBackground_(True)
@@ -2056,7 +2064,13 @@ if _APPKIT_AVAILABLE:
             else:
                 web.setFrame_(web_rect)
             if self._webview_path != self._note_path:
-                web.loadHTMLString_baseURL_(self._note_html, None)
+                _READER_HTML_PATH.parent.mkdir(parents=True, exist_ok=True)
+                _READER_HTML_PATH.write_text(self._note_html, encoding="utf-8")
+                file_url = NSURL.fileURLWithPath_(str(_READER_HTML_PATH))
+                web.loadFileURL_allowingReadAccessToURL_(
+                    file_url, _READER_HTML_PATH.parent
+                )
+                self._reader_page_url = str(file_url.absoluteString())
                 self._webview_path = self._note_path
             view.addSubview_(web)
 
@@ -3887,6 +3901,7 @@ if _APPKIT_AVAILABLE:
             self._note_stack = []
             self._webview = None
             self._webview_path = None
+            self._reader_page_url = None
 
         def noteBackClicked_(self, _sender):
             # Walk the breadcrumb until an entry actually renders — a note
@@ -3915,34 +3930,23 @@ if _APPKIT_AVAILABLE:
         def webView_decidePolicyForNavigationAction_decisionHandler_(
             self, _web, action, handler
         ):
-            """Reader navigation policy: fragment jumps stay in the page,
-            wikilinks re-render in-app, http(s)/mailto/obsidian go to the
-            system, and everything else is denied (self-contained page)."""
+            """Reader navigation policy: our own page (+ in-page #anchor jumps)
+            stays in the webview, wikilinks re-render in-app, http(s)/mailto/
+            obsidian go to the system, and everything else is denied (the
+            page is fully self-contained). The page is loaded via a real
+            file:// URL (loadFileURL), so "is this our own page" is an exact
+            string match — no navigationType heuristics needed, and no note
+            content can spoof it."""
             try:
                 url = action.request().URL()
                 s = str(url.absoluteString()) if url is not None else ""
             except Exception:  # pragma: no cover - defensive
                 handler(_WK_CANCEL)
                 return
-            try:
-                link_click = int(action.navigationType()) == _WK_LINK_CLICK
-            except Exception:
-                # If the bridge can't tell, keep the reader ALIVE: classifying
-                # everything as a click would also cancel the initial
-                # loadHTMLString navigation and permanently blank the pane.
-                # Worst case of allowing here: a clicked [x](about:blank)
-                # blanks one view, recoverable with „← Wróć".
-                logger.warning("navigationType unavailable — assuming page load")
-                link_click = False
-            if s.startswith("about:blank#"):
-                handler(_WK_ALLOW)  # in-document #anchor jump
+            page = getattr(self, "_reader_page_url", None)
+            if page and (s == page or s.startswith(page + "#")):
+                handler(_WK_ALLOW)
                 return
-            if (s == "" or s.startswith("about:")) and not link_click:
-                handler(_WK_ALLOW)  # the loadHTMLString page itself
-                return
-            # From here on everything is denied in-webview; some schemes are
-            # re-dispatched to the system instead. (A content link like
-            # [x](about:blank) is a link_click and lands here — denied.)
             handler(_WK_CANCEL)
             target = nrend.wikilink_target(s)
             if target is not None:
