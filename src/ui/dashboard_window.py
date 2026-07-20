@@ -2786,7 +2786,11 @@ if _APPKIT_AVAILABLE:
             lex_cb = self._callbacks.get("recall_lexical_only")
             if lex_cb is not None:
                 try:
-                    lexical = bool(lex_cb())
+                    val = lex_cb()
+                    # None = unknown (e.g. engine reset mid-search) — keep it,
+                    # so present() falls back to channel inference instead of
+                    # treating unknown as "dense" and misfiring the floor.
+                    lexical = None if val is None else bool(val)
                 except Exception:  # pragma: no cover - defensive
                     lexical = None
             self._pending_recall = {

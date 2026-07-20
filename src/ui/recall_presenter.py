@@ -25,9 +25,11 @@ from typing import List, Optional, Sequence
 DEFAULT_ABSTAIN_FLOOR = 0.60
 
 # Floor when the evidence is literal term overlap alone — no dense channel to
-# rescue a paraphrase, so 0.60 starves real hits. Tuned on the same vault in
-# lexical-only mode: one strong term of a two-term query (a real hit) scores
-# 0.50; junk neighbours land ≤0.33. 0.45 splits those classes.
+# rescue a paraphrase, so 0.60 starves real hits. The overlap is idf-weighted
+# (see HybridRetriever), so a shared vault-frequent word can't fake relevance.
+# Tuned on the real 176-note vault: genuine hits land ≥0.49 (a matched rare
+# term carries the weight), junk one-generic-word matches ≤0.42. 0.45 splits
+# those classes.
 LEXICAL_ABSTAIN_FLOOR = 0.45
 
 _DATE_PREFIX = re.compile(r"^(\d{2}-\d{2}-\d{2})\s*[-–]\s*(.*)$")

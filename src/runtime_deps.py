@@ -79,6 +79,21 @@ def _is_bundled_app() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def importable(module_name: str) -> bool:
+    """Passive probe: is the module importable (runtime-deps dir included)?
+
+    Never installs and never imports the module body — safe on hot paths
+    where ``ensure_importable``'s pip fallback would block on the network.
+    """
+    _ensure_runtime_dir_on_path()
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):  # pragma: no cover - defensive
+        return False
+
+
 def ensure_importable(module_name: str) -> bool:
     """Ensure module can be imported, installing best-effort if needed."""
     _ensure_runtime_dir_on_path()

@@ -138,3 +138,46 @@ def test_reset_engine_clears_digest_engine_cache(monkeypatch):
     seam.reset_engine()
     assert ca._ENGINE_CACHE == {}
     assert eng.closed is True
+
+
+def test_reset_engine_restarts_background_index_only_after_launch(monkeypatch):
+    # A reset mid-backfill leaves READY over a partial index, and a vault
+    # change needs the new vault indexed — reset must restart the background
+    # index, but ONLY in a process that actually launched it (never in bare
+    # test/CLI resets).
+    calls = {"count": 0}
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: calls.__setitem__("count", calls["count"] + 1),
+    )
+
+    class _Eng:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(seam, "_INDEX_STARTED", False)
+    seam._ENGINE = _Eng()
+    seam.reset_engine()
+    assert calls["count"] == 0  # index never launched -> no restart
+
+    monkeypatch.setattr(seam, "_INDEX_STARTED", True)
+    seam._ENGINE = _Eng()
+    seam.reset_engine()
+    assert calls["count"] == 1  # launched -> reset restarts it
+
+    seam.reset_engine()  # no engine cached -> nothing to restart
+    assert calls["count"] == 1
+
+
+def test_lexical_only_unknown_is_none():
+    # 'Unknown' must stay distinguishable from 'dense': a False here would
+    # foreclose the presenter's channel inference and misapply the 0.60 floor.
+    seam._ENGINE = None
+    assert seam.lexical_only() is None
+
+    class _Eng:
+        lexical_only = True
+
+    seam._ENGINE = _Eng()
+    assert seam.lexical_only() is True

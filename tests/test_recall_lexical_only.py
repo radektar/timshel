@@ -285,3 +285,32 @@ def test_engine_auto_detects_missing_dense_stack(vault, monkeypatch):
         assert eng.search("producenci okien", k=3)
     finally:
         eng.close()
+
+
+def test_corrupt_store_file_self_heals(vault):
+    # The bundle has no CLI escape hatch: a corrupt store must rebuild once,
+    # not crash engine construction forever.
+    db_path = Path(vault) / ".timshel" / "vault_lexical.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.write_bytes(b"this is not a sqlite database at all")
+
+    eng = engine_mod.RecallEngine(vault, dense=False)
+    try:
+        assert eng.count() == 0  # fresh store
+        assert eng.backfill() == 2  # and it works
+    finally:
+        eng.close()
+
+
+def test_idf_weighted_confidence_rejects_generic_word_match(tmp_path):
+    # Two-token query sharing only a vault-frequent generic word must score
+    # low — a raw matched-token count would fake 0.5 and clear the floor.
+    store = VaultVectorStore(tmp_path / "v.db", 0, dense=False)
+    try:
+        for i in range(8):
+            store.upsert_note(f"n{i}", [_chunk(0, f"spotkanie zespolu numer {i}")])
+        retriever = HybridRetriever(store, None)
+        _res, conf = retriever.search_scored("spotkanie zyrafa", k=5)
+        assert conf < 0.45  # generic 'spotkanie' carries almost no idf weight
+    finally:
+        store.close()

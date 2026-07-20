@@ -359,18 +359,26 @@ def _graph_neighbors(
 _ENGINE_CACHE: Dict[str, object] = {}
 
 
+_CACHE_MISS = object()
+
+
 def _get_recall_engine(vault_dir: Path):
     """Cached RecallEngine for the dense channel; None when unavailable."""
     key = str(vault_dir)
-    if key not in _ENGINE_CACHE:
+    # Single .get with a sentinel — a concurrent reset_recall_engines() between
+    # a membership check and a lookup would otherwise raise KeyError straight
+    # through assemble_candidates (this call sits outside the channel's guard).
+    eng = _ENGINE_CACHE.get(key, _CACHE_MISS)
+    if eng is _CACHE_MISS:
         try:
             from src.connections.recall.engine import RecallEngine
 
-            _ENGINE_CACHE[key] = RecallEngine(vault_dir)
+            eng = RecallEngine(vault_dir)
         except Exception as exc:  # noqa: BLE001 - channel must never break assembly
             logger.warning("dense channel unavailable (%s)", exc)
-            _ENGINE_CACHE[key] = None
-    return _ENGINE_CACHE[key]
+            eng = None
+        _ENGINE_CACHE[key] = eng
+    return eng
 
 
 def reset_recall_engines() -> None:
@@ -421,8 +429,9 @@ def _dense_neighbors(
         return []
     if getattr(engine, "lexical_only", False):
         # Silent zeros here would read as "dense channel found nothing" in a
-        # digest quality report — name the real reason once per assembly.
-        logger.info("dense channel skipped — recall engine is lexical-only")
+        # digest quality report. Debug level: the eval harness replays assembly
+        # hundreds of times, and the engine already logs its mode once at init.
+        logger.debug("dense channel skipped — recall engine is lexical-only")
         return []
     older_by_name = {n.basename: n for n in older if n.basename not in exclude}
     if not older_by_name:

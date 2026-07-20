@@ -102,10 +102,11 @@ class HybridRetriever:
         # nouns, names and codes often live in the title but barely in the spoken body
         # (whisper rarely repeats a name) — without this, BM25 can't match them and the
         # channel loses exactly the named-entity queries it's meant to win.
-        lexical_ids = bm25_rank(
+        lexical_ids, idf = bm25_rank(
             query,
             [(h.chunk_id, f"{h.note_id}\n{h.text}") for h in all_hits],
             limit=self._lexical_k,
+            with_idf=True,
         )
 
         dense_set, lex_set = set(dense_ids), set(lexical_ids)
@@ -133,12 +134,20 @@ class HybridRetriever:
 
         confidence = top_sim
         q_tokens = set(_tokenize(query))
-        if results and q_tokens:
+        total_w = sum(idf.get(t, 0.0) for t in q_tokens)
+        if results and q_tokens and total_w > 0:
             # Scan the top few fused hits, not just rank 0: a named-entity/title match
             # can land at rank ≥2 behind dense chunks, and checking only results[0]
             # would miss it and wrongly abstain — the exact case this net exists for.
+            # Idf-weighted, not a raw token count: on a two-token query a shared
+            # vault-frequent word ("spotkanie") must not score the same 0.5 as a
+            # matched rare name — the rare term carries the evidence.
             best_overlap = max(
-                len(q_tokens & set(_tokenize(f"{r.note_id}\n{r.quote}"))) / len(q_tokens)
+                sum(
+                    idf.get(t, 0.0)
+                    for t in q_tokens & set(_tokenize(f"{r.note_id}\n{r.quote}"))
+                )
+                / total_w
                 for r in results[:5]
             )
             confidence = max(confidence, best_overlap)

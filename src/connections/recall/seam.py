@@ -24,6 +24,9 @@ _ENGINE_LOCK = threading.Lock()
 # Shared, process-wide index status: the background backfill writes it, the menu chip
 # and the window's partial banner read it (via index_state()).
 _STATE = IndexingState()
+# True once the app launched the background index — reset_engine only restarts
+# it then, so bare resets (tests, CLI) never spawn a surprise indexing thread.
+_INDEX_STARTED = False
 
 
 def _engine():
@@ -52,6 +55,9 @@ def start_background_index() -> None:
     which is exactly why this runs off the main thread. Best-effort; never raises.
     """
     import threading
+
+    global _INDEX_STARTED
+    _INDEX_STARTED = True
 
     def _run():
         try:
@@ -108,19 +114,29 @@ def search_safe(query: str, k: int = 8):
     return results, confidence
 
 
-def lexical_only() -> bool:
-    """True when the ACTIVE engine runs lexical-only (dense stack absent).
-
-    Reads the cached singleton without constructing one — call it after a
-    search, when the engine already exists. False when unknown.
+def lexical_only():
+    """The ACTIVE engine's mode: True (lexical-only), False (dense), or
+    ``None`` when no engine is cached — 'unknown' must stay distinguishable,
+    because a False here forecloses the presenter's channel-based inference
+    and would apply the dense abstain floor to lexical evidence.
     """
-    return bool(getattr(_ENGINE, "lexical_only", False))
+    eng = _ENGINE
+    if eng is None:
+        return None
+    return bool(getattr(eng, "lexical_only", False))
 
 
 def reset_engine() -> None:
-    """Drop the cached engine (e.g. after a settings change)."""
+    """Drop the cached engine (e.g. after a settings change).
+
+    Restarts the background index when an engine was active: the reset may
+    have closed a store mid-backfill (leaving READY over a partial index),
+    and a vault-folder change needs the NEW vault indexed — relaunch was
+    otherwise the only path that ever re-triggered the backfill.
+    """
     global _ENGINE
     with _ENGINE_LOCK:
+        had_engine = _ENGINE is not None
         if _ENGINE is not None:
             try:
                 _ENGINE.close()
@@ -135,3 +151,5 @@ def reset_engine() -> None:
         reset_recall_engines()
     except Exception as exc:  # noqa: BLE001 - pragma: no cover
         logger.debug("recall: digest engine cache reset failed: %s", exc)
+    if had_engine and _INDEX_STARTED:
+        start_background_index()

@@ -1422,14 +1422,15 @@ class TimshelMenuApp(rumps.App):
         return seam.search_detailed(query)
 
     def _recall_lexical_only(self):
-        """True when search runs without the semantic channel (bundled app) —
-        the window tells the user a paraphrase miss may be the mode, not the vault."""
+        """The search engine's mode for the window: True = no semantic channel
+        (bundled app), False = full hybrid, None = unknown (no engine yet) —
+        None lets the presenter fall back to inferring from result channels."""
         try:
             from src.connections.recall import seam
 
             return seam.lexical_only()
         except Exception:  # pragma: no cover - defensive
-            return False
+            return None
 
     def _recall_synthesize(self, query, results):
         """The one LLM in the pull path: synthesize a grounded answer from the

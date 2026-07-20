@@ -6,12 +6,18 @@ embedding model changes (different dim), the store is rebuilt rather than corrup
 
 When the dense stack (fastembed + sqlite-vec) is unavailable — the bundled app
 ships without it and has no pip — the engine degrades to **lexical-only** mode:
-same store file, chunks without vectors, pure-BM25 search. Switching modes
-(deps appear or disappear) rebuilds the store; the background backfill refills it.
+chunks without vectors, pure-BM25 search, in its OWN store file
+(``vault_lexical.db``). The two mode files coexist on purpose: a deps flip
+rebuilds nothing on default paths, and each mode's index survives the other
+environment untouched. Mode-mismatch rebuilds only apply to an explicit
+``db_path`` shared across modes. The probe is passive (no pip) — a dev setup
+gets dense mode by installing the deps (``make install``), not as a side
+effect of searching.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -34,14 +40,18 @@ def dense_stack_available() -> bool:
     """True when the dense channel can actually run: a Python with loadable
     sqlite extensions AND importable fastembed + sqlite-vec. The extension
     check comes first — with deps installed on a Python that can't load them,
-    the dense path would crash in ``_load_extension`` instead of degrading."""
+    the dense path would crash in ``_load_extension`` instead of degrading.
+
+    Passive on purpose (``find_spec``, no pip): a probe that shells out to a
+    180s-timeout install would block the ⌘K search worker and make the mode
+    depend on network state."""
     import sqlite3
 
     if not hasattr(sqlite3.Connection, "enable_load_extension"):
         return False
-    from src.runtime_deps import ensure_importable
+    from src.runtime_deps import importable
 
-    return ensure_importable("sqlite_vec") and ensure_importable("fastembed")
+    return importable("sqlite_vec") and importable("fastembed")
 
 
 class RecallEngine:
@@ -99,7 +109,19 @@ class RecallEngine:
                     dim,
                 )
                 self._remove_db_files()
-        store = VaultVectorStore(self._db_path, dim, dense=self._dense)
+        try:
+            store = VaultVectorStore(self._db_path, dim, dense=self._dense)
+        except sqlite3.DatabaseError as exc:
+            # A truly unreadable FILE ("file is not a database") self-heals by
+            # rebuilding once — the bundle has no CLI escape hatch, so a
+            # permanent crash here means search dead until the user hand-deletes
+            # a hidden file. OperationalError (locked/busy) stays fatal for this
+            # construction: transient, and rebuilding would wipe a healthy index.
+            if isinstance(exc, sqlite3.OperationalError):
+                raise
+            logger.warning("recall: store file unreadable (%s); rebuilding", exc)
+            self._remove_db_files()
+            store = VaultVectorStore(self._db_path, dim, dense=self._dense)
         store.set_meta("mode", mode)
         if self._embedder is not None:
             store.set_meta("dim", str(dim))
