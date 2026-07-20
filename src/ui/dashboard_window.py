@@ -2179,9 +2179,7 @@ if _APPKIT_AVAILABLE:
             )
             bd.setWantsLayer_(True)
             if bd.layer() is not None:
-                bd.layer().setBackgroundColor_(
-                    _c(255, 255, 255, _FILL_RAISED_A).CGColor()
-                )
+                bd.layer().setBackgroundColor_(_c(255, 255, 255, _HAIRLINE_A).CGColor())
             strip.addSubview_(bd)
 
             pad = 15.0
@@ -3186,7 +3184,9 @@ if _APPKIT_AVAILABLE:
             )
             rule.setWantsLayer_(True)
             if rule.layer() is not None:
-                rule.layer().setBackgroundColor_(_c(255, 255, 255, 0.10).CGColor())
+                rule.layer().setBackgroundColor_(
+                    _c(255, 255, 255, _HAIRLINE_A).CGColor()
+                )
             doc.addSubview_(rule)
             cy += 16
 
