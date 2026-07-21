@@ -580,8 +580,8 @@ class TestScanUnknownVolumes:
         monitor = FileMonitor(Mock(), on_unknown_volume=handler)
 
         with patch(
-            "src.file_monitor.is_disk_image_volume",
-            side_effect=lambda p: p.name == "Timshel Installer",
+            "src.file_monitor.disk_image_mount_points",
+            return_value={volumes_root / "Timshel Installer"},
         ), caplog.at_level(logging.INFO):
             self._run(monitor, volumes_root, manual_settings)
 
