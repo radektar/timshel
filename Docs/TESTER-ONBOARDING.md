@@ -1,73 +1,99 @@
-# Timshel — Tester Onboarding
+# Timshel — onboarding testera
 
-Thanks for testing Timshel. This takes ~15 minutes to set up, then ~10 minutes
-once a week. The goal of the test: **are the connections Timshel surfaces across
-your notes worth acting on?**
+Dzięki, że testujesz Timshela. Konfiguracja zajmuje ~15 minut, potem ~10 minut
+raz w tygodniu. Cel testu: **czy połączenia, które Timshel znajduje między
+Twoimi notatkami, są warte działania?**
 
-## What Timshel is (and what we're testing)
+> Interfejs jest częściowo po angielsku (menu przy ikonce), częściowo po
+> polsku (główne okno). Nazwy przycisków cytujemy dokładnie tak, jak je
+> zobaczysz.
 
-Timshel turns a plain voice recorder into an AI recorder: it transcribes audio
-into Markdown notes in your vault, and a paid **Insights** layer reads your
-archive and surfaces non-obvious connections and contradictions between notes.
-You're testing whether that Insights layer earns its keep.
+## Czym jest Timshel (i co testujemy)
 
-**Privacy:** the weekly feedback file you send back contains your digest text,
-note titles, and your personal glossary — nothing else. Your recordings and note
-bodies never leave your Mac.
+Timshel zamienia zwykły dyktafon w rejestrator AI: transkrybuje nagrania do
+notatek Markdown w Twoim vaultcie, a płatna warstwa **Insights** czyta
+archiwum i wyciąga nieoczywiste połączenia oraz sprzeczności między
+notatkami. Testujesz, czy ta warstwa Insights jest coś warta.
 
-## Requirements
+**Prywatność:** cotygodniowy plik z feedbackiem, który odsyłasz, zawiera
+wyłącznie tekst digestów, tytuły notatek i Twój słownik osobisty — nic
+więcej. Nagrania i treść notatek nigdy nie opuszczają Twojego Maca.
 
-- Apple Silicon Mac (M1 or newer). **Intel Macs are not supported.**
-- macOS 12 (Monterey) or newer.
-- ~2 GB free disk, ~700 MB one-time download on first launch.
+## Wymagania
 
-## 1. Install
+- Mac z Apple Silicon (M1 lub nowszy). **Maki z Intelem nie są wspierane.**
+- macOS 12 (Monterey) lub nowszy.
+- ~2 GB wolnego dysku; jednorazowe pobranie ~700 MB przy pierwszym starcie.
 
-1. Open the DMG and drag **Timshel** to Applications.
-2. The app is not notarized yet, so double-clicking is blocked. Instead:
-   **right-click the app → Open → Open.** You only do this once.
-   - On macOS 15+: if right-click→Open doesn't offer it, go to **System
-     Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+## 1. Instalacja
 
-## 2. First-run wizard
+1. Otwórz DMG i przeciągnij **Timshel** do Applications (Aplikacje).
+2. Apka nie jest jeszcze notaryzowana, więc podwójny klik zablokuje
+   uruchomienie. Zamiast tego: **prawy klik na apce → Otwórz → Otwórz.**
+   Robisz to tylko raz.
+   - Na macOS 15+: jeśli prawy klik → Otwórz nie daje tej opcji, wejdź w
+     **Ustawienia systemowe → Prywatność i ochrona**, przewiń w dół i
+     kliknij **Otwórz mimo to**.
 
-The wizard walks you through everything:
+## 2. Kreator pierwszego uruchomienia
 
-1. Pick your output folder — **choose your Obsidian vault** (or any folder).
-2. Confirm the ~700 MB engine download (needs internet, a few minutes).
-3. **Full Disk Access** — the wizard opens System Settings. Turn on the Timshel
-   checkbox, then **restart the app**. This is required: without it, Timshel
-   silently sees an empty SD card and never transcribes.
-4. Paste the **Claude API key** Radek gave you (Settings → Transcription).
+Kreator przeprowadzi Cię przez wszystko:
 
-## 3. Seed your vault
+1. Wybierz folder docelowy — **wskaż swój vault Obsidiana** (albo dowolny
+   folder na notatki).
+2. Potwierdź pobranie silnika (~700 MB — potrzebny internet, kilka minut).
+3. **Full Disk Access (Pełny dostęp do dysku)** — kreator otworzy Ustawienia
+   systemowe. Włącz przełącznik przy Timshelu i **zrestartuj apkę**. To
+   konieczne: bez tego Timshel widzi pustą kartę SD i nigdy nic nie
+   transkrybuje.
+4. Wklej **klucz Claude API**, który dostałeś od Radka: menu przy ikonce →
+   **Settings…** → zakładka **Transcription** → pole **Claude API key**.
 
-Insights need material to connect. On day one:
+## 3. Zasiej vault
 
-- Menu → **Import transcripts…** → select your existing transcripts (txt / md /
-  vtt — e.g. exported meeting notes). Aim for **30+ notes**.
+Insights potrzebują materiału do łączenia. Pierwszego dnia:
 
-## 4. Daily use
+- Menu przy ikonce → **Import transcripts…** → zaznacz swoje istniejące
+  transkrypty (txt / md / vtt — np. eksporty notatek ze spotkań). Celuj w
+  **30+ notatek**.
 
-Record or import as you normally would. A digest appears roughly weekly in the
-**Timshel Digests** folder in your vault.
+## 4. Codzienne używanie
 
-## 5. The weekly 10 minutes
+Nagrywaj albo importuj tak, jak normalnie pracujesz. Digest (podsumowanie
+połączeń) pojawia się mniej więcej co tydzień w folderze **Timshel Digests**
+w Twoim vaultcie.
 
-Once a week (e.g. Friday):
+Poza tym w głównym oknie (menu → **Insights**) możesz:
 
-1. If no digest appeared this week: menu → **Generate digest now**.
-2. Menu → **Insights** → go through **every** connection and rate it honestly:
-   **Zachowaj** (worth acting on), **Odrzuć** (noise), or hand it off to
-   Claude/ChatGPT (the strongest "this is useful" signal).
-3. Menu → **Export feedback** → a zip lands on your Desktop and Finder reveals
-   it. **Email that zip to radoslaw.taraszka@gmail.com.**
+- **Przeszukiwać swoje notatki** — pasek pytania na górze okna albo skrót
+  **⌃⌥Spacja** z dowolnego miejsca. Wyszukiwanie jest w 100% lokalne.
+  Działa dosłownie (po słowach, które padły w notatkach) — jeśli nic nie
+  znajduje, spróbuj słów, których naprawdę użyłeś w nagraniu.
+- **Czytać notatki bez wychodzenia z apki** — klik w źródło przy połączeniu
+  albo w notatkę w sekcji **Notatki** otwiera ją w oknie; „Otwórz w
+  Obsidianie ↗" zostaje pod ręką.
 
-Do this for at least three weeks.
+## 5. Cotygodniowe 10 minut
 
-## Troubleshooting
+Raz w tygodniu (np. w piątek):
 
-- **Nothing transcribes / SD card not detected** → Full Disk Access isn't on;
-  grant it and restart the app.
-- **No AI summaries / no digest** → API key missing or out of quota (Settings).
-- **Anything else** → menu → **Open logs**, or message Radek.
+1. Jeśli w tym tygodniu nie pojawił się digest: menu → **Generate digest
+   now**.
+2. Menu → **Insights** → przejdź **każde** połączenie i oceń je szczerze:
+   **Zachowaj** (warte działania), **Odrzuć** (szum), albo **Kontynuuj w
+   Claude** (najmocniejszy sygnał „to jest użyteczne").
+3. Menu → **Export feedback** → zip ląduje na Biurku i Finder go pokaże.
+   **Wyślij ten zip mailem na radoslaw.taraszka@gmail.com.**
+
+Rób tak przez co najmniej trzy tygodnie.
+
+## Gdy coś nie działa
+
+- **Nic się nie transkrybuje / karta SD niewykryta** → brak Full Disk
+  Access; włącz i zrestartuj apkę.
+- **Brak podsumowań AI / brak digestu** → brak klucza API albo wyczerpany
+  limit (menu → **Settings…** → **Transcription**).
+- **Wyszukiwarka mówi, że nic nie ma** → chwilę po instalacji indeks może
+  się jeszcze budować (spróbuj za minutę); pamiętaj też, że szuka dosłownie
+  — po słowach z notatek, nie po skojarzeniach.
+- **Cokolwiek innego** → menu → **Open logs**, albo napisz do Radka.
