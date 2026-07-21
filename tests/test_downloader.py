@@ -33,12 +33,12 @@ class TestDependencyDownloader:
         d.bin_dir = d.support_dir / "bin"
         d.models_dir = d.support_dir / "models"
         d.downloads_dir = d.support_dir / "downloads"
-        
+
         # Utwórz katalogi
         d.bin_dir.mkdir(parents=True, exist_ok=True)
         d.models_dir.mkdir(parents=True, exist_ok=True)
         d.downloads_dir.mkdir(parents=True, exist_ok=True)
-        
+
         return d
 
     def test_check_network_online(self, downloader, monkeypatch):
@@ -54,6 +54,7 @@ class TestDependencyDownloader:
 
     def test_check_network_offline(self, downloader, monkeypatch):
         """Test sprawdzania połączenia sieciowego - offline."""
+
         # Mock socket.create_connection - błąd
         def mock_connection(*args, **kwargs):
             raise OSError("Network unreachable")
@@ -178,7 +179,7 @@ class TestDependencyDownloader:
         (downloader.bin_dir / "whisper-cli").write_bytes(b"fake")
         (downloader.bin_dir / "ffmpeg").write_bytes(b"fake")
         (downloader.models_dir / "ggml-small.bin").write_bytes(b"fake")
-        
+
         # Mock checksum verification to return True (test files don't have real checksums)
         monkeypatch.setattr(downloader, "verify_checksum", lambda path, checksum: True)
         monkeypatch.setattr(downloader, "verify_whisper_runtime", lambda: None)
@@ -204,7 +205,9 @@ class TestDependencyDownloader:
     def test_download_all_downloads_selected_model(self, downloader, monkeypatch):
         """download_all powinien pobierać model wybrany w ustawieniach."""
         monkeypatch.setattr(downloader, "check_network", lambda: True)
-        monkeypatch.setattr(downloader, "check_disk_space", lambda *args, **kwargs: True)
+        monkeypatch.setattr(
+            downloader, "check_disk_space", lambda *args, **kwargs: True
+        )
         monkeypatch.setattr(downloader, "is_whisper_installed", lambda: True)
         monkeypatch.setattr(downloader, "verify_whisper_runtime", lambda: None)
         monkeypatch.setattr(downloader, "is_ffmpeg_installed", lambda: True)
@@ -330,9 +333,7 @@ class TestDependencyDownloader:
 
         downloader.verify_whisper_runtime()
 
-    def test_verify_whisper_runtime_raises_on_dyld_error(
-        self, downloader, monkeypatch
-    ):
+    def test_verify_whisper_runtime_raises_on_dyld_error(self, downloader, monkeypatch):
         """verify_whisper_runtime zgłasza błąd gdy dyld nie ładuje biblioteki."""
         whisper_path = downloader.bin_dir / "whisper-cli"
         whisper_path.write_bytes(b"fake")
@@ -389,11 +390,11 @@ class TestDependencyDownloader:
             assert (downloader.bin_dir / lib_name).exists()
         assert not (downloader.downloads_dir / archive_name).exists()
 
-    @pytest.mark.skip(reason="Wymaga przepisania na httpx - używamy testów integracyjnych")
+    @pytest.mark.skip(
+        reason="Wymaga przepisania na httpx - używamy testów integracyjnych"
+    )
     @patch("src.setup.downloader.urlopen")
-    def test_download_with_retry_success(
-        self, mock_urlopen, downloader, monkeypatch
-    ):
+    def test_download_with_retry_success(self, mock_urlopen, downloader, monkeypatch):
         """Test pobierania z retry - sukces po retry."""
         # Mock check_network i check_disk_space
         monkeypatch.setattr(downloader, "check_network", lambda: True)
@@ -421,11 +422,11 @@ class TestDependencyDownloader:
 
         assert mock_urlopen.call_count == 2
 
-    @pytest.mark.skip(reason="Wymaga przepisania na httpx - używamy testów integracyjnych")
+    @pytest.mark.skip(
+        reason="Wymaga przepisania na httpx - używamy testów integracyjnych"
+    )
     @patch("src.setup.downloader.urlopen")
-    def test_download_max_retries_exceeded(
-        self, mock_urlopen, downloader, monkeypatch
-    ):
+    def test_download_max_retries_exceeded(self, mock_urlopen, downloader, monkeypatch):
         """Test pobierania - przekroczono max retries."""
         # Mock check_network i check_disk_space
         monkeypatch.setattr(downloader, "check_network", lambda: True)
@@ -446,7 +447,9 @@ class TestDependencyDownloader:
 
         assert mock_urlopen.call_count == MAX_RETRIES
 
-    @pytest.mark.skip(reason="Wymaga przepisania na httpx - używamy testów integracyjnych")
+    @pytest.mark.skip(
+        reason="Wymaga przepisania na httpx - używamy testów integracyjnych"
+    )
     def test_download_progress_callback(self, downloader, monkeypatch):
         """Test progress callback podczas pobierania."""
         callback_calls = []
@@ -480,7 +483,9 @@ class TestDependencyDownloader:
         assert len(callback_calls) > 0
         assert all(0.0 <= progress <= 1.0 for _, progress in callback_calls)
 
-    @pytest.mark.skip(reason="Wymaga przepisania na httpx - używamy testów integracyjnych")
+    @pytest.mark.skip(
+        reason="Wymaga przepisania na httpx - używamy testów integracyjnych"
+    )
     def test_resume_partial_download(self, downloader, monkeypatch):
         """Test wznowienia częściowego pobierania."""
         # Utwórz częściowy plik .tmp
@@ -515,7 +520,9 @@ class TestDependencyDownloader:
                 if hasattr(request, "headers"):
                     assert "Range" in request.headers or request.headers.get("Range")
 
-    @pytest.mark.skip(reason="Wymaga przepisania na httpx - używamy testów integracyjnych")
+    @pytest.mark.skip(
+        reason="Wymaga przepisania na httpx - używamy testów integracyjnych"
+    )
     def test_cleanup_temp_files(self, downloader, monkeypatch):
         """Test usuwania plików tymczasowych po sukcesie."""
         # Mock urlopen
@@ -544,3 +551,170 @@ class TestDependencyDownloader:
         # Sprawdź czy plik docelowy istnieje
         assert (downloader.bin_dir / "whisper-cli").exists()
 
+
+class TestDownloadFileHardening:
+    """Regresje z testu Gatekeepera 2026-07-21: wyścig dwóch downloaderów
+    na jednym .tmp + stale resume po błędzie checksumy."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        d = DependencyDownloader()
+        d.support_dir = tmp_path / "Timshel"
+        d.bin_dir = d.support_dir / "bin"
+        d.models_dir = d.support_dir / "models"
+        d.downloads_dir = d.support_dir / "downloads"
+        for p in (d.bin_dir, d.models_dir, d.downloads_dir):
+            p.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _fake_stream(self, payloads):
+        """httpx.stream stub: each call yields the next payload; records
+        the Range header each attempt sent."""
+        calls = []
+
+        class _Resp:
+            def __init__(self, data):
+                self._data = data
+                self.status_code = 200
+                self.headers = {"Content-Length": str(len(data))}
+
+            def raise_for_status(self):
+                pass
+
+            def iter_bytes(self, chunk_size=8192):
+                yield self._data
+
+        class _Ctx:
+            def __init__(self, data):
+                self._data = data
+
+            def __enter__(self):
+                return _Resp(self._data)
+
+            def __exit__(self, *a):
+                return False
+
+        def stream(method, url, headers=None, timeout=None, follow_redirects=True):
+            calls.append(dict(headers or {}))
+            data = payloads[min(len(calls) - 1, len(payloads) - 1)]
+            return _Ctx(data)
+
+        return stream, calls
+
+    def test_checksum_retry_restarts_from_zero(self, downloader, monkeypatch):
+        # Próba 1: złe bajty -> checksum pada. Próba 2 NIE może wysłać
+        # Range (stale resume pobierał sam ogon i pętlił błąd) — musi
+        # pobrać całość od zera i przejść.
+        import hashlib as _h
+
+        good = b"good-bytes"
+        bad = b"bad--bytes"
+        good_sum = _h.sha256(good).hexdigest()
+        stream, calls = self._fake_stream([bad, good])
+        monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
+        monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        dest = downloader.bin_dir / "artifact"
+        downloader._download_file(
+            "http://x/a",
+            dest,
+            "artifact",
+            expected_size=len(good),
+            expected_checksum=good_sum,
+        )
+        assert dest.read_bytes() == good
+        assert "Range" not in calls[0]
+        assert "Range" not in calls[1]  # retry po checksumie = od zera
+        assert not (downloader.downloads_dir / "artifact.tmp").exists()
+
+    def test_failed_checksum_never_touches_dest(self, downloader, monkeypatch):
+        # Weryfikacja idzie na .tmp PRZED rename — po porażce dest nie
+        # istnieje (nie ma okna, w którym leży tam uszkodzony plik).
+        from src.setup.errors import DownloadError
+
+        stream, _calls = self._fake_stream([b"bad"])
+        monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
+        monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        dest = downloader.bin_dir / "artifact"
+        with pytest.raises(DownloadError):
+            downloader._download_file(
+                "http://x/a",
+                dest,
+                "artifact",
+                expected_size=3,
+                expected_checksum="0" * 64,
+            )
+        assert not dest.exists()
+
+    def test_second_caller_waits_and_reuses_finished_download(
+        self, downloader, monkeypatch
+    ):
+        # Dwóch pobierających ten sam artefakt (wizard + auto-naprawa
+        # daemona): drugi czeka na locku i zastaje gotowy plik — zero
+        # drugiego pobierania, zero przeplotu na .tmp.
+        import hashlib as _h
+        import threading as th
+
+        good = b"payload"
+        good_sum = _h.sha256(good).hexdigest()
+        started = th.Event()
+        release = th.Event()
+        stream_calls = {"count": 0}
+
+        class _Resp:
+            status_code = 200
+            headers = {"Content-Length": str(len(good))}
+
+            def raise_for_status(self):
+                pass
+
+            def iter_bytes(self, chunk_size=8192):
+                started.set()
+                release.wait(timeout=5)
+                yield good
+
+        class _Ctx:
+            def __enter__(self):
+                return _Resp()
+
+            def __exit__(self, *a):
+                return False
+
+        def stream(*a, **k):
+            stream_calls["count"] += 1
+            return _Ctx()
+
+        monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
+        monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        dest = downloader.bin_dir / "artifact"
+
+        def _first():
+            downloader._download_file(
+                "http://x/a",
+                dest,
+                "artifact",
+                expected_size=len(good),
+                expected_checksum=good_sum,
+            )
+
+        t1 = th.Thread(target=_first)
+        t1.start()
+        assert started.wait(timeout=5)  # pierwszy trzyma lock, pisze .tmp
+        release.set()
+
+        # Drugi downloader (osobna instancja — jak w apce) na ten sam plik.
+        d2 = DependencyDownloader()
+        d2.downloads_dir = downloader.downloads_dir
+        d2.bin_dir = downloader.bin_dir
+        d2._download_file(
+            "http://x/a",
+            dest,
+            "artifact",
+            expected_size=len(good),
+            expected_checksum=good_sum,
+        )
+        t1.join(timeout=5)
+        assert dest.read_bytes() == good
+        assert stream_calls["count"] == 1  # drugi NIE pobierał ponownie

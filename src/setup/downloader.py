@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import tarfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -31,6 +32,21 @@ MIN_DISK_SPACE_BYTES = 500_000_000
 CHUNK_TIMEOUT = 30  # sekundy
 TOTAL_TIMEOUT = 1800  # 30 minut dla dużego modelu
 MAX_RETRIES = 3
+
+# Per-artifact download locks, process-wide: separate downloader INSTANCES
+# (wizard's background plan + the daemon's encoder auto-repair) target the
+# same .tmp files — without this, two appending writers corrupt one file.
+_ARTIFACT_LOCKS: dict = {}
+_ARTIFACT_LOCKS_GUARD = threading.Lock()
+
+
+def _artifact_lock(artifact_name: str) -> threading.Lock:
+    with _ARTIFACT_LOCKS_GUARD:
+        lock = _ARTIFACT_LOCKS.get(artifact_name)
+        if lock is None:
+            lock = threading.Lock()
+            _ARTIFACT_LOCKS[artifact_name] = lock
+        return lock
 
 
 class DependencyDownloader:
@@ -449,11 +465,36 @@ class DependencyDownloader:
         """
         temp_path = self.downloads_dir / f"{dest.name}.tmp"
 
+        # Jeden artefakt = jeden pobierający naraz. Wizard (background
+        # download) i daemon (auto-naprawa brakującego encodera) potrafią
+        # wystartować RÓWNOLEGLE w tym samym procesie — dwóch pisarzy na
+        # jednym .tmp (tryb append) przeplata bajty, checksum pada, a rename
+        # jednego wyrywa plik drugiemu ([Errno 2]).
+        with _artifact_lock(dest.name):
+            # Ktoś mógł dokończyć pobieranie, kiedy czekaliśmy na lock.
+            if dest.exists() and (
+                not expected_checksum
+                or self.verify_checksum(dest, expected_checksum)
+            ):
+                logger.info(f"✓ {name} już pobrany (równoległy wątek)")
+                self._plan_done_bytes += dest.stat().st_size
+                return
+            self._download_file_locked(
+                url, dest, name, temp_path, expected_size, expected_checksum
+            )
+
+    def _download_file_locked(
+        self,
+        url: str,
+        dest: Path,
+        name: str,
+        temp_path: Path,
+        expected_size: Optional[int],
+        expected_checksum: Optional[str],
+    ) -> None:
         # Sprawdź czy istnieje częściowe pobieranie
-        resume_from = 0
-        if temp_path.exists():
-            resume_from = temp_path.stat().st_size
-            if expected_size and resume_from >= expected_size:
+        if temp_path.exists() and expected_size:
+            if temp_path.stat().st_size >= expected_size:
                 # Plik wydaje się kompletny, sprawdź checksum
                 logger.info(f"Znaleziono kompletny plik tymczasowy {temp_path}")
                 if expected_checksum and self.verify_checksum(
@@ -469,7 +510,6 @@ class DependencyDownloader:
                     # Uszkodzony, usuń i zacznij od nowa
                     logger.warning("Uszkodzony plik tymczasowy, usuwam")
                     temp_path.unlink()
-                    resume_from = 0
 
         # Sprawdź połączenie sieciowe
         self.check_network()
@@ -481,6 +521,13 @@ class DependencyDownloader:
         # Pobieranie z retry
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # Stan resume liczony OD NOWA w każdej próbie — po nieudanym
+                # checksumie .tmp już nie istnieje, a przeniesiona wartość
+                # z poprzedniej próby wysyłała Range: bytes=N- na świeży plik
+                # i pobierała sam ogon (checksum padał w pętli aż do końca prób).
+                resume_from = (
+                    temp_path.stat().st_size if temp_path.exists() else 0
+                )
                 logger.info(
                     f"Pobieranie {name} (próba {attempt}/{MAX_RETRIES})..."
                 )
@@ -501,11 +548,10 @@ class DependencyDownloader:
                 ) as response:
                     # Sprawdź kod odpowiedzi
                     if response.status_code == 416:  # Range Not Satisfiable
-                        # Plik już kompletny, usuń .tmp i sprawdź
+                        # Serwer nie zna takiego zakresu — .tmp jest śmieciem.
                         if temp_path.exists():
                             temp_path.unlink()
-                        resume_from = 0
-                        continue
+                        continue  # następna próba policzy resume_from=0
 
                     # Sprawdź czy sukces
                     response.raise_for_status()
@@ -543,18 +589,20 @@ class DependencyDownloader:
                                         progress = downloaded / total_size
                                     self.progress_callback(name, progress)
 
-                # Przenieś do docelowej lokalizacji
-                temp_path.rename(dest)
-                dest.chmod(0o755)
-
-                # Weryfikuj checksum jeśli dostępny
+                # Weryfikuj checksum NA .tmp, przed rename — nieudana
+                # weryfikacja zostawia dest nietknięty (nie istnieje), a .tmp
+                # kasujemy, więc kolejna próba startuje od zera bez Range.
                 if expected_checksum:
-                    if not self.verify_checksum(dest, expected_checksum):
+                    if not self.verify_checksum(temp_path, expected_checksum):
                         logger.error(f"Błędny checksum dla {name}")
-                        dest.unlink()
+                        temp_path.unlink(missing_ok=True)
                         raise ChecksumError(
                             f"Checksum nie zgadza się dla {name}"
                         )
+
+                # Przenieś do docelowej lokalizacji
+                temp_path.rename(dest)
+                dest.chmod(0o755)
 
                 logger.info(f"✓ Pobrano {name}")
                 # Zamknij ten plik w planie zbiorczym (patrz __init__).
