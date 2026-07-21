@@ -11,7 +11,6 @@ from src.setup.checksums import CHECKSUMS
 from src.setup.downloader import DependencyDownloader
 from src.setup.errors import DependencyRuntimeError
 
-
 ProgressCallback = Callable[[str, float], None]
 DoneCallback = Callable[[], None]
 ErrorCallback = Callable[[Exception], None]
@@ -115,9 +114,11 @@ class DependencyManager:
         def run() -> None:
             try:
                 self._downloader.progress_callback = on_progress
-                # Usuwa whisper-cli oraz osierocone dylib-y (no-op gdy ich nie ma).
-                self._downloader._cleanup_bundled_whisper()
-                self._downloader.download_whisper()
+                # force=True: cleanup dzieje się WEWNĄTRZ locka instalacyjnego
+                # downloadera. Zewnętrzny _cleanup_bundled_whisper() potrafił
+                # skasować świeżo rozpakowane binarki równoległej instalacji
+                # (trzy instancje DependencyManagera żyją w jednym procesie).
+                self._downloader.download_whisper(force=True)
                 if on_done:
                     on_done()
             except Exception as exc:
@@ -130,9 +131,7 @@ class DependencyManager:
                 with self._lock:
                     self._is_downloading = False
 
-        self._thread = threading.Thread(
-            target=run, daemon=True, name="WhisperRepair"
-        )
+        self._thread = threading.Thread(target=run, daemon=True, name="WhisperRepair")
         self._thread.start()
         return True
 
@@ -176,7 +175,8 @@ class DependencyManager:
                 with self._lock:
                     self._is_downloading = False
 
-        self._thread = threading.Thread(target=run, daemon=True, name="DependencyDownload")
+        self._thread = threading.Thread(
+            target=run, daemon=True, name="DependencyDownload"
+        )
         self._thread.start()
         return True
-

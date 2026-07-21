@@ -657,8 +657,13 @@ class DependencyDownloader:
 
         raise DownloadError(f"Failed to download {name} after {MAX_RETRIES} attempts")
 
-    def download_whisper(self) -> bool:
+    def download_whisper(self, force: bool = False) -> bool:
         """Pobierz whisper.cpp binary.
+
+        Args:
+            force: Wymuś reinstalację (repair) — cleanup starych binarek
+                   dzieje się WEWNĄTRZ locka instalacyjnego, żeby nie wyrywać
+                   plików równoległej instalacji.
 
         Returns:
             True jeśli pobieranie się powiodło
@@ -673,10 +678,10 @@ class DependencyDownloader:
 
         distribution = self._whisper_distribution()
         if distribution == "bundled":
-            return self._download_whisper_bundled()
-        return self._download_whisper_static()
+            return self._download_whisper_bundled(force=force)
+        return self._download_whisper_static(force=force)
 
-    def _download_whisper_bundled(self) -> bool:
+    def _download_whisper_bundled(self, force: bool = False) -> bool:
         url = URLS["whisper"]
         archive_name = "whisper-bundled-arm64.tar.gz"
         archive_dest = self.downloads_dir / archive_name
@@ -687,6 +692,10 @@ class DependencyDownloader:
         # sam wzorzec co encoder (dwóch instalujących = przeplot w bin/ albo
         # tarball wyrwany sprzed nosa).
         with _artifact_lock("install:whisper-bundled"):
+            if force:
+                # Repair: stare binarki usuwane POD lockiem — równoległa
+                # instalacja nigdy nie traci świeżo rozpakowanych plików.
+                self._cleanup_bundled_whisper()
             # Broken migration: existing bare whisper-cli from old deps-v1.0.0.
             if self.is_whisper_installed() and not self._is_bundled_install_complete():
                 logger.warning(
@@ -724,11 +733,14 @@ class DependencyDownloader:
             self.verify_whisper_runtime()
             return True
 
-    def _download_whisper_static(self) -> bool:
+    def _download_whisper_static(self, force: bool = False) -> bool:
         url = URLS["whisper"]
         dest = self.bin_dir / "whisper-cli"
         expected_size = SIZES.get("whisper-cli")
         expected_checksum = CHECKSUMS.get("whisper-cli")
+
+        if force:
+            dest.unlink(missing_ok=True)
 
         # Sprawdź czy plik istnieje, ma poprawny checksum i działa w runtime
         if self.is_whisper_installed():

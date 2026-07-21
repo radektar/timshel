@@ -736,3 +736,31 @@ class TestDownloadFileHardening:
         t1.join(timeout=5)
         assert dest.read_bytes() == good
         assert stream_calls["count"] == 1  # drugi NIE pobierał ponownie
+
+    def test_range_ignored_by_server_downloads_fresh_in_one_call(
+        self, downloader, monkeypatch
+    ):
+        # CDN ignorujący Range odpowiada 200 pełnym plikiem — doklejenie go
+        # do częściowego .tmp dawało zlepek i błędny checksum. Nowy kod
+        # wykrywa 200, kasuje .tmp i kończy w JEDNEJ próbie.
+        import hashlib as _h
+
+        good = b"full-good-payload"
+        good_sum = _h.sha256(good).hexdigest()
+        stream, calls = self._fake_stream([good])  # zawsze 200, pełne body
+        monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
+        monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        (downloader.downloads_dir / "artifact.tmp").write_bytes(b"part")
+
+        dest = downloader.bin_dir / "artifact"
+        downloader._download_file(
+            "http://x/a",
+            dest,
+            "artifact",
+            expected_size=len(good),
+            expected_checksum=good_sum,
+        )
+        assert dest.read_bytes() == good
+        assert len(calls) == 1  # stary kod kleił i potrzebował drugiej próby
+        assert "Range" in calls[0]  # zakres BYŁ żądany, serwer go zignorował
