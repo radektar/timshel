@@ -1,7 +1,30 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-20 · Faza: kod → test
+Data: 2026-07-21 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Wyszukiwarka w bundlu — NAPRAWIONA (PR #82, merge 2026-07-21)
+
+Tryb **lexical-only**: bez fastembed/sqlite-vec silnik degraduje do czystego
+BM25 — osobny plik bazy per tryb (`vault_lexical.db` obok `vault_vectors.db`,
+środowiska nie kasują sobie indeksów), indeks bez wektorów, retriever bez
+kanału gęstego, confidence = **idf-ważony** overlap (pospolite słowo nie udaje
+trafienia), osobny próg abstynencji 0.45 (dense zostaje na 0.60 ze STARĄ
+surową frakcją — bez cichej rekalibracji). UI uczciwe: seam→okno sygnał trybu
+(„tryb dosłowny" w meta, kopia abstynencji mówi o braku warstwy semantycznej).
+Hardening z pętli: samonaprawa skorumpowanego store'a (plik nieczytelny przy
+otwarciu ORAZ korupcja w locie — iCloud; cooldown 120s), single-flight
+backfill z coalescingiem (restart po zapisie ustawień/zmianie vaulta),
+generacyjny reset silnika + deferred reset (zero beachballa na main thread),
+fallback dense→lexical przy na-wpół-zainstalowanych depsach, inwalidacja
+cache silnika toru digestu. **Pętla review: R1(10)→R2(9)→R3(6)→R4(6)→R5(4)→
+R6(1)→R7 PUSTA (konwergencja).** Suita **1159** + mypy; SMOKE PASS.
+**Tester DMG `902a9a24…` (stamp `3586438`) na iCloud `Timshel/`** — zastępuje
+`a691e6af…`; pierwszy build z działającym ⌘K.
+Znane ograniczenie (świadome, nie blokuje H1): osobny PROCES daemona
+trzymający store pisze w osierocony inode po healu w apce (cross-process
+file-identity poza zakresem PR); heal-cooldown po nieudanym rebuildzie może
+opóźnić ponowny heal o ≤120s.
 
 ## Decyzja i18n (2026-07-20): wersja EN na bramce pre-waitlist
 
@@ -9,11 +32,15 @@ Audyt na pytanie „czy mamy wersję angielską": **treść już dwujęzyczna**
 (`summarizer.detect_language` + Whisper multilingual — EN nagranie = EN
 notatka), **chrome UI = tylko PL, zero warstwy i18n** (`settings.language`
 to język Whispera, nie locale), **Stanowiska dostrojone pod PL** (rdzenie
-fleksyjne w `stance.py` — tuning, nie bloker). Decyzja: **EN UI = bramka
-przed waitlistą, obok Developer ID/notaryzacji — NIE na H1** (panel H1 = PL).
-Wyjątek: nie-PL tester → EN UI przed wysyłką do niego. Realizacja gdy przyjdzie
-czas: lekki `t(key)` JSON pl/en (nie gettext), ~1–1.5 dnia. Pełny zapis:
-Obsidian → [[2026-07-20 - Wersja angielska UI - kiedy i jak]].
+fleksyjne w `stance.py`). **Rewizja wieczorna (Radek): faza EN = DWA filary,
+oba obowiązkowe** — (1) i18n chrome: lekki `t(key)` JSON pl/en, EN bazowy,
+`ui_language` obok nietykanego `settings.language`, ~1–1.5 dnia; (2) **insights
+po angielsku BLOKUJĄCO** (uogólnienie `stance.py` + weryfikacja łańcucha
+Stanowiska→kontradykcje→digest na korpusie EN; estymata dopiero po zbudowaniu
+zbioru testowego EN). Timing bez zmian: **bramka pre-waitlist, NIE na H1**;
+wyjątek nie-PL tester = oba filary. Pełny zapis: Obsidian →
+[[2026-07-20 - Faza EN - UI i warstwa insights po angielsku]] (zastępuje
+[[2026-07-20 - Wersja angielska UI - kiedy i jak]]).
 
 ## Runda testów ręcznych (2026-07-20) — poprawki + spójność wizualna
 
@@ -31,12 +58,9 @@ na wszystkich cienkich liniach. PR #78/#79. Suita **1126** + mypy, SMOKE PASS.
 **DMG `a691e6af…` (stamp `e29b8bb`) na iCloud `Timshel/`** — do testów A–E.
 Checklist: `Docs/READER-TEST-CHECKLIST.md`.
 
-**ZNANY, NIENAPRAWIONY (osobna praca, plan zatwierdzony): wyszukiwarka
-(Zapytałeś/⌘K) nie działa w żadnym bundlu** — silnik recall wymaga
-`fastembed`+`sqlite-vec`+`numpy`, których bundel nie pakuje (pip-autoinstall
-wyłączony). Fix = tryb **lexical-only** (BM25, czysty Python): degradacja
-silnika bez embeddera → BM25 po treści; lekki indeks tekstowy niezależny od
-bazy wektorowej; retriever pomija kanał gęsty; UI działa. Bramka: przed kodem.
+~~ZNANY, NIENAPRAWIONY: wyszukiwarka (Zapytałeś/⌘K) nie działa w żadnym
+bundlu~~ — **NAPRAWIONE 2026-07-21 (PR #82, tryb lexical-only)**; szczegóły
+w sekcji u góry.
 
 ## Ostatnia zmiana: czytnik markdown w oknie — WDROŻONY
 
