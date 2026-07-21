@@ -407,6 +407,12 @@ class FileMonitor:
                 continue
             if settings.find_trusted_volume(uuid) is not None:
                 continue
+            if is_disk_image_volume(candidate):
+                # DMG (np. własny instalator Timshela) nigdy nie jest
+                # rejestratorem. Filtr PRZED logiem: bez tego każdy 30s cykl
+                # dokłada do loga parę linii "unknown volume — prompting /
+                # ignoring", dopóki obraz jest zamontowany.
+                continue
 
             logger.info(
                 "🔎 Periodic scan: unknown volume %s — prompting (FSEvents miss?)",
