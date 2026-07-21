@@ -602,9 +602,10 @@ class TestDownloadFileHardening:
         return stream, calls
 
     def test_checksum_retry_restarts_from_zero(self, downloader, monkeypatch):
-        # Próba 1: złe bajty -> checksum pada. Próba 2 NIE może wysłać
-        # Range (stale resume pobierał sam ogon i pętlił błąd) — musi
-        # pobrać całość od zera i przejść.
+        # Scenariusz z realnego loga testera: częściowy .tmp już istnieje,
+        # próba 1 wysyła Range, checksum pada. Próba 2 NIE może wysłać Range
+        # (stale resume pobierał sam ogon i pętlił błąd 'Wznawianie od bajtu
+        # N' → 'Błędny checksum') — musi pobrać całość od zera i przejść.
         import hashlib as _h
 
         good = b"good-bytes"
@@ -613,6 +614,10 @@ class TestDownloadFileHardening:
         stream, calls = self._fake_stream([bad, good])
         monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
         monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        # Zasiej częściowy .tmp — bez niego stary kod też nie wysyłał Range
+        # i test przechodził na revercie.
+        (downloader.downloads_dir / "artifact.tmp").write_bytes(b"part")
 
         dest = downloader.bin_dir / "artifact"
         downloader._download_file(
@@ -623,18 +628,29 @@ class TestDownloadFileHardening:
             expected_checksum=good_sum,
         )
         assert dest.read_bytes() == good
-        assert "Range" not in calls[0]
+        assert "Range" in calls[0]  # próba 1 legalnie wznawia z .tmp
         assert "Range" not in calls[1]  # retry po checksumie = od zera
         assert not (downloader.downloads_dir / "artifact.tmp").exists()
 
     def test_failed_checksum_never_touches_dest(self, downloader, monkeypatch):
-        # Weryfikacja idzie na .tmp PRZED rename — po porażce dest nie
-        # istnieje (nie ma okna, w którym leży tam uszkodzony plik).
+        # Weryfikacja idzie na .tmp PRZED rename — dest nie jest dotykany
+        # przez zły download (stary kod rename'ował, weryfikował na dest
+        # i unlinkował — końcowy stan wyglądał tak samo, więc przypinamy
+        # KOLEJNOŚĆ: każda weryfikacja dostaje ścieżkę .tmp).
         from src.setup.errors import DownloadError
 
         stream, _calls = self._fake_stream([b"bad"])
         monkeypatch.setattr("src.setup.downloader.httpx.stream", stream)
         monkeypatch.setattr(downloader, "check_network", lambda: None)
+
+        verified_paths = []
+        real_verify = downloader.verify_checksum
+
+        def _spy(path, checksum):
+            verified_paths.append(Path(path).name)
+            return real_verify(path, checksum)
+
+        monkeypatch.setattr(downloader, "verify_checksum", _spy)
 
         dest = downloader.bin_dir / "artifact"
         with pytest.raises(DownloadError):
@@ -646,6 +662,8 @@ class TestDownloadFileHardening:
                 expected_checksum="0" * 64,
             )
         assert not dest.exists()
+        assert verified_paths  # weryfikacja w ogóle zaszła
+        assert all(n == "artifact.tmp" for n in verified_paths)  # nigdy dest
 
     def test_second_caller_waits_and_reuses_finished_download(
         self, downloader, monkeypatch

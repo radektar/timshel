@@ -69,9 +69,7 @@ class DependencyDownloader:
         # (whisper-cli, ffmpeg) while the ~700 MB model is still ahead.
         self._plan_total_bytes = 0
         self._plan_done_bytes = 0
-        self.support_dir = (
-            Path.home() / "Library" / "Application Support" / "Timshel"
-        )
+        self.support_dir = Path.home() / "Library" / "Application Support" / "Timshel"
         self.bin_dir = self.support_dir / "bin"
         self.models_dir = self.support_dir / "models"
         self.downloads_dir = self.support_dir / "downloads"
@@ -132,9 +130,7 @@ class DependencyDownloader:
             True jeśli checksum się zgadza, False w przeciwnym razie
         """
         if not expected_checksum:
-            logger.warning(
-                f"Brak checksum dla {file_path.name}, pomijam weryfikację"
-            )
+            logger.warning(f"Brak checksum dla {file_path.name}, pomijam weryfikację")
             return True
 
         algo = "sha256"
@@ -193,7 +189,9 @@ class DependencyDownloader:
         """Check if bundled installation has all companion dylibs."""
         if not self.is_whisper_installed():
             return False
-        return all((self.bin_dir / name).exists() for name in self._expected_whisper_dylibs())
+        return all(
+            (self.bin_dir / name).exists() for name in self._expected_whisper_dylibs()
+        )
 
     def is_ffmpeg_installed(self) -> bool:
         """Sprawdź czy ffmpeg jest zainstalowany.
@@ -240,7 +238,9 @@ class DependencyDownloader:
             True jeśli katalog encodera istnieje lub model nie ma encodera
         """
         canonical = self._canonical_model(model)
-        if not URLS.get(f"model_{canonical}_encoder") and not URLS.get(f"model_{model}_encoder"):
+        if not URLS.get(f"model_{canonical}_encoder") and not URLS.get(
+            f"model_{model}_encoder"
+        ):
             return True  # Model nie ma encodera — nie wymagany
         encoder_dir = self.models_dir / f"ggml-{canonical}-encoder.mlmodelc"
         return encoder_dir.exists() and encoder_dir.is_dir()
@@ -265,24 +265,32 @@ class DependencyDownloader:
             logger.debug(f"Brak CoreML encodera dla modelu {model} — pomijam")
             return True
 
-        if self.is_model_encoder_installed(model):
-            logger.info(f"CoreML encoder dla {model} już zainstalowany")
+        # Install-level lock obejmuje download + extractall + unlink zipa.
+        # Sam lock na pobieranie nie wystarczał: drugi wołający (wizard vs
+        # auto-naprawa daemona) zastawał gotowy zip, wracał od razu i obaj
+        # rozpakowywali RÓWNOLEGLE do models_dir — a unlink pierwszego
+        # potrafił zabrać zip drugiemu sprzed nosa (FileNotFoundError).
+        with _artifact_lock(f"install:ggml-{canonical}-encoder"):
+            if self.is_model_encoder_installed(model):
+                logger.info(f"CoreML encoder dla {model} już zainstalowany")
+                return True
+
+            zip_key = f"ggml-{canonical}-encoder.mlmodelc.zip"
+            expected_size = SIZES.get(zip_key)
+            expected_checksum = CHECKSUMS.get(zip_key)
+
+            zip_dest = self.downloads_dir / zip_key
+            self._download_file(
+                url, zip_dest, f"encoder-{canonical}", expected_size, expected_checksum
+            )
+
+            logger.info(f"Rozpakowywanie CoreML encodera dla {model}...")
+            with zipfile.ZipFile(zip_dest, "r") as zf:
+                zf.extractall(self.models_dir)
+
+            zip_dest.unlink(missing_ok=True)
+            logger.info(f"✓ CoreML encoder dla {model} zainstalowany")
             return True
-
-        zip_key = f"ggml-{canonical}-encoder.mlmodelc.zip"
-        expected_size = SIZES.get(zip_key)
-        expected_checksum = CHECKSUMS.get(zip_key)
-
-        zip_dest = self.downloads_dir / zip_key
-        self._download_file(url, zip_dest, f"encoder-{canonical}", expected_size, expected_checksum)
-
-        logger.info(f"Rozpakowywanie CoreML encodera dla {model}...")
-        with zipfile.ZipFile(zip_dest, "r") as zf:
-            zf.extractall(self.models_dir)
-
-        zip_dest.unlink(missing_ok=True)
-        logger.info(f"✓ CoreML encoder dla {model} zainstalowany")
-        return True
 
     def missing_for_selected_model(self) -> list[tuple[str, int]]:
         """Return missing artifacts required for current selected model.
@@ -315,7 +323,9 @@ class DependencyDownloader:
             missing.append((model_key, int(SIZES.get(model_key, 0))))
 
         encoder_key = f"ggml-{canonical_model}-encoder.mlmodelc.zip"
-        if not self.is_model_encoder_installed(selected_model) and SIZES.get(encoder_key):
+        if not self.is_model_encoder_installed(selected_model) and SIZES.get(
+            encoder_key
+        ):
             missing.append((encoder_key, int(SIZES.get(encoder_key, 0))))
 
         return missing
@@ -343,16 +353,16 @@ class DependencyDownloader:
             and self.is_model_installed(selected_model)
         ):
             return False
-        
+
         # Weryfikuj checksumy
         whisper_path = self.bin_dir / "whisper-cli"
         ffmpeg_path = self.bin_dir / "ffmpeg"
         model_path = self.models_dir / f"ggml-{selected_model}.bin"
-        
+
         whisper_checksum = CHECKSUMS.get("whisper-cli")
         ffmpeg_checksum = CHECKSUMS.get("ffmpeg-arm64")
         model_checksum = CHECKSUMS.get(f"ggml-{selected_model}.bin")
-        
+
         # Weryfikuj whisper-cli
         if whisper_checksum:
             if not self.verify_checksum(whisper_path, whisper_checksum):
@@ -360,7 +370,7 @@ class DependencyDownloader:
                     "Checksum whisper-cli się nie zgadza - plik może być uszkodzony"
                 )
                 return False
-        
+
         # Weryfikuj ffmpeg
         if ffmpeg_checksum:
             if not self.verify_checksum(ffmpeg_path, ffmpeg_checksum):
@@ -368,7 +378,7 @@ class DependencyDownloader:
                     "Checksum ffmpeg się nie zgadza - plik może być uszkodzony"
                 )
                 return False
-        
+
         # Weryfikuj model
         if model_checksum:
             if not self.verify_checksum(model_path, model_checksum):
@@ -376,7 +386,7 @@ class DependencyDownloader:
                     "Checksum modelu się nie zgadza - plik może być uszkodzony"
                 )
                 return False
-        
+
         try:
             self.verify_whisper_runtime()
         except DependencyRuntimeError as error:
@@ -473,8 +483,7 @@ class DependencyDownloader:
         with _artifact_lock(dest.name):
             # Ktoś mógł dokończyć pobieranie, kiedy czekaliśmy na lock.
             if dest.exists() and (
-                not expected_checksum
-                or self.verify_checksum(dest, expected_checksum)
+                not expected_checksum or self.verify_checksum(dest, expected_checksum)
             ):
                 logger.info(f"✓ {name} już pobrany (równoległy wątek)")
                 self._plan_done_bytes += dest.stat().st_size
@@ -525,12 +534,8 @@ class DependencyDownloader:
                 # checksumie .tmp już nie istnieje, a przeniesiona wartość
                 # z poprzedniej próby wysyłała Range: bytes=N- na świeży plik
                 # i pobierała sam ogon (checksum padał w pętli aż do końca prób).
-                resume_from = (
-                    temp_path.stat().st_size if temp_path.exists() else 0
-                )
-                logger.info(
-                    f"Pobieranie {name} (próba {attempt}/{MAX_RETRIES})..."
-                )
+                resume_from = temp_path.stat().st_size if temp_path.exists() else 0
+                logger.info(f"Pobieranie {name} (próba {attempt}/{MAX_RETRIES})...")
 
                 # Przygotuj headers
                 headers = {"User-Agent": "Timshel/2.0.0 (macOS; ARM64)"}
@@ -556,12 +561,21 @@ class DependencyDownloader:
                     # Sprawdź czy sukces
                     response.raise_for_status()
 
+                    # Append tylko gdy serwer POTWIERDZIŁ zakres (206). CDN
+                    # ignorujący Range odpowiada 200 pełnym plikiem — doklejenie
+                    # go do częściowego .tmp dałoby zlepek i błędny checksum.
+                    if resume_from > 0 and response.status_code != 206:
+                        logger.info(
+                            "Serwer zignorował Range — pobieram %s od zera", name
+                        )
+                        temp_path.unlink(missing_ok=True)
+                        resume_from = 0
+
                     # Otwórz plik w trybie append jeśli resume
                     mode = "ab" if resume_from > 0 else "wb"
                     with open(temp_path, mode) as f:
                         total_size = (
-                            int(response.headers.get("Content-Length", 0))
-                            + resume_from
+                            int(response.headers.get("Content-Length", 0)) + resume_from
                         )
                         downloaded = resume_from
                         last_reported_percent = -1
@@ -596,9 +610,7 @@ class DependencyDownloader:
                     if not self.verify_checksum(temp_path, expected_checksum):
                         logger.error(f"Błędny checksum dla {name}")
                         temp_path.unlink(missing_ok=True)
-                        raise ChecksumError(
-                            f"Checksum nie zgadza się dla {name}"
-                        )
+                        raise ChecksumError(f"Checksum nie zgadza się dla {name}")
 
                 # Przenieś do docelowej lokalizacji
                 temp_path.rename(dest)
@@ -626,9 +638,7 @@ class DependencyDownloader:
             except (httpx.NetworkError, httpx.ConnectError) as e:
                 if attempt < MAX_RETRIES:
                     wait_time = 2 ** (attempt - 1)
-                    logger.warning(
-                        f"Connection error, retry in {wait_time}s…"
-                    )
+                    logger.warning(f"Connection error, retry in {wait_time}s…")
                     time.sleep(wait_time)
                     continue
                 raise NetworkError(f"Connection error: {e}")
@@ -645,9 +655,7 @@ class DependencyDownloader:
                     continue
                 raise DownloadError(f"Error while downloading {name}: {e}")
 
-        raise DownloadError(
-            f"Failed to download {name} after {MAX_RETRIES} attempts"
-        )
+        raise DownloadError(f"Failed to download {name} after {MAX_RETRIES} attempts")
 
     def download_whisper(self) -> bool:
         """Pobierz whisper.cpp binary.
@@ -664,17 +672,21 @@ class DependencyDownloader:
             raise RuntimeError(f"Nieobsługiwana architektura: {arch}")
 
         distribution = self._whisper_distribution()
-        url = URLS["whisper"]
-        dest = self.bin_dir / "whisper-cli"
-        expected_size = SIZES.get("whisper-cli")
-        expected_checksum = CHECKSUMS.get("whisper-cli")
-
         if distribution == "bundled":
-            archive_name = "whisper-bundled-arm64.tar.gz"
-            archive_dest = self.downloads_dir / archive_name
-            expected_size = SIZES.get(archive_name)
-            expected_checksum = CHECKSUMS.get(archive_name)
+            return self._download_whisper_bundled()
+        return self._download_whisper_static()
 
+    def _download_whisper_bundled(self) -> bool:
+        url = URLS["whisper"]
+        archive_name = "whisper-bundled-arm64.tar.gz"
+        archive_dest = self.downloads_dir / archive_name
+        expected_size = SIZES.get(archive_name)
+        expected_checksum = CHECKSUMS.get(archive_name)
+
+        # Install-level lock: download + extract + unlink jako całość — ten
+        # sam wzorzec co encoder (dwóch instalujących = przeplot w bin/ albo
+        # tarball wyrwany sprzed nosa).
+        with _artifact_lock("install:whisper-bundled"):
             # Broken migration: existing bare whisper-cli from old deps-v1.0.0.
             if self.is_whisper_installed() and not self._is_bundled_install_complete():
                 logger.warning(
@@ -684,7 +696,9 @@ class DependencyDownloader:
                 self._cleanup_bundled_whisper()
 
             if self._is_bundled_install_complete():
-                if expected_checksum and self.verify_checksum(archive_dest, expected_checksum):
+                if expected_checksum and self.verify_checksum(
+                    archive_dest, expected_checksum
+                ):
                     logger.info("Bundled whisper archive już zweryfikowany")
                 try:
                     self.verify_whisper_runtime()
@@ -709,6 +723,12 @@ class DependencyDownloader:
                 logger.debug("Could not remove whisper archive: %s", archive_dest)
             self.verify_whisper_runtime()
             return True
+
+    def _download_whisper_static(self) -> bool:
+        url = URLS["whisper"]
+        dest = self.bin_dir / "whisper-cli"
+        expected_size = SIZES.get("whisper-cli")
+        expected_checksum = CHECKSUMS.get("whisper-cli")
 
         # Sprawdź czy plik istnieje, ma poprawny checksum i działa w runtime
         if self.is_whisper_installed():
@@ -875,4 +895,3 @@ class DependencyDownloader:
         finally:
             self._plan_total_bytes = 0
             self._plan_done_bytes = 0
-
