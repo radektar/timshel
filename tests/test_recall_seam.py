@@ -341,3 +341,43 @@ def test_failed_rebuild_drops_wedged_engine(monkeypatch):
     exc = sqlite3.DatabaseError("database disk image is malformed")
     assert seam._heal_if_corrupt(exc, eng) is False
     assert seam._ENGINE is None  # wedged engine dropped -> lazy rebuild works
+
+
+def test_timed_out_reset_retires_engine_via_deferred_thread(monkeypatch):
+    # A heal holding _ENGINE_LOCK past reset's 1s timeout must not let the
+    # published OLD-config engine survive the reset — the deferred thread
+    # retires it once the lock frees.
+    import time
+
+    closes = {"count": 0}
+    restarts = {"count": 0}
+
+    class _Eng:
+        def close(self):
+            closes["count"] += 1
+
+    seam._ENGINE = _Eng()
+    monkeypatch.setattr(seam, "_INDEX_STARTED", True)
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: restarts.__setitem__("count", restarts["count"] + 1),
+    )
+
+    seam._ENGINE_LOCK.acquire()  # simulate a slow heal/builder holding the lock
+    try:
+        t0 = time.monotonic()
+        seam.reset_engine()  # times out at 1s, defers, must NOT block longer
+        assert time.monotonic() - t0 < 3.0
+        assert seam._ENGINE is not None  # swap genuinely deferred
+    finally:
+        seam._ENGINE_LOCK.release()
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if seam._ENGINE is None and closes["count"] == 1:
+            break
+        time.sleep(0.02)
+    assert seam._ENGINE is None  # deferred thread retired the stale engine
+    assert closes["count"] == 1
+    assert restarts["count"] >= 1  # and re-requested an indexing pass

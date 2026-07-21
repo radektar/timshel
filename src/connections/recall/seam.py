@@ -261,6 +261,29 @@ def search_safe(query: str, k: int = 8):
     return results, confidence
 
 
+def _deferred_reset() -> None:
+    """Finish a reset whose 1s lock acquire timed out: retire whatever engine
+    is published once the slow holder (builder or heal) releases the lock,
+    then re-request a backfill pass so the index converges on the new config."""
+    global _ENGINE
+    with _ENGINE_LOCK:
+        old = _ENGINE
+        _ENGINE = None
+    if old is not None:
+        try:
+            old.close()
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        from src.connections.candidate_assembly import reset_recall_engines
+
+        reset_recall_engines()
+    except Exception as exc:  # noqa: BLE001 - pragma: no cover
+        logger.debug("recall: digest engine cache reset failed: %s", exc)
+    if _INDEX_STARTED:
+        start_background_index()
+
+
 def lexical_only():
     """The ACTIVE engine's mode: True (lexical-only), False (dense), or
     ``None`` when no engine is cached — 'unknown' must stay distinguishable,
@@ -283,9 +306,9 @@ def reset_engine() -> None:
     """
     global _ENGINE, _ENGINE_GEN
     _ENGINE_GEN += 1  # invalidate any in-flight construction (old config)
-    # Bounded wait: if a slow construction holds the lock (model download),
-    # do NOT beachball the caller (settings save runs on the main thread) —
-    # the generation bump already guarantees that build gets discarded.
+    # Bounded wait: if a slow lock-holder is in the way (model download in a
+    # builder, or a heal mid-rebuild), do NOT beachball the caller (settings
+    # save runs on the main thread).
     acquired = _ENGINE_LOCK.acquire(timeout=1.0)
     old = None
     if acquired:
@@ -294,10 +317,17 @@ def reset_engine() -> None:
             _ENGINE = None
         finally:
             _ENGINE_LOCK.release()
-    # NOT acquired → a builder holds the lock, so _ENGINE is either None or a
-    # freshly-published NEW-generation engine. Touching it unlocked could
-    # steal-and-close that valid engine (or orphan it) — skip the swap; the
-    # gen bump alone retires the in-flight build.
+    else:
+        # NOT acquired. Touching _ENGINE unlocked could steal-and-close a
+        # freshly-published valid engine — and skipping the swap outright is
+        # wrong too: the holder may be a HEAL rebuilding the still-published
+        # OLD-config engine, which would then survive this reset and keep
+        # serving (and re-indexing) the old vault forever. Defer the swap to
+        # a small daemon thread that waits out the holder and retires
+        # whatever is published then.
+        threading.Thread(
+            target=_deferred_reset, name="RecallDeferredReset", daemon=True
+        ).start()
     if old is not None:
         try:
             old.close()
