@@ -739,6 +739,18 @@ class DependencyDownloader:
         expected_size = SIZES.get("whisper-cli")
         expected_checksum = CHECKSUMS.get("whisper-cli")
 
+        # Install-level lock jak w wariancie bundled — static to AKTYWNA
+        # dystrybucja, a force-unlink bez locka mógł wyrwać świeżo
+        # zainstalowaną binarkę równoległej instalacji tuż przed jej
+        # verify_whisper_runtime.
+        with _artifact_lock("install:whisper-static"):
+            return self._download_whisper_static_locked(
+                url, dest, expected_size, expected_checksum, force
+            )
+
+    def _download_whisper_static_locked(
+        self, url, dest, expected_size, expected_checksum, force
+    ) -> bool:
         if force:
             dest.unlink(missing_ok=True)
 
