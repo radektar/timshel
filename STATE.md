@@ -3,6 +3,26 @@
 Data: 2026-07-21 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
+## Downloader — wyścig + stale resume NAPRAWIONE (PR #85, merge 2026-07-21)
+
+Test Gatekeepera na drugim Macu złapał na żywo: encoder-small nie instalował
+się nigdy (3 próby + [Errno 2] na rename). Dwa root cause'y: (1) wizard
+(background download) i daemon (auto-naprawa encodera) pobierały RÓWNOLEGLE
+do jednego .tmp (append → przeplot → zły checksum, rename jednego wyrywał
+plik drugiemu); (2) retry po błędzie checksumy wznawiał ze stale offsetem
+(Range na świeży plik → sam ogon → pętla błędów). Fix: locki per-artefakt
++ locki instalacyjne (download+extract+unlink jako całość, encoder/bundled/
+static), resume liczony per-próba, checksum na .tmp PRZED rename, append
+tylko przy 206, repair cleanup pod lockiem. Pętla review: R1(5)→R2(2)→R3(1)
+→R4 PUSTA. Suita **1163** + mypy; SMOKE PASS. Znane kosmetyczne: czekający
+na locku nie emituje progresu przez czas cudzego pobierania.
+**Tester DMG `d2d3ecf1…` (stamp `1b2fab6`) na iCloud `Timshel/`** — zastępuje
+`902a9a24…`. Doraźnie na drugim Macu: `rm -f ~/Library/"Application
+Support"/Timshel/downloads/*.tmp` + restart odblokowuje stary build.
+Onboarding testera przetłumaczony na PL i zaktualizowany pod ten build
+(PR #84); suchy przebieg rytuału (signal-report + feedback zip) PASS —
+paczka zgodna z obietnicą prywatności (uwaga: manifest niesie hostname).
+
 ## Wyszukiwarka w bundlu — NAPRAWIONA (PR #82, merge 2026-07-21)
 
 Tryb **lexical-only**: bez fastembed/sqlite-vec silnik degraduje do czystego
