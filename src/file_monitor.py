@@ -7,6 +7,7 @@ from pathlib import Path
 
 try:
     from fsevents import Observer, Stream
+
     FSEVENTS_AVAILABLE = True
 except ImportError:
     FSEVENTS_AVAILABLE = False
@@ -23,7 +24,6 @@ from src.volume_utils import (
 )
 from src import volume_session
 
-
 # Decyzja zwracana przez ``on_unknown_volume`` callback do file monitora.
 DECISION_TRUSTED = "trusted"
 DECISION_BLOCKED = "blocked"
@@ -36,22 +36,13 @@ DECISION_NONE = "none"
 # z wartości powyżej.
 UnknownVolumeCallback = Callable[[Path, str], str]
 
-def is_disk_image_volume(volume_path: Path) -> bool:
-    """True gdy wolumen pochodzi z zamontowanego obrazu dysku (DMG).
 
-    Bez tego filtra apka pyta „czy to rejestrator?" o KAŻDY zamontowany
-    instalator — łącznie z własnym DMG Timshela, co widzi każdy świeży tester.
-    ``hdiutil info`` zna mount-pointy wszystkich podpiętych obrazów; przy
-    błędzie zwracamy False (lepiej zapytać o dysk raz za dużo niż przeoczyć
-    prawdziwy rejestrator).
-    """
+def disk_image_mount_points() -> set:
+    """Mount-pointy wszystkich podpiętych obrazów dysku (DMG) — jedno
+    wywołanie ``hdiutil info`` na zapytanie. Pusty set przy błędzie (lepiej
+    zapytać o dysk raz za dużo niż przeoczyć prawdziwy rejestrator)."""
     import plistlib
     import subprocess
-
-    # Prawdziwe wolumeny montują się wyłącznie pod /Volumes — dla innych
-    # ścieżek (testowe tmp-dir'y, katalogi robocze) nie odpalamy hdiutil.
-    if not str(volume_path).startswith("/Volumes/"):
-        return False
 
     try:
         result = subprocess.run(
@@ -61,18 +52,32 @@ def is_disk_image_volume(volume_path: Path) -> bool:
             check=False,
         )
         if result.returncode != 0:
-            return False
+            return set()
         data = plistlib.loads(result.stdout)
     except Exception as exc:  # noqa: BLE001 - defensive: never block detection
         logger.debug("hdiutil info failed: %s", exc)
-        return False
+        return set()
 
+    mounts = set()
     for image in data.get("images", []):
         for entity in image.get("system-entities", []):
             mount_point = entity.get("mount-point")
-            if mount_point and Path(mount_point) == volume_path:
-                return True
-    return False
+            if mount_point:
+                mounts.add(Path(mount_point))
+    return mounts
+
+
+def is_disk_image_volume(volume_path: Path) -> bool:
+    """True gdy wolumen pochodzi z zamontowanego obrazu dysku (DMG).
+
+    Bez tego filtra apka pyta „czy to rejestrator?" o KAŻDY zamontowany
+    instalator — łącznie z własnym DMG Timshela, co widzi każdy świeży tester.
+    """
+    # Prawdziwe wolumeny montują się wyłącznie pod /Volumes — dla innych
+    # ścieżek (testowe tmp-dir'y, katalogi robocze) nie odpalamy hdiutil.
+    if not str(volume_path).startswith("/Volumes/"):
+        return False
+    return volume_path in disk_image_mount_points()
 
 
 # Per-UUID guard: FSEvents (on_change) i periodic checker (scan_unknown_volumes)
@@ -116,8 +121,7 @@ class FileMonitor:
         """
         if not FSEVENTS_AVAILABLE:
             logger.warning(
-                "⚠️  FSEvents not available. Install with: "
-                "pip install MacFSEvents"
+                "⚠️  FSEvents not available. Install with: " "pip install MacFSEvents"
             )
 
         self.callback = callback
@@ -126,20 +130,20 @@ class FileMonitor:
         self.is_monitoring = False
         self._last_trigger_time = 0.0
         self._debounce_seconds = 2.0  # Prevent multiple rapid triggers
-    
+
     def start(self) -> None:
         """Start monitoring /Volumes for mount events."""
         if not FSEVENTS_AVAILABLE:
             logger.error("Cannot start FSEvents monitor - library not available")
             return
-        
+
         if self.is_monitoring:
             logger.warning("Monitor already running")
             return
-        
+
         try:
             self.observer = Observer()
-            
+
             def on_change(path, mask):
                 """Callback for FSEvents changes."""
                 current_time = time.time()
@@ -206,14 +210,14 @@ class FileMonitor:
                     self.callback()
                 except Exception as e:
                     logger.error(f"Error in callback: {e}", exc_info=True)
-            
+
             # Create stream watching /Volumes
             stream = Stream(on_change, "/Volumes", file_events=False)
             self.observer.schedule(stream)
-            
+
             self.is_monitoring = True
             self.observer.start()
-            
+
             logger.info("✓ FSEvents monitor started (watching /Volumes)")
 
             self._initial_scan()
@@ -302,9 +306,7 @@ class FileMonitor:
         # tutaj, dopóki pierwszy dialog nie zostanie rozstrzygnięty.
         with _PROMPTS_LOCK:
             if uuid in _PROMPTS_IN_FLIGHT:
-                logger.debug(
-                    "Prompt for volume %s already in flight — skipping", uuid
-                )
+                logger.debug("Prompt for volume %s already in flight — skipping", uuid)
                 return False
             _PROMPTS_IN_FLIGHT.add(uuid)
 
@@ -388,6 +390,9 @@ class FileMonitor:
             self.on_unknown_volume is not None and settings.watch_mode == "manual"
         )
         mounted_uuids: set[str] = set()
+        # Jedno wywołanie hdiutil na CAŁY cykl skanu (nie per wolumen) —
+        # leniwie, tylko gdy jakiś nieznany wolumen dojdzie do filtra.
+        dmg_mounts: Optional[set] = None
 
         for candidate in candidates:
             try:
@@ -406,6 +411,19 @@ class FileMonitor:
             if volume_session.is_approved_once(uuid):
                 continue
             if settings.find_trusted_volume(uuid) is not None:
+                continue
+            if dmg_mounts is None:
+                dmg_mounts = disk_image_mount_points()
+            if candidate in dmg_mounts:
+                # DMG (np. własny instalator Timshela) nigdy nie jest
+                # rejestratorem. Filtr PRZED logiem: bez tego każdy 30s cykl
+                # dokłada do loga parę linii "unknown volume — prompting /
+                # ignoring", dopóki obraz jest zamontowany. Debug-ślad, żeby
+                # support odróżnił "odfiltrowany jako DMG" od "nigdy nie widziany".
+                logger.debug(
+                    "Periodic scan: %s is a mounted disk image — skipping",
+                    candidate.name,
+                )
                 continue
 
             logger.info(
@@ -468,12 +486,12 @@ class FileMonitor:
             True if audio files found, False otherwise
         """
         return has_audio_files(path, max_depth=max_depth)
-    
+
     def stop(self) -> None:
         """Stop monitoring."""
         if not self.observer:
             return
-        
+
         try:
             self.observer.stop()
             self.observer.join(timeout=5.0)
@@ -481,4 +499,3 @@ class FileMonitor:
             logger.info("✓ FSEvents monitor stopped")
         except Exception as e:
             logger.error(f"Error stopping monitor: {e}", exc_info=True)
-

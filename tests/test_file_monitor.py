@@ -32,7 +32,7 @@ def mock_callback():
 def test_file_monitor_initialization(mock_callback):
     """Test FileMonitor initializes correctly."""
     monitor = FileMonitor(mock_callback)
-    
+
     assert monitor.callback == mock_callback
     assert monitor.observer is None
     assert not monitor.is_monitoring
@@ -40,36 +40,36 @@ def test_file_monitor_initialization(mock_callback):
 
 def test_file_monitor_start_without_fsevents(mock_callback):
     """Test start when FSEvents is not available."""
-    with patch('src.file_monitor.FSEVENTS_AVAILABLE', False):
+    with patch("src.file_monitor.FSEVENTS_AVAILABLE", False):
         monitor = FileMonitor(mock_callback)
         monitor.start()
-        
+
         assert not monitor.is_monitoring
 
 
-@patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-@patch('src.file_monitor.Observer')
-@patch('src.file_monitor.Stream')
+@patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+@patch("src.file_monitor.Observer")
+@patch("src.file_monitor.Stream")
 def test_file_monitor_start_success(mock_stream, mock_observer, mock_callback):
     """Test successful start of file monitor."""
     monitor = FileMonitor(mock_callback)
-    
+
     mock_observer_instance = MagicMock()
     mock_observer.return_value = mock_observer_instance
-    
+
     monitor.start()
-    
+
     assert monitor.is_monitoring
     mock_observer_instance.start.assert_called_once()
 
 
-@patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
+@patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
 def test_file_monitor_start_already_running(mock_callback):
     """Test start when already monitoring."""
     monitor = FileMonitor(mock_callback)
     monitor.is_monitoring = True
-    
-    with patch('src.file_monitor.Observer'):
+
+    with patch("src.file_monitor.Observer"):
         monitor.start()
         # Should not create new observer
 
@@ -77,13 +77,13 @@ def test_file_monitor_start_already_running(mock_callback):
 def test_file_monitor_stop(mock_callback):
     """Test stop method."""
     monitor = FileMonitor(mock_callback)
-    
+
     mock_observer = MagicMock()
     monitor.observer = mock_observer
     monitor.is_monitoring = True
-    
+
     monitor.stop()
-    
+
     mock_observer.stop.assert_called_once()
     mock_observer.join.assert_called_once()
     assert not monitor.is_monitoring
@@ -93,60 +93,69 @@ def test_file_monitor_stop_no_observer(mock_callback):
     """Test stop when no observer exists."""
     monitor = FileMonitor(mock_callback)
     monitor.observer = None
-    
+
     # Should not raise any errors
     monitor.stop()
 
 
-@patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-@patch('src.file_monitor.Observer')
-@patch('src.file_monitor.Stream')
-@patch('src.file_monitor.find_matching_volumes', return_value=[])
+@patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+@patch("src.file_monitor.Observer")
+@patch("src.file_monitor.Stream")
+@patch("src.file_monitor.find_matching_volumes", return_value=[])
 def test_file_monitor_ignores_system_directories(
     mock_find, mock_stream, mock_observer, mock_callback
 ):
     """Test that system directories like .Spotlight-V100 are ignored."""
     from src.file_monitor import FileMonitor
     import time
-    
+
     monitor = FileMonitor(mock_callback)
     monitor._last_trigger_time = 0.0  # Reset debounce timer
-    
+
     mock_observer_instance = MagicMock()
     mock_observer.return_value = mock_observer_instance
-    
+
     # Capture the on_change callback
     on_change_callback = None
+
     def capture_stream(callback, path, **kwargs):
         nonlocal on_change_callback
         on_change_callback = callback
         return MagicMock()
-    
+
     mock_stream.side_effect = capture_stream
-    
+
     monitor.start()
-    
+
     # Simulate FSEvents callback with system directory path
     if on_change_callback:
         on_change_callback("/Volumes/LS-P1/.Spotlight-V100/Store-V2", 0)
         time.sleep(0.1)  # Small delay to ensure callback processing
-    
+
     # Callback should not have been called
     mock_callback.assert_not_called()
 
 
-@patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-@patch('src.file_monitor.Observer')
-@patch('src.file_monitor.Stream')
-@patch('src.file_monitor.time.sleep')
-@patch('src.file_monitor.UserSettings')
-@patch('src.file_monitor.find_matching_volumes', return_value=[])
-def test_file_monitor_triggers_on_valid_path(mock_find, mock_user_settings, mock_sleep, mock_stream, mock_observer, mock_callback, tmp_path):
+@patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+@patch("src.file_monitor.Observer")
+@patch("src.file_monitor.Stream")
+@patch("src.file_monitor.time.sleep")
+@patch("src.file_monitor.UserSettings")
+@patch("src.file_monitor.find_matching_volumes", return_value=[])
+def test_file_monitor_triggers_on_valid_path(
+    mock_find,
+    mock_user_settings,
+    mock_sleep,
+    mock_stream,
+    mock_observer,
+    mock_callback,
+    tmp_path,
+):
     """Test that valid recorder paths trigger the callback."""
     from src.file_monitor import FileMonitor
     from src.config.settings import UserSettings
     import time
-    
+
     # Create mock volume structure
     volumes_dir = tmp_path / "Volumes"
     volumes_dir.mkdir()
@@ -154,39 +163,42 @@ def test_file_monitor_triggers_on_valid_path(mock_find, mock_user_settings, mock
     ls_p1_volume.mkdir()
     (ls_p1_volume / "Folder").mkdir()
     (ls_p1_volume / "Folder" / "audio.mp3").touch()
-    
+
     # Mock UserSettings z trybem manual + zaufanym dyskem (UUID-LS)
     mock_settings = UserSettings()
     mock_settings.watch_mode = "manual"
     mock_settings.add_trusted_volume("UUID-LS", "LS-P1", "trusted")
     mock_user_settings.load.return_value = mock_settings
-    
+
     # Mock Path("/Volumes") to return our test volumes directory
     original_path = Path
+
     def mock_path_constructor(path_str):
         if path_str == "/Volumes":
             return volumes_dir
         return original_path(path_str)
-    
+
     monitor = FileMonitor(mock_callback)
     monitor._last_trigger_time = 0.0  # Reset debounce timer
-    
+
     mock_observer_instance = MagicMock()
     mock_observer.return_value = mock_observer_instance
-    
+
     # Capture the on_change callback
     on_change_callback = None
+
     def capture_stream(callback, path, **kwargs):
         nonlocal on_change_callback
         on_change_callback = callback
         return MagicMock()
-    
+
     mock_stream.side_effect = capture_stream
-    
+
     # Patch Path("/Volumes") in file_monitor module + UUID lookup w volume_utils
     # (file_monitor._authorize_volume → should_process_volume → get_volume_uuid)
-    with patch('src.file_monitor.Path', side_effect=mock_path_constructor), \
-         patch('src.volume_utils.get_volume_uuid', return_value="UUID-LS"):
+    with patch("src.file_monitor.Path", side_effect=mock_path_constructor), patch(
+        "src.volume_utils.get_volume_uuid", return_value="UUID-LS"
+    ):
         monitor.start()
 
         # Simulate FSEvents callback with valid audio file path
@@ -198,46 +210,47 @@ def test_file_monitor_triggers_on_valid_path(mock_find, mock_user_settings, mock
         mock_callback.assert_called_once()
 
 
-@patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-@patch('src.file_monitor.Observer')
-@patch('src.file_monitor.Stream')
-@patch('src.file_monitor.find_matching_volumes', return_value=[])
+@patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+@patch("src.file_monitor.Observer")
+@patch("src.file_monitor.Stream")
+@patch("src.file_monitor.find_matching_volumes", return_value=[])
 def test_file_monitor_ignores_non_recorder_paths(
     mock_find, mock_stream, mock_observer, mock_callback
 ):
     """Test that paths not under recorder volumes are ignored."""
     from src.file_monitor import FileMonitor
     import time
-    
+
     monitor = FileMonitor(mock_callback)
     monitor._last_trigger_time = 0.0  # Reset debounce timer
-    
+
     mock_observer_instance = MagicMock()
     mock_observer.return_value = mock_observer_instance
-    
+
     # Capture the on_change callback
     on_change_callback = None
+
     def capture_stream(callback, path, **kwargs):
         nonlocal on_change_callback
         on_change_callback = callback
         return MagicMock()
-    
+
     mock_stream.side_effect = capture_stream
-    
+
     monitor.start()
-    
+
     # Simulate FSEvents callback with path not under recorder
     if on_change_callback:
         on_change_callback("/Volumes/OtherDisk/file.txt", 0)
         time.sleep(0.1)  # Small delay to ensure callback processing
-    
+
     # Callback should not have been called
     mock_callback.assert_not_called()
 
 
 class TestFileMonitorVolumeDetection:
     """Test suite for universal volume detection (v2.0.0)."""
-    
+
     def test_manual_mode_blank_rejects_unknown(self, tmp_path):
         """v2.0.0-beta.2: tryb manual bez whitelist odrzuca każdy nieznany dysk."""
         monitor = FileMonitor(Mock())
@@ -265,7 +278,7 @@ class TestFileMonitorVolumeDetection:
         with patch("src.volume_utils.get_volume_uuid", return_value="UUID-LS"):
             result = monitor._should_process_volume(test_volume, settings)
         assert result is True
-    
+
     def test_should_process_volume_specific_mode_in_list(self, tmp_path):
         """Test specific mode processes volumes in watched list."""
         monitor = FileMonitor(Mock())
@@ -344,160 +357,161 @@ class TestFileMonitorVolumeDetection:
 
 class TestFileMonitorAudioDetection:
     """Test suite for audio file detection."""
-    
+
     def test_has_audio_files_detects_mp3(self, tmp_path):
         """Test detection of .mp3 files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "audio.mp3").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_detects_wav(self, tmp_path):
         """Test detection of .wav files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "recording.wav").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_detects_m4a(self, tmp_path):
         """Test detection of .m4a files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "audio.m4a").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_detects_flac(self, tmp_path):
         """Test detection of .flac files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "audio.flac").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_detects_aac(self, tmp_path):
         """Test detection of .aac files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "audio.aac").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_detects_ogg(self, tmp_path):
         """Test detection of .ogg files."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "audio.ogg").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_case_insensitive(self, tmp_path):
         """Test that audio detection is case-insensitive."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "AUDIO.MP3").touch()  # Uppercase extension
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_ignores_non_audio(self, tmp_path):
         """Test that non-audio files are ignored."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "document.txt").touch()
         (test_dir / "image.jpg").touch()
         (test_dir / "video.mp4").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is False
-    
+
     def test_has_audio_files_nested_directories(self, tmp_path):
         """Test detection in nested directories."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
         (test_dir / "folder1" / "folder2").mkdir(parents=True)
         (test_dir / "folder1" / "folder2" / "audio.mp3").touch()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is True
-    
+
     def test_has_audio_files_respects_max_depth(self, tmp_path):
         """Test that max_depth limits scanning depth."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
-        
+
         # Create file beyond max_depth (default is 3)
         deep_path = test_dir
         for i in range(5):  # 5 levels deep
             deep_path = deep_path / f"level{i}"
             deep_path.mkdir()
         (deep_path / "audio.mp3").touch()
-        
+
         # Should not find it due to depth limit
         result = monitor._has_audio_files(test_dir, max_depth=3)
         assert result is False
-        
+
         # Should find it with higher depth
         result = monitor._has_audio_files(test_dir, max_depth=6)
         assert result is True
-    
+
     def test_has_audio_files_handles_permission_error(self, tmp_path, monkeypatch):
         """Test that permission errors are handled gracefully."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
-        
+
         # Mock Path.rglob to raise PermissionError when called on test_dir
         original_rglob = Path.rglob
+
         def mock_rglob(self, pattern):
             if self == test_dir:
                 raise PermissionError("Access denied")
             return original_rglob(self, pattern)
-        
+
         monkeypatch.setattr(Path, "rglob", mock_rglob)
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is False
-    
+
     def test_has_audio_files_empty_directory(self, tmp_path):
         """Test that empty directory returns False."""
         monitor = FileMonitor(Mock())
-        
+
         test_dir = tmp_path / "test"
         test_dir.mkdir()
-        
+
         result = monitor._has_audio_files(test_dir)
         assert result is False
-    
+
     def test_has_audio_files_only_directories(self, tmp_path):
         """Test that directories without files return False."""
         monitor = FileMonitor(Mock())
@@ -525,8 +539,8 @@ class TestScanUnknownVolumes:
         root = tmp_path / "Volumes"
         root.mkdir()
         (root / "Macintosh HD").mkdir()  # system
-        (root / "LS-P1").mkdir()         # already trusted
-        (root / "SD_CARD").mkdir()       # unknown → should prompt
+        (root / "LS-P1").mkdir()  # already trusted
+        (root / "SD_CARD").mkdir()  # unknown → should prompt
         return root
 
     @pytest.fixture
@@ -537,9 +551,9 @@ class TestScanUnknownVolumes:
         return settings
 
     def _run(self, monitor, volumes_root, settings):
-        with patch("src.file_monitor.UserSettings.load", return_value=settings), \
-             patch("src.file_monitor.get_volume_uuid", side_effect=_uuid_for), \
-             patch("src.volume_utils.get_volume_uuid", side_effect=_uuid_for):
+        with patch("src.file_monitor.UserSettings.load", return_value=settings), patch(
+            "src.file_monitor.get_volume_uuid", side_effect=_uuid_for
+        ), patch("src.volume_utils.get_volume_uuid", side_effect=_uuid_for):
             monitor.scan_unknown_volumes(volumes_root=volumes_root)
 
     def test_prompts_only_for_unknown_volume(self, volumes_root, manual_settings):
@@ -552,6 +566,30 @@ class TestScanUnknownVolumes:
         handler.assert_called_once()
         prompted_path = handler.call_args.args[0]
         assert Path(prompted_path).name == "SD_CARD"
+
+    def test_disk_image_volume_is_skipped_silently(
+        self, volumes_root, manual_settings, caplog
+    ):
+        """A mounted DMG (e.g. Timshel's own installer) must be filtered
+        BEFORE the 'unknown volume — prompting' log — otherwise every 30s
+        periodic cycle spams the log for as long as the image stays mounted."""
+        import logging
+
+        (volumes_root / "Timshel Installer").mkdir()
+        handler = Mock(return_value=DECISION_ONCE)
+        monitor = FileMonitor(Mock(), on_unknown_volume=handler)
+
+        with patch(
+            "src.file_monitor.disk_image_mount_points",
+            return_value={volumes_root / "Timshel Installer"},
+        ), caplog.at_level(logging.INFO):
+            self._run(monitor, volumes_root, manual_settings)
+
+        # Prompted only for the real unknown disk, never for the DMG…
+        prompted = [c.args[0] for c in handler.call_args_list]
+        assert all(Path(p).name != "Timshel Installer" for p in prompted)
+        # …and the DMG produced ZERO log lines in the scan.
+        assert not [r for r in caplog.records if "Timshel Installer" in r.getMessage()]
 
     def test_persists_trusted_decision(self, volumes_root, manual_settings):
         """A 'Yes' for an unknown disk is persisted as trusted."""
@@ -673,7 +711,9 @@ class TestScanUnknownVolumes:
         (root / "Macintosh HD").mkdir()
         (root / "LS-P1").mkdir()  # trusted, still mounted; SD_CARD is gone
 
-        monitor = FileMonitor(Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE))
+        monitor = FileMonitor(
+            Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE)
+        )
         self._run(monitor, root, manual_settings)
 
         assert volume_session.is_approved_once("UUID-SD") is False
@@ -683,7 +723,9 @@ class TestScanUnknownVolumes:
         from src import volume_session
 
         volume_session.approve_once("UUID-SD")  # SD_CARD is present in volumes_root
-        monitor = FileMonitor(Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE))
+        monitor = FileMonitor(
+            Mock(), on_unknown_volume=Mock(return_value=DECISION_ONCE)
+        )
 
         self._run(monitor, volumes_root, manual_settings)
 
@@ -718,10 +760,10 @@ class TestFileMonitorInitialScan:
     the observer is up.
     """
 
-    @patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-    @patch('src.file_monitor.Observer')
-    @patch('src.file_monitor.Stream')
-    @patch('src.file_monitor.find_matching_volumes')
+    @patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+    @patch("src.file_monitor.Observer")
+    @patch("src.file_monitor.Stream")
+    @patch("src.file_monitor.find_matching_volumes")
     def test_start_triggers_callback_when_volume_preexists(
         self,
         mock_find,
@@ -739,10 +781,10 @@ class TestFileMonitorInitialScan:
 
         mock_callback.assert_called_once()
 
-    @patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-    @patch('src.file_monitor.Observer')
-    @patch('src.file_monitor.Stream')
-    @patch('src.file_monitor.find_matching_volumes')
+    @patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+    @patch("src.file_monitor.Observer")
+    @patch("src.file_monitor.Stream")
+    @patch("src.file_monitor.find_matching_volumes")
     def test_start_does_not_trigger_when_no_volumes(
         self,
         mock_find,
@@ -759,10 +801,10 @@ class TestFileMonitorInitialScan:
 
         mock_callback.assert_not_called()
 
-    @patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-    @patch('src.file_monitor.Observer')
-    @patch('src.file_monitor.Stream')
-    @patch('src.file_monitor.find_matching_volumes')
+    @patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+    @patch("src.file_monitor.Observer")
+    @patch("src.file_monitor.Stream")
+    @patch("src.file_monitor.find_matching_volumes")
     def test_start_calls_callback_once_regardless_of_volume_count(
         self,
         mock_find,
@@ -788,10 +830,10 @@ class TestFileMonitorInitialScan:
 
         assert mock_callback.call_count == 1
 
-    @patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-    @patch('src.file_monitor.Observer')
-    @patch('src.file_monitor.Stream')
-    @patch('src.file_monitor.find_matching_volumes')
+    @patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+    @patch("src.file_monitor.Observer")
+    @patch("src.file_monitor.Stream")
+    @patch("src.file_monitor.find_matching_volumes")
     def test_initial_scan_sets_debounce_timer(
         self,
         mock_find,
@@ -812,10 +854,10 @@ class TestFileMonitorInitialScan:
 
         assert monitor._last_trigger_time > 0.0
 
-    @patch('src.file_monitor.FSEVENTS_AVAILABLE', True)
-    @patch('src.file_monitor.Observer')
-    @patch('src.file_monitor.Stream')
-    @patch('src.file_monitor.find_matching_volumes')
+    @patch("src.file_monitor.FSEVENTS_AVAILABLE", True)
+    @patch("src.file_monitor.Observer")
+    @patch("src.file_monitor.Stream")
+    @patch("src.file_monitor.find_matching_volumes")
     def test_initial_scan_swallows_callback_exceptions(
         self,
         mock_find,
@@ -834,6 +876,3 @@ class TestFileMonitorInitialScan:
 
         assert monitor.is_monitoring is True
         failing_callback.assert_called_once()
-
-
-
