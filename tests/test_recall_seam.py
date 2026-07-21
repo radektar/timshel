@@ -70,13 +70,13 @@ def _reset_seam_engine():
     seam._INDEX_STARTED = False
     seam._BACKFILL_ACTIVE = False
     seam._BACKFILL_PENDING = False
-    seam._LAST_HEAL_MONO = 0.0
+    seam._LAST_HEAL_MONO = -seam._HEAL_COOLDOWN_S
     yield
     seam._ENGINE = None
     seam._INDEX_STARTED = False
     seam._BACKFILL_ACTIVE = False
     seam._BACKFILL_PENDING = False
-    seam._LAST_HEAL_MONO = 0.0
+    seam._LAST_HEAL_MONO = -seam._HEAL_COOLDOWN_S
 
 
 def test_engine_singleton_concurrent_init(monkeypatch):
@@ -199,6 +199,7 @@ def test_start_background_index_single_flight(monkeypatch):
     # N rapid requests must not stack N threads: while a pass runs, later
     # calls coalesce into exactly ONE more pass with the current engine.
     import threading as th
+    import time
 
     gate = th.Event()
     passes = {"count": 0}
@@ -210,28 +211,32 @@ def test_start_background_index_single_flight(monkeypatch):
     monkeypatch.setattr(seam, "run_backfill", _fake_backfill)
     monkeypatch.setattr(seam, "_engine", lambda: object())
 
-    seam.start_background_index()  # pass 1 starts and blocks on the gate
-    for _ in range(20):
-        if passes["count"] == 1:
-            break
-        import time
+    def _wait(cond, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if cond():
+                return True
+            time.sleep(0.02)
+        return cond()
 
-        time.sleep(0.05)
-    assert passes["count"] == 1
+    try:
+        seam.start_background_index()  # pass 1 starts and blocks on the gate
+        assert _wait(lambda: passes["count"] == 1)
 
-    seam.start_background_index()  # coalesces
-    seam.start_background_index()  # coalesces into the SAME single pending pass
-    assert seam._BACKFILL_PENDING is True
+        seam.start_background_index()  # coalesces
+        seam.start_background_index()  # coalesces into the SAME pending pass
+        assert seam._BACKFILL_PENDING is True
 
-    gate.set()
-    for _ in range(40):
-        if not seam._BACKFILL_ACTIVE:
-            break
-        import time
-
-        time.sleep(0.05)
-    assert passes["count"] == 2  # 1 initial + 1 coalesced, never 3
-    assert seam._BACKFILL_ACTIVE is False
+        gate.set()
+        assert _wait(lambda: not seam._BACKFILL_ACTIVE)
+        assert passes["count"] == 2  # 1 initial + 1 coalesced, never 3
+    finally:
+        # The worker resolves seam.run_backfill at CALL time: if it outlived a
+        # failed assertion, monkeypatch teardown would hand its pending pass
+        # the REAL backfill over the developer's actual vault. Drain it before
+        # teardown, always.
+        gate.set()
+        _wait(lambda: not seam._BACKFILL_ACTIVE)
 
 
 def test_search_detailed_heals_corrupt_store(monkeypatch):
@@ -316,3 +321,23 @@ def test_heal_ignores_transient_and_closed_store_errors(monkeypatch):
     )
     assert seam._heal_if_corrupt(RuntimeError("boom"), eng) is False
     assert calls["rebuild"] == 0
+
+
+def test_failed_rebuild_drops_wedged_engine(monkeypatch):
+    # A rebuild that fails mid-way leaves the engine holding a CLOSED store —
+    # every further op raises ProgrammingError, which heal rightly ignores.
+    # The wedged engine must be dropped so the next search rebuilds lazily.
+    import sqlite3
+
+    class _Eng:
+        def rebuild_store(self):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        def close(self):
+            pass
+
+    eng = _Eng()
+    seam._ENGINE = eng
+    exc = sqlite3.DatabaseError("database disk image is malformed")
+    assert seam._heal_if_corrupt(exc, eng) is False
+    assert seam._ENGINE is None  # wedged engine dropped -> lazy rebuild works

@@ -126,8 +126,12 @@ def start_background_index() -> None:
 # Heal throttling: one destructive rebuild per window. A persistently
 # corrupting disk (or any misclassification) must not loop wipe → full
 # re-embed at CPU-melting cost while the user retries ⌘K.
+# Sentinel is -COOLDOWN, not 0.0: time.monotonic() is time since BOOT, and a
+# 0.0 sentinel would throttle the very first heal during the first two
+# minutes of uptime — exactly the post-reboot window where an iCloud-synced
+# store is most likely to surface corruption.
 _HEAL_COOLDOWN_S = 120.0
-_LAST_HEAL_MONO = 0.0
+_LAST_HEAL_MONO = -_HEAL_COOLDOWN_S
 
 
 def _heal_if_corrupt(exc, eng) -> bool:
@@ -156,23 +160,44 @@ def _heal_if_corrupt(exc, eng) -> bool:
         or isinstance(exc, sqlite3.ProgrammingError)
     ):
         return False
-    if eng is None or eng is not _ENGINE:
+    if eng is None:
         return False
     rebuild = getattr(eng, "rebuild_store", None)
     if rebuild is None:
         return False
-    now = time.monotonic()
-    if now - _LAST_HEAL_MONO < _HEAL_COOLDOWN_S:
-        logger.warning(
-            "recall: store corrupt again within cooldown (%s) — not rebuilding", exc
-        )
+    # Identity check AND rebuild under _ENGINE_LOCK: an unlocked check-then-act
+    # let a concurrent reset publish a fresh engine between the check and the
+    # rebuild — the stale heal then unlinked the store the fresh engine had
+    # open (its whole backfill written into an orphaned inode). Bounded wait:
+    # if the lock is busy the engine world is changing anyway — skip.
+    if not _ENGINE_LOCK.acquire(timeout=2.0):
         return False
-    _LAST_HEAL_MONO = now
-    logger.warning("recall: store corrupt at query time (%s); rebuilding", exc)
+    failed = False
     try:
-        rebuild()
-    except Exception as exc2:  # noqa: BLE001
-        logger.warning("recall: store rebuild failed: %s", exc2)
+        if eng is not _ENGINE:
+            return False
+        now = time.monotonic()
+        if now - _LAST_HEAL_MONO < _HEAL_COOLDOWN_S:
+            logger.warning(
+                "recall: store corrupt again within cooldown (%s) — not rebuilding",
+                exc,
+            )
+            return False
+        _LAST_HEAL_MONO = now
+        logger.warning("recall: store corrupt at query time (%s); rebuilding", exc)
+        try:
+            rebuild()
+        except Exception as exc2:  # noqa: BLE001
+            logger.warning("recall: store rebuild failed: %s", exc2)
+            failed = True
+    finally:
+        _ENGINE_LOCK.release()
+    if failed:
+        # A failed rebuild leaves the engine holding a CLOSED store — every
+        # further op raises ProgrammingError, which heal rightly ignores, so
+        # nothing would EVER retry. Drop the wedged engine; the next search
+        # (or the restarted backfill) lazily builds a fresh one.
+        reset_engine()
         return False
     # The digest lane's cached engine still holds a handle on the deleted
     # corrupt inode — same hazard reset_engine guards against.
