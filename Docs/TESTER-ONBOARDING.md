@@ -27,13 +27,41 @@ więcej. Nagrania i treść notatek nigdy nie opuszczają Twojego Maca.
 
 ## 1. Instalacja
 
+Timshel dostajesz mailem lub linkiem (nie przez iCloud). Pobierz DMG na dysk,
+zanim zaczniesz.
+
 1. Otwórz DMG i przeciągnij **Timshel** do Applications (Aplikacje).
-2. Apka nie jest jeszcze notaryzowana, więc podwójny klik zablokuje
-   uruchomienie. Zamiast tego: **prawy klik na apce → Otwórz → Otwórz.**
-   Robisz to tylko raz.
-   - Na macOS 15+: jeśli prawy klik → Otwórz nie daje tej opcji, wejdź w
-     **Ustawienia systemowe → Prywatność i ochrona**, przewiń w dół i
-     kliknij **Otwórz mimo to**.
+   Potem **wysuń** obraz DMG (ikona na pulpicie → **Eject**) i uruchamiaj już
+   apkę z folderu Applications, nie z DMG.
+2. Apka nie jest jeszcze notaryzowana przez Apple, więc **podwójny klik ją
+   zablokuje** — to normalne, nie znaczy, że coś jest nie tak. Odblokuj ją
+   **raz**, jednym z poniższych sposobów. Zacznij od A; jeśli nie zadziała,
+   przejdź do B.
+
+   **A. Prawy klik → Otwórz**
+   - W folderze Applications kliknij **prawym przyciskiem** (albo Ctrl+klik)
+     na **Timshel** → **Otwórz**.
+   - W okienku, które wyskoczy, kliknij **Otwórz** jeszcze raz.
+   - Jeśli okienko ma tylko przyciski „Przenieś do Kosza" / „Anuluj" i **nie ma**
+     „Otwórz" — to macOS 15/26, przejdź do B.
+
+   **B. Ustawienia systemowe (macOS 15 / macOS 26)**
+   - Kliknij dwukrotnie **Timshel** — pojawi się blokada, kliknij **Gotowe**.
+   - Wejdź w **Ustawienia systemowe → Prywatność i ochrona**.
+   - Przewiń na sam dół — zobaczysz komunikat *„Timshel został zablokowany…"*
+     i przycisk **Otwórz mimo to**. Kliknij go (może poprosić o Touch ID/hasło).
+   - Wróć do apki i kliknij **Otwórz** w potwierdzeniu.
+
+   Robisz to tylko przy pierwszym uruchomieniu. Potem apka odpala się normalnie.
+
+   **Awaryjnie (jeśli A i B zawiodą):** otwórz **Terminal** i wklej dokładnie tę
+   linię, potem Enter — usuwa flagę kwarantanny, którą macOS nadaje pobranym
+   plikom:
+   ```
+   xattr -dr com.apple.quarantine /Applications/Timshel.app
+   ```
+   Następnie uruchom Timshel normalnie. Jeśli i to nie pomoże — napisz do Radka
+   z tym, co dokładnie zobaczyłeś na ekranie.
 
 ## 2. Kreator pierwszego uruchomienia
 
