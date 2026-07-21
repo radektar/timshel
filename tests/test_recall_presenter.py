@@ -8,15 +8,25 @@ from src.ui import recall_presenter as rp
 
 def _res(note_id, quote, score=0.5, channels="dense"):
     return Result(
-        note_id=note_id, quote=quote, parent_text=quote,
-        char_start=0, char_end=len(quote), score=score, channels=channels,
+        note_id=note_id,
+        quote=quote,
+        parent_text=quote,
+        char_start=0,
+        char_end=len(quote),
+        score=score,
+        channels=channels,
     )
 
 
 def test_split_stem_parses_date_prefix():
     assert rp.split_stem("26-06-17 - Haetta - rozmowa z konstruktorem") == (
-        "26-06-17", "Haetta - rozmowa z konstruktorem")
-    assert rp.split_stem("26-04-20 – Projekt bez daty") == ("26-04-20", "Projekt bez daty")
+        "26-06-17",
+        "Haetta - rozmowa z konstruktorem",
+    )
+    assert rp.split_stem("26-04-20 – Projekt bez daty") == (
+        "26-04-20",
+        "Projekt bez daty",
+    )
 
 
 def test_split_stem_without_date_keeps_whole_title():
@@ -24,7 +34,10 @@ def test_split_stem_without_date_keeps_whole_title():
 
 
 def test_trim_quote_normalizes_and_caps():
-    assert rp.trim_quote("  wiele   spacji \n i nowa linia ") == "wiele spacji i nowa linia"
+    assert (
+        rp.trim_quote("  wiele   spacji \n i nowa linia ")
+        == "wiele spacji i nowa linia"
+    )
     long = " ".join(["slowo"] * 100)
     out = rp.trim_quote(long, limit=40)
     assert len(out) <= 41 and out.endswith("…") and "  " not in out
@@ -32,14 +45,23 @@ def test_trim_quote_normalizes_and_caps():
 
 def test_present_ranks_maps_fields_and_caps_per_note():
     results = [
-        _res("26-06-05 - Planowanie budowy domu - materialy okna dach", "dostawa okien niepewna"),
-        _res("26-06-05 - Planowanie budowy domu - materialy okna dach", "dach stoi w miejscu"),
-        _res("26-06-05 - Planowanie budowy domu - materialy okna dach", "trzeci fragment tej samej noty"),
+        _res(
+            "26-06-05 - Planowanie budowy domu - materialy okna dach",
+            "dostawa okien niepewna",
+        ),
+        _res(
+            "26-06-05 - Planowanie budowy domu - materialy okna dach",
+            "dach stoi w miejscu",
+        ),
+        _res(
+            "26-06-05 - Planowanie budowy domu - materialy okna dach",
+            "trzeci fragment tej samej noty",
+        ),
         _res("26-06-17 - Haetta - rozmowa z konstruktorem", "nosnosc belek"),
     ]
     vm = rp.present("co z oknami", results, confidence=0.82, per_note_cap=2)
     assert not vm.is_empty
-    assert [r.rank for r in vm.rows] == [1, 2, 3]           # continuous 1-based ranks
+    assert [r.rank for r in vm.rows] == [1, 2, 3]  # continuous 1-based ranks
     assert sum(r.note_id.startswith("26-06-05") for r in vm.rows) == 2  # capped at 2
     top = vm.rows[0]
     assert top.date == "26-06-05"
@@ -77,17 +99,51 @@ def test_abstinence_boundary_at_default_floor():
     """The calibrated 0.60 cutoff is the crux of honest abstinence — guard it."""
     r = [_res("26-01-01 - Nota", "fragment")]
     f = rp.DEFAULT_ABSTAIN_FLOOR
-    assert rp.present("q", r, f).is_empty is False       # == floor → shows (strict <)
+    assert rp.present("q", r, f).is_empty is False  # == floor → shows (strict <)
     assert rp.present("q", r, f - 0.001).is_empty is True  # just below → abstains
 
 
 def test_clean_quote_strips_markdown_and_leading_noise():
     # the exact kinds of noise seen in real chunk citations
-    assert rp.clean_quote("📝 **Informacyjne:** Wewnetrzne sciany") == "Informacyjne: Wewnetrzne sciany"
-    assert rp.clean_quote("## Streszczenie Zespol omawia projekt") == "Streszczenie Zespol omawia projekt"
+    assert (
+        rp.clean_quote("📝 **Informacyjne:** Wewnetrzne sciany")
+        == "Informacyjne: Wewnetrzne sciany"
+    )
+    assert (
+        rp.clean_quote("## Streszczenie Zespol omawia projekt")
+        == "Streszczenie Zespol omawia projekt"
+    )
     assert rp.clean_quote("> cytat z bloku") == "cytat z bloku"
 
 
 def test_clean_quote_keeps_real_words_intact():
     # must NOT drop a legitimate lowercase-leading fragment
-    assert rp.clean_quote("dostawa okien niepewna, dach stoi") == "dostawa okien niepewna, dach stoi"
+    assert (
+        rp.clean_quote("dostawa okien niepewna, dach stoi")
+        == "dostawa okien niepewna, dach stoi"
+    )
+
+
+def test_auto_floor_lexical_when_no_dense_channel():
+    # Lexical-only evidence: one strong term of a two-term query (0.50) is a real
+    # hit and must show under the lexical floor, though it fails the dense one.
+    r = [_res("n", "tekst", channels="lexical")]
+    assert rp.present("q", r, confidence=0.50).is_empty is False
+    assert rp.present("q", r, confidence=0.33).is_empty is True
+
+
+def test_auto_floor_dense_unchanged():
+    r = [_res("n", "tekst", channels="dense+lexical")]
+    assert (
+        rp.present("q", r, confidence=0.50).is_empty is True
+    )  # dense floor 0.60 holds
+
+
+def test_explicit_lexical_only_param_overrides_inference():
+    # The engine's mode, threaded via seam, beats channel-string inference.
+    r = [_res("n", "tekst", channels="lexical")]
+    vm = rp.present("q", r, confidence=0.50, lexical_only=False)
+    assert vm.is_empty is True  # dense floor applied despite lexical channels
+    vm2 = rp.present("q", r, confidence=0.50, lexical_only=True)
+    assert vm2.is_empty is False
+    assert vm2.lexical_only is True  # carried to the UI for the honest copy

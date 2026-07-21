@@ -2351,7 +2351,10 @@ if _APPKIT_AVAILABLE:
                 return doc, cy + ph + 20
 
             if not vm.is_empty:
-                meta = _label(f"{vm.count} fragmentów · lokalnie, bez AI", 12, _muted())
+                meta_txt = f"{vm.count} fragmentów · lokalnie, bez AI"
+                if getattr(vm, "lexical_only", False):
+                    meta_txt += " · tryb dosłowny"
+                meta = _label(meta_txt, 12, _muted())
                 meta.setFrame_(NSMakeRect(_READER_PAD_X, cy, inner_w, 16))
                 doc.addSubview_(meta)
                 cy += 22
@@ -2659,10 +2662,19 @@ if _APPKIT_AVAILABLE:
                 )
             )
             cy += hh + 8
-            sub = (
-                "Search jest w 100% lokalny i niczego nie zmyśla — "
-                "nic nie opuszcza Twojego Maca."
-            )
+            if getattr(vm, "lexical_only", False):
+                # Honest about the degraded mode: a paraphrase miss here may be
+                # the missing semantic channel, not an absent topic.
+                sub = (
+                    "Wyszukiwanie działa w trybie dosłownym (bez warstwy "
+                    "semantycznej) — spróbuj słów, które padły w notatce. "
+                    "Nic nie opuszcza Twojego Maca."
+                )
+            else:
+                sub = (
+                    "Search jest w 100% lokalny i niczego nie zmyśla — "
+                    "nic nie opuszcza Twojego Maca."
+                )
             sh = max(18.0, _measure_height(sub, 13.5, inner_w))
             doc.addSubview_(
                 _wrapping_label(
@@ -2770,10 +2782,21 @@ if _APPKIT_AVAILABLE:
                     status = "unavailable"
             from src.ui import recall_presenter as rp
 
+            lexical = None
+            lex_cb = self._callbacks.get("recall_lexical_only")
+            if lex_cb is not None:
+                try:
+                    val = lex_cb()
+                    # None = unknown (e.g. engine reset mid-search) — keep it,
+                    # so present() falls back to channel inference instead of
+                    # treating unknown as "dense" and misfiring the floor.
+                    lexical = None if val is None else bool(val)
+                except Exception:  # pragma: no cover - defensive
+                    lexical = None
             self._pending_recall = {
                 "epoch": epoch,
                 "query": query,
-                "vm": rp.present(query, results, confidence),
+                "vm": rp.present(query, results, confidence, lexical_only=lexical),
                 "status": status,
                 "results": results,  # raw hits kept for the optional synthesis escalation
             }

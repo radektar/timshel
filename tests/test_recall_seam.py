@@ -48,7 +48,9 @@ def test_search_detailed_unavailable_when_search_raises(monkeypatch):
 
 
 def test_search_safe_is_the_two_tuple_wrapper(monkeypatch):
-    monkeypatch.setattr(seam, "_engine", lambda: _FakeEngine(count=2, result=(["h"], 0.7)))
+    monkeypatch.setattr(
+        seam, "_engine", lambda: _FakeEngine(count=2, result=(["h"], 0.7))
+    )
     assert seam.search_safe("q") == (["h"], 0.7)
     monkeypatch.setattr(seam, "_engine", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert seam.search_safe("q") == ([], 0.0)
@@ -61,10 +63,20 @@ def test_search_safe_is_the_two_tuple_wrapper(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_seam_engine():
-    """Isolate the module-global engine between tests."""
+    """Isolate ALL of seam's module globals between tests — a leaked
+    _INDEX_STARTED=True would make bare reset_engine() calls spawn a REAL
+    backfill thread over the developer's actual vault."""
     seam._ENGINE = None
+    seam._INDEX_STARTED = False
+    seam._BACKFILL_ACTIVE = False
+    seam._BACKFILL_PENDING = False
+    seam._LAST_HEAL_MONO = -seam._HEAL_COOLDOWN_S
     yield
     seam._ENGINE = None
+    seam._INDEX_STARTED = False
+    seam._BACKFILL_ACTIVE = False
+    seam._BACKFILL_PENDING = False
+    seam._LAST_HEAL_MONO = -seam._HEAL_COOLDOWN_S
 
 
 def test_engine_singleton_concurrent_init(monkeypatch):
@@ -84,9 +96,7 @@ def test_engine_singleton_concurrent_init(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(
-        "src.connections.recall.engine.RecallEngine", _SlowEngine
-    )
+    monkeypatch.setattr("src.connections.recall.engine.RecallEngine", _SlowEngine)
     # get_config() stays real — the fake engine ignores the root path.
 
     results = []
@@ -120,3 +130,254 @@ def test_reset_engine_closes_once():
 
     assert closes["count"] == 1
     assert seam._ENGINE is None
+
+
+def test_reset_engine_clears_digest_engine_cache(monkeypatch):
+    # The digest lane's cached engine would otherwise keep an open handle on a
+    # store file the fresh seam engine may have replaced.
+    from src.connections import candidate_assembly as ca
+
+    class _Closeable:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    eng = _Closeable()
+    monkeypatch.setitem(ca._ENGINE_CACHE, "/some/vault", eng)
+    seam.reset_engine()
+    assert ca._ENGINE_CACHE == {}
+    assert eng.closed is True
+
+
+def test_reset_engine_restarts_background_index_only_after_launch(monkeypatch):
+    # A reset mid-backfill leaves READY over a partial index, and a vault
+    # change needs the new vault indexed — reset must restart the background
+    # index, but ONLY in a process that actually launched it (never in bare
+    # test/CLI resets). It restarts even when NO engine is cached: a failed
+    # initial build followed by a settings fix must not stay dead until
+    # relaunch.
+    calls = {"count": 0}
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: calls.__setitem__("count", calls["count"] + 1),
+    )
+
+    class _Eng:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(seam, "_INDEX_STARTED", False)
+    seam._ENGINE = _Eng()
+    seam.reset_engine()
+    assert calls["count"] == 0  # index never launched -> no restart
+
+    monkeypatch.setattr(seam, "_INDEX_STARTED", True)
+    seam._ENGINE = _Eng()
+    seam.reset_engine()
+    assert calls["count"] == 1  # launched -> reset restarts it
+
+    seam.reset_engine()  # launched + no engine (failed initial build)
+    assert calls["count"] == 2  # -> STILL restarts
+
+
+def test_lexical_only_unknown_is_none():
+    # 'Unknown' must stay distinguishable from 'dense': a False here would
+    # foreclose the presenter's channel inference and misapply the 0.60 floor.
+    seam._ENGINE = None
+    assert seam.lexical_only() is None
+
+    class _Eng:
+        lexical_only = True
+
+    seam._ENGINE = _Eng()
+    assert seam.lexical_only() is True
+
+
+def test_start_background_index_single_flight(monkeypatch):
+    # N rapid requests must not stack N threads: while a pass runs, later
+    # calls coalesce into exactly ONE more pass with the current engine.
+    import threading as th
+    import time
+
+    gate = th.Event()
+    passes = {"count": 0}
+
+    def _fake_backfill(engine, state, incremental=True):
+        passes["count"] += 1
+        gate.wait(timeout=5)
+
+    monkeypatch.setattr(seam, "run_backfill", _fake_backfill)
+    monkeypatch.setattr(seam, "_engine", lambda: object())
+
+    def _wait(cond, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if cond():
+                return True
+            time.sleep(0.02)
+        return cond()
+
+    try:
+        seam.start_background_index()  # pass 1 starts and blocks on the gate
+        assert _wait(lambda: passes["count"] == 1)
+
+        seam.start_background_index()  # coalesces
+        seam.start_background_index()  # coalesces into the SAME pending pass
+        assert seam._BACKFILL_PENDING is True
+
+        gate.set()
+        assert _wait(lambda: not seam._BACKFILL_ACTIVE)
+        assert passes["count"] == 2  # 1 initial + 1 coalesced, never 3
+    finally:
+        # The worker resolves seam.run_backfill at CALL time: if it outlived a
+        # failed assertion, monkeypatch teardown would hand its pending pass
+        # the REAL backfill over the developer's actual vault. Drain it before
+        # teardown, always.
+        gate.set()
+        _wait(lambda: not seam._BACKFILL_ACTIVE)
+
+
+def test_search_detailed_heals_corrupt_store(monkeypatch):
+    # Query-time corruption (iCloud rewrote pages) must trigger a rebuild and
+    # a backfill restart — not a permanent 'unavailable'.
+    import sqlite3
+
+    calls = {"rebuild": 0, "restart": 0}
+
+    class _CorruptEngine:
+        def count(self):
+            return 5
+
+        def search_scored(self, query, k=8):
+            raise sqlite3.DatabaseError("database disk image is malformed")
+
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    eng = _CorruptEngine()
+    # Identity matters: heal only fires when the failing engine IS the
+    # published one — a closed predecessor's error must not wipe a fresh store.
+    monkeypatch.setattr(seam, "_engine", lambda: eng)
+    seam._ENGINE = eng
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: calls.__setitem__("restart", calls["restart"] + 1),
+    )
+
+    assert seam.search_detailed("pytanie") == ([], 0.0, "unavailable")
+    assert calls["rebuild"] == 1
+    assert calls["restart"] == 1
+
+    # Second corruption within the cooldown window: no second wipe.
+    assert seam.search_detailed("pytanie") == ([], 0.0, "unavailable")
+    assert calls["rebuild"] == 1
+
+
+def test_heal_skips_stale_engine(monkeypatch):
+    # The failure belongs to a closed predecessor — the fresh engine's healthy
+    # store must survive.
+    import sqlite3
+
+    calls = {"rebuild": 0}
+
+    class _Eng:
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    stale, current = _Eng(), _Eng()
+    seam._ENGINE = current
+    exc = sqlite3.DatabaseError("database disk image is malformed")
+    assert seam._heal_if_corrupt(exc, stale) is False
+    assert seam._heal_if_corrupt(exc, None) is False
+    assert calls["rebuild"] == 0
+
+
+def test_heal_ignores_transient_and_closed_store_errors(monkeypatch):
+    # OperationalError (locked/busy) is transient, and ProgrammingError is a
+    # reset closing the store under an in-flight op — wiping the index on
+    # either would destroy healthy data.
+    import sqlite3
+
+    calls = {"rebuild": 0}
+
+    class _Eng:
+        def rebuild_store(self):
+            calls["rebuild"] += 1
+
+    eng = _Eng()
+    seam._ENGINE = eng
+    assert (
+        seam._heal_if_corrupt(sqlite3.OperationalError("database is locked"), eng)
+        is False
+    )
+    assert (
+        seam._heal_if_corrupt(
+            sqlite3.ProgrammingError("Cannot operate on a closed database"), eng
+        )
+        is False
+    )
+    assert seam._heal_if_corrupt(RuntimeError("boom"), eng) is False
+    assert calls["rebuild"] == 0
+
+
+def test_failed_rebuild_drops_wedged_engine(monkeypatch):
+    # A rebuild that fails mid-way leaves the engine holding a CLOSED store —
+    # every further op raises ProgrammingError, which heal rightly ignores.
+    # The wedged engine must be dropped so the next search rebuilds lazily.
+    import sqlite3
+
+    class _Eng:
+        def rebuild_store(self):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        def close(self):
+            pass
+
+    eng = _Eng()
+    seam._ENGINE = eng
+    exc = sqlite3.DatabaseError("database disk image is malformed")
+    assert seam._heal_if_corrupt(exc, eng) is False
+    assert seam._ENGINE is None  # wedged engine dropped -> lazy rebuild works
+
+
+def test_timed_out_reset_retires_engine_via_deferred_thread(monkeypatch):
+    # A heal holding _ENGINE_LOCK past reset's 1s timeout must not let the
+    # published OLD-config engine survive the reset — the deferred thread
+    # retires it once the lock frees.
+    import time
+
+    closes = {"count": 0}
+    restarts = {"count": 0}
+
+    class _Eng:
+        def close(self):
+            closes["count"] += 1
+
+    seam._ENGINE = _Eng()
+    monkeypatch.setattr(seam, "_INDEX_STARTED", True)
+    monkeypatch.setattr(
+        seam,
+        "start_background_index",
+        lambda: restarts.__setitem__("count", restarts["count"] + 1),
+    )
+
+    seam._ENGINE_LOCK.acquire()  # simulate a slow heal/builder holding the lock
+    try:
+        t0 = time.monotonic()
+        seam.reset_engine()  # times out at 1s, defers, must NOT block longer
+        assert time.monotonic() - t0 < 3.0
+        assert seam._ENGINE is not None  # swap genuinely deferred
+    finally:
+        seam._ENGINE_LOCK.release()
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if seam._ENGINE is None and closes["count"] == 1:
+            break
+        time.sleep(0.02)
+    assert seam._ENGINE is None  # deferred thread retired the stale engine
+    assert closes["count"] == 1
+    assert restarts["count"] >= 1  # and re-requested an indexing pass

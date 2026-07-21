@@ -359,18 +359,47 @@ def _graph_neighbors(
 _ENGINE_CACHE: Dict[str, object] = {}
 
 
+_CACHE_MISS = object()
+
+
 def _get_recall_engine(vault_dir: Path):
     """Cached RecallEngine for the dense channel; None when unavailable."""
     key = str(vault_dir)
-    if key not in _ENGINE_CACHE:
+    # Single .get with a sentinel — a concurrent reset_recall_engines() between
+    # a membership check and a lookup would otherwise raise KeyError straight
+    # through assemble_candidates (this call sits outside the channel's guard).
+    eng = _ENGINE_CACHE.get(key, _CACHE_MISS)
+    if eng is _CACHE_MISS:
         try:
             from src.connections.recall.engine import RecallEngine
 
-            _ENGINE_CACHE[key] = RecallEngine(vault_dir)
+            eng = RecallEngine(vault_dir)
         except Exception as exc:  # noqa: BLE001 - channel must never break assembly
             logger.warning("dense channel unavailable (%s)", exc)
-            _ENGINE_CACHE[key] = None
-    return _ENGINE_CACHE[key]
+            eng = None
+        _ENGINE_CACHE[key] = eng
+    return eng
+
+
+def reset_recall_engines() -> None:
+    """Drop (and close) the cached engines — called on settings changes via
+    seam.reset_engine. Without this, a cached engine keeps an open handle on
+    a store file that a freshly-built engine may have replaced, silently
+    writing to the orphaned inode."""
+    # Clear FIRST, close after: a concurrent _get_recall_engine then builds a
+    # fresh engine instead of grabbing one that is about to be closed. (A
+    # thread already holding an old reference is covered by the channel's
+    # never-break-assembly try/except.)
+    engines = list(_ENGINE_CACHE.values())
+    _ENGINE_CACHE.clear()
+    for eng in engines:
+        close = getattr(eng, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
 
 
 def _dense_neighbors(
@@ -397,6 +426,12 @@ def _dense_neighbors(
         return []
     engine = _get_recall_engine(vault_dir)
     if engine is None:
+        return []
+    if getattr(engine, "lexical_only", False):
+        # Silent zeros here would read as "dense channel found nothing" in a
+        # digest quality report. Debug level: the eval harness replays assembly
+        # hundreds of times, and the engine already logs its mode once at init.
+        logger.debug("dense channel skipped — recall engine is lexical-only")
         return []
     older_by_name = {n.basename: n for n in older if n.basename not in exclude}
     if not older_by_name:

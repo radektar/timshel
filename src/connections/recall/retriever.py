@@ -8,7 +8,7 @@ escalation (outside this package) is the only path that reaches an LLM.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.connections.candidate_assembly import _tokenize
 from src.connections.recall.embedding import EmbeddingProvider
@@ -49,12 +49,16 @@ def cosine_from_l2(distance: float) -> float:
 
 
 class HybridRetriever:
-    """Fuse dense KNN and BM25 over the vault's chunks."""
+    """Fuse dense KNN and BM25 over the vault's chunks.
+
+    ``embedder=None`` = lexical-only mode: the dense channel is skipped entirely
+    and results/confidence come from BM25 + literal term overlap alone.
+    """
 
     def __init__(
         self,
         store: VaultVectorStore,
-        embedder: EmbeddingProvider,
+        embedder: Optional[EmbeddingProvider],
         *,
         dense_k: int = 50,
         lexical_k: int = 50,
@@ -87,18 +91,22 @@ class HybridRetriever:
             return [], 0.0
         by_id: Dict[int, Hit] = {h.chunk_id: h for h in all_hits}
 
-        query_vec = self._embedder.embed_query(query)
-        dense_hits = self._store.knn(query_vec, self._dense_k)
+        if self._embedder is not None:
+            query_vec = self._embedder.embed_query(query)
+            dense_hits = self._store.knn(query_vec, self._dense_k)
+        else:
+            dense_hits = []
         dense_ids = [h.chunk_id for h in dense_hits]
         top_sim = cosine_from_l2(dense_hits[0].distance) if dense_hits else 0.0
         # Fold the note_id (the filename/title) into each chunk's lexical doc. Proper
         # nouns, names and codes often live in the title but barely in the spoken body
         # (whisper rarely repeats a name) — without this, BM25 can't match them and the
         # channel loses exactly the named-entity queries it's meant to win.
-        lexical_ids = bm25_rank(
+        lexical_ids, idf = bm25_rank(
             query,
             [(h.chunk_id, f"{h.note_id}\n{h.text}") for h in all_hits],
             limit=self._lexical_k,
+            with_idf=True,
         )
 
         dense_set, lex_set = set(dense_ids), set(lexical_ids)
@@ -130,9 +138,29 @@ class HybridRetriever:
             # Scan the top few fused hits, not just rank 0: a named-entity/title match
             # can land at rank ≥2 behind dense chunks, and checking only results[0]
             # would miss it and wrongly abstain — the exact case this net exists for.
-            best_overlap = max(
-                len(q_tokens & set(_tokenize(f"{r.note_id}\n{r.quote}"))) / len(q_tokens)
-                for r in results[:5]
-            )
-            confidence = max(confidence, best_overlap)
+            doc_tokens = [
+                set(_tokenize(f"{r.note_id}\n{r.quote}")) for r in results[:5]
+            ]
+            if self._embedder is None:
+                # Lexical-only: idf-weighted, not a raw token count — on a
+                # two-token query a shared vault-frequent word ("spotkanie")
+                # must not score the same 0.5 as a matched rare name. The
+                # 0.45 lexical floor is calibrated against THIS metric.
+                total_w = sum(idf.get(t, 0.0) for t in q_tokens)
+                if total_w > 0:
+                    best_overlap = max(
+                        sum(idf.get(t, 0.0) for t in q_tokens & d) / total_w
+                        for d in doc_tokens
+                    )
+                    confidence = max(confidence, best_overlap)
+            else:
+                # Hybrid: keep the ORIGINAL raw fraction — the 0.60 dense
+                # floor was tuned against it, and idf-weighting here would
+                # silently retune it (one out-of-vocabulary typo'd term gets
+                # corpus-max idf and sinks a legitimate named-entity match
+                # that the dense channel won't rescue).
+                best_overlap = max(
+                    len(q_tokens & d) / len(q_tokens) for d in doc_tokens
+                )
+                confidence = max(confidence, best_overlap)
         return results, confidence

@@ -24,11 +24,18 @@ def bm25_rank(
     k1: float = 1.5,
     b: float = 0.75,
     limit: int = 50,
-) -> List[int]:
-    """Return doc ids ranked by BM25 relevance to ``query`` (best first)."""
+    with_idf: bool = False,
+):
+    """Return doc ids ranked by BM25 relevance to ``query`` (best first).
+
+    ``with_idf=True`` returns ``(ids, idf)`` where ``idf`` maps each query term
+    to its corpus idf — the retriever weights its confidence overlap with it,
+    so a shared vault-frequent word can't fake relevance the way a raw
+    matched-token count would.
+    """
     q_terms = set(_tokenize(query))
     if not q_terms or not docs:
-        return []
+        return ([], {}) if with_idf else []
 
     tokenized = [(doc_id, _tokenize(text)) for doc_id, text in docs]
     n = len(tokenized)
@@ -60,4 +67,5 @@ def bm25_rank(
             scored.append((score, doc_id))
 
     scored.sort(reverse=True)
-    return [doc_id for _, doc_id in scored[:limit]]
+    ranked = [doc_id for _, doc_id in scored[:limit]]
+    return (ranked, idf) if with_idf else ranked

@@ -24,6 +24,14 @@ from typing import List, Optional, Sequence
 # than showing one marginal row. Module constant so it can be retuned per model.
 DEFAULT_ABSTAIN_FLOOR = 0.60
 
+# Floor when the evidence is literal term overlap alone — no dense channel to
+# rescue a paraphrase, so 0.60 starves real hits. The overlap is idf-weighted
+# (see HybridRetriever), so a shared vault-frequent word can't fake relevance.
+# Tuned on the real 176-note vault: genuine hits land ≥0.49 (a matched rare
+# term carries the weight), junk one-generic-word matches ≤0.42. 0.45 splits
+# those classes.
+LEXICAL_ABSTAIN_FLOOR = 0.45
+
 _DATE_PREFIX = re.compile(r"^(\d{2}-\d{2}-\d{2})\s*[-–]\s*(.*)$")
 
 
@@ -49,7 +57,9 @@ class RecallResults:
     rows: List[RecallRow]
     is_empty: bool                 # True → render the abstinence state
     nearest: Optional[RecallRow]   # closest weak match to show dimmed when empty
-    confidence: float              # top dense cosine similarity (0..1)
+    confidence: float              # 0..1: max(dense cosine, overlap net) in hybrid;
+                                   # pure idf-weighted literal overlap in lexical-only
+    lexical_only: bool = False     # search ran without the semantic channel
 
     @property
     def count(self) -> int:
@@ -110,7 +120,8 @@ def present(
     results: Sequence,
     confidence: float,
     *,
-    floor: float = DEFAULT_ABSTAIN_FLOOR,
+    floor: Optional[float] = None,
+    lexical_only: Optional[bool] = None,
     max_rows: int = 8,
     per_note_cap: int = 2,
     quote_limit: int = 240,
@@ -122,13 +133,27 @@ def present(
     UI can say "nothing about X — closest match:" honestly instead of inventing one.
     Otherwise returns up to ``max_rows`` ranked rows, capping any single note to
     ``per_note_cap`` fragments so one chatty note can't crowd out the rest.
+
+    ``lexical_only`` is the engine's mode (thread it from seam.lexical_only());
+    ``None`` falls back to inferring it from the hits' channels. ``floor=None``
+    picks the calibrated floor for that evidence: pure term overlap (no dense
+    channel) gets the lexical floor, dense-backed confidence the default one.
     """
     query = (query or "").strip()
     hits = list(results or [])
+    if lexical_only is None:
+        lexical_only = bool(hits) and not any(
+            "dense" in getattr(r, "channels", "") for r in hits
+        )
+    if floor is None:
+        floor = LEXICAL_ABSTAIN_FLOOR if lexical_only else DEFAULT_ABSTAIN_FLOOR
 
     if not hits or confidence < floor:
         nearest = _row(hits[0], 1, quote_limit=quote_limit, dimmed=True) if hits else None
-        return RecallResults(query=query, rows=[], is_empty=True, nearest=nearest, confidence=confidence)
+        return RecallResults(
+            query=query, rows=[], is_empty=True, nearest=nearest,
+            confidence=confidence, lexical_only=lexical_only,
+        )
 
     rows: List[RecallRow] = []
     per_note: dict = {}
@@ -140,4 +165,7 @@ def present(
         if len(rows) >= max_rows:
             break
 
-    return RecallResults(query=query, rows=rows, is_empty=False, nearest=None, confidence=confidence)
+    return RecallResults(
+        query=query, rows=rows, is_empty=False, nearest=None,
+        confidence=confidence, lexical_only=lexical_only,
+    )
