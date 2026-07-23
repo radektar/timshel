@@ -147,6 +147,113 @@ def _write_vault_note(vault, name, date, tags="", summary="tekst"):
     )
 
 
+def test_pending_persists_across_restart(tmp_path):
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    s.mark_ran(now, seen_keys={"sha256:a"}, pending=4)
+    # A restart must not strand the backfill backlog: is_due() keys off the
+    # counter, so it has to survive the process.
+    reloaded = DigestScheduler(state_file)
+    assert reloaded.new_notes == 4
+    assert reloaded.is_due(now + timedelta(days=8)) is True
+
+
+def test_mark_ran_merges_disk_seen_from_other_process(tmp_path):
+    # Two processes (resident app + magic_digest CLI) share the state file;
+    # a blind overwrite would un-see the other's consumed window.
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    s1 = DigestScheduler(state_file)
+    s2 = DigestScheduler(state_file)  # loaded before s1 writes
+    s1.mark_ran(now, seen_keys={"sha256:a"})
+    s2.mark_ran(now, seen_keys={"sha256:b"})
+    assert DigestScheduler(state_file).seen_note_keys >= {"sha256:a", "sha256:b"}
+
+
+def test_fresh_install_migration_does_not_drain_archive(tmp_path):
+    # First-ever migration on a populated vault mirrors the legacy first run:
+    # newest FIRST_RUN_WINDOW stay unseen, the rest is marked seen — no
+    # auto-drain of the whole archive through paid weekly runs.
+    from src.connections.candidate_assembly import FIRST_RUN_WINDOW
+    from src.connections.scheduler import _ensure_seen_migrated
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    total = FIRST_RUN_WINDOW + 5
+    for i in range(total):
+        _write_vault_note(vault, f"n{i:02d}", f"2026-06-{i + 1:02d}")
+    s = DigestScheduler(tmp_path / "cs.json")
+
+    seen = _ensure_seen_migrated(s, vault)
+    assert len(seen) == 5
+    assert f"sha256:n{total - 1:02d}" not in seen  # newest stays unseen
+    assert "sha256:n00" in seen  # oldest is out of scope, as on main
+
+
+def test_migration_marks_undated_notes_seen(tmp_path):
+    # The legacy date window could never select an undated note; migration
+    # must not turn it into paid window material.
+    from src.connections.scheduler import _ensure_seen_migrated
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault_note(vault, "dated", "2026-07-01")
+    (vault / "undated.md").write_text(
+        '---\ntitle: "undated"\nfingerprint: sha256:undated\n---\n\nbody',
+        encoding="utf-8",
+    )
+    s = DigestScheduler(tmp_path / "cs.json")
+    s.last_digest_at = "2026-07-10T00:00:00"
+    assert _ensure_seen_migrated(s, vault) == {"sha256:dated", "sha256:undated"}
+
+
+def test_stale_counter_cleared_when_nothing_unseen(tmp_path, monkeypatch):
+    """new_notes > 0 with zero unseen notes must self-heal, not loop forever."""
+    import json as _json
+
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for i in range(3):
+        _write_vault_note(vault, f"old{i}", "2026-06-01")
+    state_file = tmp_path / "cs.json"
+    state_file.write_text(
+        _json.dumps(
+            {
+                "last_digest_at": "2026-07-10T00:00:00",
+                "seen_note_keys": [f"sha256:old{i}" for i in range(3)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config, "DIGEST_LOCK_FILE", tmp_path / "digest.lock")
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", state_file)
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    reset_scheduler_for_tests()
+    try:
+
+        class _Synth:
+            model = "claude-opus-4-8"
+            last_usage = None
+
+            def synthesize(self, *a, **kw):
+                raise AssertionError("must not synthesize with an empty window")
+
+        monkeypatch.setattr(synth_mod, "get_synthesizer", lambda: _Synth())
+        s = get_scheduler()
+        s.register_new_notes(1)  # phantom: the material is already seen
+
+        assert sched.run_digest_if_due(transcriber=None, force=False) is None
+        assert s.new_notes == 0  # counter cleared, no hourly re-scan loop
+        assert not (vault / ".timshel" / "metrics.jsonl").exists()  # no spam
+    finally:
+        reset_scheduler_for_tests()
+
+
 def test_seen_migration_seeds_from_dates(tmp_path, monkeypatch):
     from src.connections.scheduler import _ensure_seen_migrated
 
@@ -221,5 +328,16 @@ def test_gate_skips_unforced_low_potential_run(tmp_path, monkeypatch):
         assert rows[-1]["kind"] == "gate-skip"
         assert rows[-1]["cost_usd"] == 0.0
         assert rows[-1]["window"] == 1
+
+        # Cooldown expiry re-skips the SAME window: no second telemetry row
+        # (one record per distinct skipped window, not one per hour).
+        s._gate_skip_at = None
+        assert sched.run_digest_if_due(transcriber=None, force=False) is None
+        rows_after = (
+            (vault / ".timshel" / "metrics.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        assert len(rows_after) == len(rows)
     finally:
         reset_scheduler_for_tests()

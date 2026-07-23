@@ -41,8 +41,10 @@ class DigestScheduler:
         self.seen_note_keys: Optional[Set[str]] = None
         # In-memory only: when the local gate skipped a low-potential run, so
         # the 30s tick doesn't re-assemble the corpus until the cooldown ends
-        # (or new material arrives).
+        # (or new material arrives). The signature dedups the telemetry rows:
+        # one gate-skip record per distinct skipped window, not one per hour.
         self._gate_skip_at: Optional[datetime] = None
+        self._gate_skip_sig: Optional[frozenset] = None
         self._load()
 
     def _load(self) -> None:
@@ -53,8 +55,32 @@ class DigestScheduler:
                 self.last_digest_path = data.get("last_digest_path")
                 raw_seen = data.get("seen_note_keys")
                 self.seen_note_keys = set(raw_seen) if raw_seen is not None else None
-        except (json.JSONDecodeError, OSError) as exc:
+                # Persisted pending (backfill leftover): without it, a restart
+                # would strand the backlog — is_due() needs a non-zero counter.
+                self.new_notes = int(data.get("new_notes", 0) or 0)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
+
+    def _merge_disk_seen(self) -> None:
+        """Union the on-disk seen-set into memory before writing.
+
+        Another process (the resident app vs the ``magic_digest`` CLI) may
+        have consumed a window since our load; a blind write would un-see it
+        and re-digest those notes. Keys are add-only, so union is the safe
+        merge.
+        """
+        try:
+            if not self.state_file.exists():
+                return
+            raw = json.loads(self.state_file.read_text(encoding="utf-8")).get(
+                "seen_note_keys"
+            )
+            if raw:
+                if self.seen_note_keys is None:
+                    self.seen_note_keys = set()
+                self.seen_note_keys |= set(raw)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.debug("seen-set disk merge skipped (%s)", exc)
 
     def _save(self) -> None:
         try:
@@ -62,6 +88,7 @@ class DigestScheduler:
             payload: dict = {
                 "last_digest_at": self.last_digest_at,
                 "last_digest_path": self.last_digest_path,
+                "new_notes": int(self.new_notes),
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -83,6 +110,13 @@ class DigestScheduler:
     def init_seen(self, keys: Set[str]) -> None:
         """One-time seed of the seen-set (date-based state migration)."""
         self.seen_note_keys = set(keys)
+        self._merge_disk_seen()
+        self._save()
+
+    def clear_pending(self) -> None:
+        """Zero a stale trigger counter (registered material that no longer
+        exists unseen — muted, deleted, or deduped notes)."""
+        self.new_notes = 0
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
@@ -143,6 +177,7 @@ class DigestScheduler:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
             self.seen_note_keys |= set(seen_keys)
+        self._merge_disk_seen()
         self.new_notes = max(
             0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
         )
@@ -235,23 +270,34 @@ def _record_digest_metrics(
 
 
 def _ensure_seen_migrated(scheduler: DigestScheduler, vault: Path) -> Set[str]:
-    """Seed the seen-set once, from the legacy date-based state.
+    """Seed the seen-set once, mirroring the legacy window's reach.
 
-    Everything dated before the last digest is marked seen — behaviour is
-    unchanged at the moment of upgrade, while notes that appear in the vault
-    LATER (a backfill of old recordings) count as new material regardless of
-    their recording date.
+    Digest ran before: everything dated before the last digest — plus undated
+    notes, which the date window could never select — is marked seen.
+    Never ran (fresh install on a populated vault): everything EXCEPT the
+    newest ``FIRST_RUN_WINDOW`` notes is marked seen, exactly the reach of the
+    legacy first run. Without this, a fresh install would auto-drain the whole
+    archive through paid weekly runs nobody asked for.
+
+    Either way, behaviour is unchanged at the moment of upgrade, while notes
+    that appear in the vault LATER (a backfill of old recordings) count as new
+    material regardless of their recording date.
     """
     if scheduler.seen_note_keys is not None:
         return scheduler.seen_note_keys
-    from src.connections.candidate_assembly import load_corpus, note_key
+    from src.connections.candidate_assembly import (
+        FIRST_RUN_WINDOW,
+        load_corpus,
+        note_key,
+    )
 
-    seen: Set[str] = set()
+    corpus = load_corpus(vault)
     if scheduler.last_digest_at:
         cutoff = scheduler.last_digest_at[:10]
-        seen = {
-            note_key(n) for n in load_corpus(vault) if n.date and n.date < cutoff
-        }
+        seen = {note_key(n) for n in corpus if not n.date or n.date < cutoff}
+    else:
+        newest = sorted(corpus, key=lambda n: n.date, reverse=True)[:FIRST_RUN_WINDOW]
+        seen = {note_key(n) for n in corpus} - {note_key(n) for n in newest}
     scheduler.init_seen(seen)
     logger.info("digest seen-set migrated: %d notes marked as already seen", len(seen))
     return scheduler.seen_note_keys  # type: ignore[return-value]
@@ -290,25 +336,38 @@ def digest_potential(candidates) -> DigestPotential:
 def estimate_digest_potential() -> DigestPotential:
     """Assemble candidates locally and score them — the manual-trigger preview.
 
-    Uses the cheap channels only (dense/graph/stance off): no ONNX model load
-    on the UI path, and a conservative-cost estimate is all the warning needs.
+    Same channel configuration as the in-run gate, so the preview can never
+    warn about a run the scheduler itself would have paid for (the dense
+    channel fails soft without its index; its engine is cached per process, so
+    only the very first tester-mode click pays the model load). The tokenize
+    LRU is cleared on exit for the same reason the digest run clears it: don't
+    pin note texts in the resident app.
     """
-    from src.connections.candidate_assembly import assemble_candidates
+    from src.connections.candidate_assembly import (
+        assemble_candidates,
+        clear_tokenize_cache,
+    )
     from src.connections.dismissals import DismissalStore
 
     vault = Path(config.TRANSCRIBE_DIR)
     scheduler = get_scheduler()
     seen = _ensure_seen_migrated(scheduler, vault)
     dismissals = DismissalStore(vault).load()
-    candidates = assemble_candidates(
-        vault,
-        scheduler.last_digest_at,
-        dismissals,
-        inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
-        inject_entities=config.SYNTHESIS_ENTITY_COUNT,
-        seen_keys=seen,
-    )
-    return digest_potential(candidates)
+    try:
+        candidates = assemble_candidates(
+            vault,
+            scheduler.last_digest_at,
+            dismissals,
+            inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
+            inject_entities=config.SYNTHESIS_ENTITY_COUNT,
+            inject_dense=config.SYNTHESIS_DENSE_COUNT,
+            inject_graph=config.SYNTHESIS_GRAPH_COUNT,
+            inject_stance=config.SYNTHESIS_STANCE_COUNT,
+            seen_keys=seen,
+        )
+        return digest_potential(candidates)
+    finally:
+        clear_tokenize_cache()
 
 
 def run_digest_if_due(
@@ -349,6 +408,7 @@ def run_digest_if_due(
         seen = _ensure_seen_migrated(scheduler, vault)
         dismissals = DismissalStore(vault).load()
         dismissals.sync_frontmatter_dismissals()
+        pre_run_notes = scheduler.new_notes
         candidates = assemble_candidates(
             vault,
             scheduler.last_digest_at,
@@ -360,6 +420,19 @@ def run_digest_if_due(
             inject_stance=config.SYNTHESIS_STANCE_COUNT,
             seen_keys=seen,
         )
+        # Stale trigger counter: material was registered but nothing is
+        # actually unseen (note muted/deleted after transcription, or a
+        # re-transcribed known file). Clear it, or the tick re-scans the
+        # corpus forever. Guarded on corpus_size so an unreadable/empty vault
+        # never zeroes a real pending backlog.
+        if candidates.corpus_size > 0 and candidates.unseen_total == 0:
+            if scheduler.new_notes:
+                logger.info(
+                    "digest: no unseen notes — clearing stale trigger counter"
+                )
+                scheduler.clear_pending()
+            return None
+
         # Local pre-API gate: don't pay for a run assembly says can't connect.
         # Skip WITHOUT mark_ran — the material stays pending and is re-scored
         # after the cooldown or as soon as another note arrives. Forced runs
@@ -373,13 +446,18 @@ def run_digest_if_due(
                 potential.neighbors,
             )
             scheduler.note_gate_skip(now)
-            from src.connections.insight_metrics import record_gate_skip
+            # One telemetry row per distinct skipped window — a pending window
+            # re-skipped every cooldown must not spam the ledger hourly.
+            sig = frozenset(candidates.window_keys)
+            if sig != scheduler._gate_skip_sig:
+                scheduler._gate_skip_sig = sig
+                from src.connections.insight_metrics import record_gate_skip
 
-            record_gate_skip(
-                window=potential.window,
-                neighbors=potential.neighbors,
-                candidates=len(candidates.notes),
-            )
+                record_gate_skip(
+                    window=potential.window,
+                    neighbors=potential.neighbors,
+                    candidates=len(candidates.notes),
+                )
             return None
 
         if len(candidates.notes) < 2:
@@ -387,6 +465,20 @@ def run_digest_if_due(
             return None
 
         pending = max(0, candidates.unseen_total - len(candidates.window_basenames))
+
+        def _mark(digest_path: Optional[Path] = None) -> None:
+            # Notes transcribed DURING the paid run bumped the counter after
+            # the snapshot; re-register them on top of the clamped pending so
+            # mark_ran's overwrite doesn't silently drop them.
+            late = max(0, scheduler.new_notes - pre_run_notes)
+            scheduler.mark_ran(
+                now,
+                digest_path,
+                seen_keys=candidates.window_keys,
+                pending=pending,
+            )
+            if late:
+                scheduler.register_new_notes(late)
 
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]
@@ -416,7 +508,7 @@ def run_digest_if_due(
             logger.info("synthesis: no genuine connections this run")
             # Reset weekly clock; write no digest. The window WAS consumed
             # (and paid for), so it is marked seen like any other run.
-            scheduler.mark_ran(now, seen_keys=candidates.window_keys, pending=pending)
+            _mark()
             _record_digest_metrics(synthesizer, candidates, [], None)
             return None
 
@@ -462,7 +554,7 @@ def run_digest_if_due(
             # Every proposal died in verification — a legitimate, PAID outcome:
             # record the metrics (H1/H4 data point), reset the clock, write nothing.
             logger.info("verdict: no connections survived verification")
-            scheduler.mark_ran(now, seen_keys=candidates.window_keys, pending=pending)
+            _mark()
             _record_digest_metrics(
                 synthesizer,
                 candidates,
@@ -475,9 +567,7 @@ def run_digest_if_due(
 
         path, conn_meta = write_digest_note(connections, len(candidates.notes))
         dismissals.record_digest(path, conn_meta)
-        scheduler.mark_ran(
-            now, path, seen_keys=candidates.window_keys, pending=pending
-        )
+        _mark(path)
         _record_digest_metrics(
             synthesizer,
             candidates,

@@ -34,6 +34,8 @@ from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
 from src.tag_index import TagIndex
 
 _TRANSCRIPT_MARKER = "## Transkrypcja"
+# How many notes seed the very first digest — and the seen-set window cap.
+FIRST_RUN_WINDOW = 15
 _STOPWORDS = set(_PL_STOPWORDS) | set(_EN_STOPWORDS)
 _TOKEN_RE = re.compile(r"[a-z0-9ąćęłńóśźż]+", re.IGNORECASE)
 _BM25_K1 = 1.5
@@ -92,6 +94,10 @@ class CandidateSet:
     # window size otherwise). unseen_total - len(window) = the backfill leftover
     # that stays pending for the next digest.
     unseen_total: int = 0
+    # Loaded (non-muted) corpus size. Lets the scheduler tell "nothing unseen
+    # in a real corpus" (stale trigger counter — clear it) from "vault empty or
+    # unreadable" (leave state alone).
+    corpus_size: int = 0
 
     def __post_init__(self) -> None:
         if self.bridge_basenames is None:
@@ -538,7 +544,7 @@ def assemble_candidates(
     vault_dir: Path,
     last_digest_at: Optional[str],
     dismissals: DismissalStore,
-    first_run_window: int = 15,
+    first_run_window: int = FIRST_RUN_WINDOW,
     inject_bridges: int = 0,
     inject_entities: int = 0,
     inject_dense: int = 0,
@@ -601,7 +607,7 @@ def assemble_candidates(
         unseen_total = len(window)
 
     if not window:
-        return CandidateSet([], set())
+        return CandidateSet([], set(), corpus_size=len(corpus))
     window_basenames = {n.basename for n in window}
     older = [n for n in corpus if n.basename not in window_basenames]
 
@@ -773,4 +779,5 @@ def assemble_candidates(
         precap_basenames=precap_basenames,
         window_keys={note_key(n) for n in window},
         unseen_total=unseen_total,
+        corpus_size=len(corpus),
     )
