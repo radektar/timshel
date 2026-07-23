@@ -18,9 +18,10 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 from src.config import config
 from src.logger import logger
@@ -34,6 +35,14 @@ class DigestScheduler:
         self.last_digest_at: Optional[str] = None
         self.last_digest_path: Optional[str] = None
         self.new_notes: int = 0
+        # note_key() of every note a digest has already consumed. None means
+        # "not migrated yet" — the run path seeds it from the vault (everything
+        # dated before last_digest_at) exactly once.
+        self.seen_note_keys: Optional[Set[str]] = None
+        # In-memory only: when the local gate skipped a low-potential run, so
+        # the 30s tick doesn't re-assemble the corpus until the cooldown ends
+        # (or new material arrives).
+        self._gate_skip_at: Optional[datetime] = None
         self._load()
 
     def _load(self) -> None:
@@ -42,22 +51,23 @@ class DigestScheduler:
                 data = json.loads(self.state_file.read_text(encoding="utf-8"))
                 self.last_digest_at = data.get("last_digest_at")
                 self.last_digest_path = data.get("last_digest_path")
+                raw_seen = data.get("seen_note_keys")
+                self.seen_note_keys = set(raw_seen) if raw_seen is not None else None
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
 
     def _save(self) -> None:
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            payload: dict = {
+                "last_digest_at": self.last_digest_at,
+                "last_digest_path": self.last_digest_path,
+            }
+            if self.seen_note_keys is not None:
+                payload["seen_note_keys"] = sorted(self.seen_note_keys)
             tmp = self.state_file.with_suffix(".json.tmp")
             tmp.write_text(
-                json.dumps(
-                    {
-                        "last_digest_at": self.last_digest_at,
-                        "last_digest_path": self.last_digest_path,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
+                json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             os.replace(tmp, self.state_file)
@@ -66,6 +76,23 @@ class DigestScheduler:
 
     def register_new_notes(self, count: int = 1) -> None:
         self.new_notes += count
+        # Fresh material re-opens the gate immediately — the cooldown only
+        # guards against re-scoring the same unchanged corpus every tick.
+        self._gate_skip_at = None
+
+    def init_seen(self, keys: Set[str]) -> None:
+        """One-time seed of the seen-set (date-based state migration)."""
+        self.seen_note_keys = set(keys)
+        self._save()
+
+    def note_gate_skip(self, now: datetime) -> None:
+        self._gate_skip_at = now
+
+    def gate_cooldown_active(self, now: datetime) -> bool:
+        if self._gate_skip_at is None:
+            return False
+        elapsed = (now - self._gate_skip_at).total_seconds()
+        return bool(elapsed < config.DIGEST_GATE_COOLDOWN_MINUTES * 60)
 
     def _elapsed_days(self, now: datetime) -> Optional[float]:
         if not self.last_digest_at:
@@ -91,11 +118,28 @@ class DigestScheduler:
             return True
         return False
 
-    def mark_ran(self, now: datetime, path: Optional[Path] = None) -> None:
+    def mark_ran(
+        self,
+        now: datetime,
+        path: Optional[Path] = None,
+        seen_keys: Optional[Set[str]] = None,
+        pending: int = 0,
+    ) -> None:
+        """Record a completed (paid) run.
+
+        ``seen_keys`` — the consumed window's note keys, added to the seen-set.
+        ``pending`` — unseen notes left over by the window cap (a backfill
+        catching up): kept as the new-notes counter so the weekly cadence keeps
+        firing until the backlog drains, even with no new recordings.
+        """
         self.last_digest_at = now.isoformat(timespec="seconds")
         if path is not None:
             self.last_digest_path = str(path)
-        self.new_notes = 0
+        if seen_keys:
+            if self.seen_note_keys is None:
+                self.seen_note_keys = set()
+            self.seen_note_keys |= set(seen_keys)
+        self.new_notes = max(0, int(pending))
         self._save()
 
 
@@ -184,6 +228,83 @@ def _record_digest_metrics(
     )
 
 
+def _ensure_seen_migrated(scheduler: DigestScheduler, vault: Path) -> Set[str]:
+    """Seed the seen-set once, from the legacy date-based state.
+
+    Everything dated before the last digest is marked seen — behaviour is
+    unchanged at the moment of upgrade, while notes that appear in the vault
+    LATER (a backfill of old recordings) count as new material regardless of
+    their recording date.
+    """
+    if scheduler.seen_note_keys is not None:
+        return scheduler.seen_note_keys
+    from src.connections.candidate_assembly import load_corpus, note_key
+
+    seen: Set[str] = set()
+    if scheduler.last_digest_at:
+        cutoff = scheduler.last_digest_at[:10]
+        seen = {
+            note_key(n) for n in load_corpus(vault) if n.date and n.date < cutoff
+        }
+    scheduler.init_seen(seen)
+    logger.info("digest seen-set migrated: %d notes marked as already seen", len(seen))
+    return scheduler.seen_note_keys  # type: ignore[return-value]
+
+
+@dataclass
+class DigestPotential:
+    """Local, $0 estimate of whether a synthesis run can find anything."""
+
+    window: int  # new (unseen) notes in the window
+    neighbors: int  # STRONG-channel archive neighbours (bm25-only excluded)
+    ok: bool
+
+
+def digest_potential(candidates) -> DigestPotential:
+    """Score an assembled candidate set. Pure — no I/O, no API.
+
+    Passes when the window can connect among itself (>=2 new notes) or a
+    single new note pulled enough STRONG channel neighbours from the archive
+    (shared tag, rare-token bridge, entity, dense, graph, stance). Notes that
+    only bm25 surfaced don't count — every transcript shares the section-header
+    tokens, so a positive bm25 score is not evidence of a connection. A lone
+    note nothing strong connects to fails — that run would burn an Opus call
+    on nothing.
+    """
+    window = len(candidates.window_basenames)
+    neighbors = sum(
+        1
+        for name, channels in candidates.channel_map.items()
+        if name not in candidates.window_basenames and (channels - {"bm25"})
+    )
+    ok = window >= 2 or (window >= 1 and neighbors >= config.DIGEST_GATE_MIN_NEIGHBORS)
+    return DigestPotential(window=window, neighbors=neighbors, ok=ok)
+
+
+def estimate_digest_potential() -> DigestPotential:
+    """Assemble candidates locally and score them — the manual-trigger preview.
+
+    Uses the cheap channels only (dense/graph/stance off): no ONNX model load
+    on the UI path, and a conservative-cost estimate is all the warning needs.
+    """
+    from src.connections.candidate_assembly import assemble_candidates
+    from src.connections.dismissals import DismissalStore
+
+    vault = Path(config.TRANSCRIBE_DIR)
+    scheduler = get_scheduler()
+    seen = _ensure_seen_migrated(scheduler, vault)
+    dismissals = DismissalStore(vault).load()
+    candidates = assemble_candidates(
+        vault,
+        scheduler.last_digest_at,
+        dismissals,
+        inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
+        inject_entities=config.SYNTHESIS_ENTITY_COUNT,
+        seen_keys=seen,
+    )
+    return digest_potential(candidates)
+
+
 def run_digest_if_due(
     transcriber: object = None, force: bool = False
 ) -> Optional[Path]:
@@ -204,6 +325,8 @@ def run_digest_if_due(
     now = datetime.now()
     if not force and not scheduler.is_due(now):
         return None
+    if not force and scheduler.gate_cooldown_active(now):
+        return None
     if getattr(transcriber, "_ai_disabled_reason", None):
         return None
 
@@ -217,6 +340,7 @@ def run_digest_if_due(
         return None
     try:
         vault = Path(config.TRANSCRIBE_DIR)
+        seen = _ensure_seen_migrated(scheduler, vault)
         dismissals = DismissalStore(vault).load()
         dismissals.sync_frontmatter_dismissals()
         candidates = assemble_candidates(
@@ -228,10 +352,35 @@ def run_digest_if_due(
             inject_dense=config.SYNTHESIS_DENSE_COUNT,
             inject_graph=config.SYNTHESIS_GRAPH_COUNT,
             inject_stance=config.SYNTHESIS_STANCE_COUNT,
+            seen_keys=seen,
         )
+        # Local pre-API gate: don't pay for a run assembly says can't connect.
+        # Skip WITHOUT mark_ran — the material stays pending and is re-scored
+        # after the cooldown or as soon as another note arrives. Forced runs
+        # bypass the gate (the menu already asked the user).
+        potential = digest_potential(candidates)
+        if not force and not potential.ok:
+            logger.info(
+                "digest gate: low connection potential "
+                "(window=%d, neighbors=%d) — skipping, $0 spent",
+                potential.window,
+                potential.neighbors,
+            )
+            scheduler.note_gate_skip(now)
+            from src.connections.insight_metrics import record_gate_skip
+
+            record_gate_skip(
+                window=potential.window,
+                neighbors=potential.neighbors,
+                candidates=len(candidates.notes),
+            )
+            return None
+
         if len(candidates.notes) < 2:
             logger.info("synthesis: fewer than 2 candidate notes, skipping")
             return None
+
+        pending = max(0, candidates.unseen_total - len(candidates.window_basenames))
 
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]
@@ -259,7 +408,9 @@ def run_digest_if_due(
             # H1/H4 data point (a paid run that yielded zero connections), so
             # record it, exactly like the verdict-all-dropped branch below.
             logger.info("synthesis: no genuine connections this run")
-            scheduler.mark_ran(now)  # reset weekly clock; write no digest
+            # Reset weekly clock; write no digest. The window WAS consumed
+            # (and paid for), so it is marked seen like any other run.
+            scheduler.mark_ran(now, seen_keys=candidates.window_keys, pending=pending)
             _record_digest_metrics(synthesizer, candidates, [], None)
             return None
 
@@ -305,7 +456,7 @@ def run_digest_if_due(
             # Every proposal died in verification — a legitimate, PAID outcome:
             # record the metrics (H1/H4 data point), reset the clock, write nothing.
             logger.info("verdict: no connections survived verification")
-            scheduler.mark_ran(now)
+            scheduler.mark_ran(now, seen_keys=candidates.window_keys, pending=pending)
             _record_digest_metrics(
                 synthesizer,
                 candidates,
@@ -318,7 +469,9 @@ def run_digest_if_due(
 
         path, conn_meta = write_digest_note(connections, len(candidates.notes))
         dismissals.record_digest(path, conn_meta)
-        scheduler.mark_ran(now, path)
+        scheduler.mark_ran(
+            now, path, seen_keys=candidates.window_keys, pending=pending
+        )
         _record_digest_metrics(
             synthesizer,
             candidates,

@@ -1741,6 +1741,27 @@ class TimshelMenuApp(rumps.App):
         if not self.transcriber:
             return
 
+        # Local $0 preview: warn (don't block) when assembly says there is too
+        # little new connective material for a paid run to find anything.
+        try:
+            from src.connections.scheduler import estimate_digest_potential
+
+            potential = estimate_digest_potential()
+        except Exception as exc:  # noqa: BLE001 - preview must never block the run
+            logger.debug("digest potential preview failed (%s) — proceeding", exc)
+            potential = None
+        if potential is not None and not potential.ok:
+            clicked = rumps.alert(
+                "Timshel",
+                "Not much new material since the last digest — a run now will "
+                "likely find no new connections, but will still cost an API "
+                "call.\n\nGenerate anyway?",
+                ok="Generate",
+                cancel="Cancel",
+            )
+            if clicked != 1:
+                return
+
         def _run():
             try:
                 from src.connections import run_digest_if_due

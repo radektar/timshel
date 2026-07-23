@@ -167,6 +167,20 @@ class Config:
     CONNECTIONS_DIGEST_INTERVAL_DAYS: int = 7
     CONNECTIONS_PATTERN_TRIGGER_MIN: int = 6
     CONNECTIONS_MIN_GAP_DAYS: int = 2
+    # Local pre-API gate: skip a paid synthesis run when candidate assembly
+    # shows too little connective material. A run passes the gate when the
+    # window has >=2 new notes (they can connect among themselves) OR a single
+    # new note pulled at least this many STRONG channel neighbours from the
+    # archive (shared tag / rare-token bridge / entity / dense — bm25-only
+    # neighbours don't count: every note shares the "## Podsumowanie" header
+    # tokens, so a positive bm25 score carries no evidence of a connection).
+    # $0 — computed from the local channels only; forced (manual) runs bypass
+    # the gate after an explicit user confirmation.
+    DIGEST_GATE_MIN_NEIGHBORS: int = 2
+    # After a low-potential skip, don't re-assemble the corpus on every 30s
+    # tick — re-evaluate after this cooldown, or immediately once another
+    # note is transcribed (new material re-opens the gate).
+    DIGEST_GATE_COOLDOWN_MINUTES: int = 60
     # Sub-folder (inside TRANSCRIBE_DIR) where digest notes are written.
     DIGEST_DIR_NAME: str = "Timshel Digests"
     # Hidden per-vault sidecar dir name (metrics/signal/vocabulary/dismissals).

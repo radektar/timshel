@@ -66,6 +66,37 @@ def test_window_filters_by_last_digest_date(vault):
     assert "old" not in cs.window_basenames
 
 
+def test_seen_keys_window_ignores_dates(vault):
+    # A backfilled note with an OLD date but unseen fingerprint is window
+    # material; a fresh-dated note already seen is not.
+    _write_note(vault, "backfill", "2025-08-01", summary="alpha beta")
+    _write_note(vault, "digested", "2026-07-20", summary="alpha beta")
+    cs = assemble_candidates(
+        vault,
+        "2026-07-01T00:00:00",
+        DismissalStore(vault),
+        seen_keys={"sha256:digested"},
+    )
+    assert cs.window_basenames == {"backfill"}
+    assert cs.window_keys == {"sha256:backfill"}
+    assert cs.unseen_total == 1
+
+
+def test_seen_keys_window_capped_newest_first(vault):
+    for i in range(6):
+        _write_note(vault, f"n{i}", f"2026-06-1{i}", summary="alpha beta gamma")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=4,
+        seen_keys=set(),
+    )
+    assert len(cs.window_basenames) == 4
+    assert "n5" in cs.window_basenames and "n0" not in cs.window_basenames
+    assert cs.unseen_total == 6  # leftover 2 stays pending for the next run
+
+
 def test_tag_bridge_pulls_older_sharing_tag(vault):
     _write_note(vault, "new", "2026-06-20", tags="sauna", summary="cokolwiek nowego")
     _write_note(vault, "older_shared", "2026-05-01", tags="sauna", summary="stare ale")
