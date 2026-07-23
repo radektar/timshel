@@ -68,6 +68,10 @@ def test_seen_keys_persist_and_accumulate(tmp_path):
     now = datetime(2026, 7, 23, 12, 0, 0)
     s.mark_ran(now, seen_keys={"sha256:a", "sha256:b"}, pending=3)
     assert s.new_notes == 3  # backfill leftover keeps the cadence firing
+    # A big backlog is clamped below the pattern trigger: it must drain on the
+    # weekly cadence, never escalate to the every-2-days one by itself.
+    s.mark_ran(now, seen_keys=set(), pending=100)
+    assert s.new_notes == config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1
     s.mark_ran(now, seen_keys={"sha256:c"})
     assert s.new_notes == 0
 

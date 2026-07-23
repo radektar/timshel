@@ -130,7 +130,11 @@ class DigestScheduler:
         ``seen_keys`` — the consumed window's note keys, added to the seen-set.
         ``pending`` — unseen notes left over by the window cap (a backfill
         catching up): kept as the new-notes counter so the weekly cadence keeps
-        firing until the backlog drains, even with no new recordings.
+        firing until the backlog drains, even with no new recordings. Clamped
+        BELOW the pattern-trigger threshold: a backlog alone must never
+        escalate to the every-2-days cadence (that would multiply cost after a
+        bulk import) — only genuinely new recordings, which bump the counter on
+        top via :meth:`register_new_notes`, can.
         """
         self.last_digest_at = now.isoformat(timespec="seconds")
         if path is not None:
@@ -139,7 +143,9 @@ class DigestScheduler:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
             self.seen_note_keys |= set(seen_keys)
-        self.new_notes = max(0, int(pending))
+        self.new_notes = max(
+            0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
+        )
         self._save()
 
 
