@@ -104,12 +104,11 @@ class DigestScheduler:
             if data is None:
                 return
             raw = data.get("seen_note_keys")
-            if raw is None:
-                return
             disk_epoch = int(data.get("seen_epoch", 0) or 0)
             disk_tombstones = set(data.get("unseen_tombstones", []) or [])
             if disk_epoch > self.seen_epoch:
-                self.seen_note_keys = set(raw)
+                if raw is not None:
+                    self.seen_note_keys = set(raw)
                 self.seen_epoch = disk_epoch
                 self.unseen_tombstones = disk_tombstones
             elif disk_epoch == self.seen_epoch:
@@ -117,9 +116,20 @@ class DigestScheduler:
                     if self.seen_note_keys is None:
                         self.seen_note_keys = set()
                     self.seen_note_keys |= set(raw)
-                self.unseen_tombstones |= disk_tombstones
+                # Tombstones are ADOPTED from disk, not unioned: a lift (the
+                # key was genuinely re-consumed by a digest, possibly in a CLI
+                # process) must propagate to stale holders, or their memory
+                # copy would resurrect the tombstone on every write and force
+                # endless re-digests of that note. Adoption is safe because
+                # every tombstone writer (unsee) saves synchronously right
+                # after its own merge, and only the transcribing daemon ever
+                # un-sees — there is a single tombstone producer.
+                self.unseen_tombstones = disk_tombstones
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
+            # Runs even with no seen-set on disk (pre-migration): the
+            # tombstones must still be adopted so a later migration seeding
+            # the key as seen-by-date cannot clobber a pre-migration unsee.
             if self.seen_note_keys:
                 self.seen_note_keys -= self.unseen_tombstones
         except (TypeError, ValueError) as exc:

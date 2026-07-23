@@ -272,6 +272,54 @@ def test_tombstone_survives_stale_holders_union(tmp_path):
     assert on_disk.seen_note_keys >= {"sha256:m", "sha256:n"}
 
 
+def test_migration_respects_pre_migration_tombstone(tmp_path):
+    # v1-upgrade file: last_digest_at but no seen-set. A pre-migration unsee
+    # (retranscribed old recording) must survive the migration seeding that
+    # key as seen-by-date.
+    import json as _json
+
+    from src.connections.scheduler import _ensure_seen_migrated
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault_note(vault, "oldk", "2026-07-01")  # dated before cutoff
+    state_file = tmp_path / "cs.json"
+    state_file.write_text(
+        _json.dumps(
+            {
+                "last_digest_at": "2026-07-10T00:00:00",
+                "unseen_tombstones": ["sha256:oldk"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = DigestScheduler(tmp_path / "other.json")  # simulate loaded-early
+    stale.state_file = state_file  # same file, memory unaware of tombstone
+
+    seen = _ensure_seen_migrated(stale, vault)
+    assert "sha256:oldk" not in seen
+    assert "sha256:oldk" in DigestScheduler(state_file).unseen_tombstones
+
+
+def test_lifted_tombstone_propagates_to_stale_holder(tmp_path):
+    # A CLI digest re-consumes the note and lifts the tombstone on disk; a
+    # stale resident holder must ADOPT the lift, not resurrect the tombstone
+    # from memory and force endless re-digests.
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    daemon = DigestScheduler(state_file)
+    daemon.mark_ran(now, seen_keys={"sha256:k"})
+    daemon.unsee("sha256:k")  # daemon holds tombstone {k} in memory
+
+    cli = DigestScheduler(state_file)
+    cli.mark_ran(now, seen_keys={"sha256:k"})  # CLI re-consumes k, lifts it
+
+    daemon.clear_pending()  # any later write by the stale daemon
+    on_disk = DigestScheduler(state_file)
+    assert "sha256:k" in on_disk.seen_note_keys
+    assert on_disk.unseen_tombstones == set()
+
+
 def test_consuming_a_window_lifts_the_tombstone(tmp_path):
     state_file = tmp_path / "cs.json"
     now = datetime(2026, 7, 23, 12, 0, 0)
