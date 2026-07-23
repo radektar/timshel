@@ -47,6 +47,11 @@ class DigestScheduler:
         # Bumped by reset_seen: lets other processes tell "the set shrank on
         # purpose, adopt it" from "my union is newer, keep merging".
         self.seen_epoch: int = 0
+        # Keys explicitly un-seen (retranscribed notes). Within one epoch the
+        # seen-set is add-only, so a plain discard would be undone by any
+        # stale holder's union — a tombstone survives the union and is lifted
+        # only when a digest actually consumes the key again.
+        self.unseen_tombstones: Set[str] = set()
         # In-memory only: when the local gate skipped a low-potential run, so
         # the 30s tick doesn't re-assemble the corpus until the cooldown ends
         # (or new material arrives). The signature dedups the telemetry rows:
@@ -76,6 +81,7 @@ class DigestScheduler:
             raw_seen = data.get("seen_note_keys")
             self.seen_note_keys = set(raw_seen) if raw_seen is not None else None
             self.seen_epoch = int(data.get("seen_epoch", 0) or 0)
+            self.unseen_tombstones = set(data.get("unseen_tombstones", []) or [])
             # Persisted pending (backfill leftover): without it, a restart
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
@@ -101,13 +107,21 @@ class DigestScheduler:
             if raw is None:
                 return
             disk_epoch = int(data.get("seen_epoch", 0) or 0)
+            disk_tombstones = set(data.get("unseen_tombstones", []) or [])
             if disk_epoch > self.seen_epoch:
                 self.seen_note_keys = set(raw)
                 self.seen_epoch = disk_epoch
-            elif disk_epoch == self.seen_epoch and raw:
-                if self.seen_note_keys is None:
-                    self.seen_note_keys = set()
-                self.seen_note_keys |= set(raw)
+                self.unseen_tombstones = disk_tombstones
+            elif disk_epoch == self.seen_epoch:
+                if raw:
+                    if self.seen_note_keys is None:
+                        self.seen_note_keys = set()
+                    self.seen_note_keys |= set(raw)
+                self.unseen_tombstones |= disk_tombstones
+            # A tombstoned key stays un-seen no matter which side's union
+            # re-added it — until mark_ran lifts the tombstone on consumption.
+            if self.seen_note_keys:
+                self.seen_note_keys -= self.unseen_tombstones
         except (TypeError, ValueError) as exc:
             # Same tolerance as _load: a hand-mangled value must degrade to
             # "merge skipped", never blow up mark_ran after a PAID run.
@@ -138,6 +152,7 @@ class DigestScheduler:
                 "last_digest_path": self.last_digest_path,
                 "new_notes": int(self.new_notes),
                 "seen_epoch": int(self.seen_epoch),
+                "unseen_tombstones": sorted(self.unseen_tombstones),
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -170,13 +185,24 @@ class DigestScheduler:
         self._save()
 
     def unsee(self, key: str) -> None:
-        """Drop one key from the seen-set: a freshly (re)written transcript is
-        new material by definition, even when its fingerprint was consumed
-        before (user deleted the note and re-transcribed the same recording).
+        """Un-see one key: a freshly (re)written transcript is new material by
+        definition, even when its fingerprint was consumed before (user
+        deleted the note and re-transcribed the same recording).
+
+        Full sync-protocol participant: syncs from disk first (a stale or
+        pre-migration in-memory set must neither miss the key nor clobber
+        other processes' progress on save), and records a TOMBSTONE rather
+        than a bare discard — within an epoch the seen-set is add-only, so a
+        discard alone would be silently undone by any stale holder's union.
+        The tombstone also outlives a later migration seeding the key as
+        seen-by-date. ``mark_ran`` lifts it when a digest truly re-consumes
+        the note.
         """
-        if self.seen_note_keys and key in self.seen_note_keys:
+        self._merge_disk_seen()
+        self.unseen_tombstones.add(key)
+        if self.seen_note_keys:
             self.seen_note_keys.discard(key)
-            self._save()
+        self._save()
 
     def reset_seen(self, keys: Optional[Set[str]] = None) -> None:
         """Explicitly REPLACE the seen-set — the archive re-digest seam.
@@ -193,6 +219,7 @@ class DigestScheduler:
             disk_epoch = 0
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
+        self.unseen_tombstones = set()  # everything is unseen now anyway
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
@@ -251,11 +278,13 @@ class DigestScheduler:
             self.last_digest_path = str(path)
         # Sync from disk FIRST, union our consumed window AFTER: if another
         # process bumped the epoch (reset) mid-run, adoption replaces the set —
-        # our window must be re-added on top, not lost in the swap.
+        # our window must be re-added on top, not lost in the swap. Consuming
+        # a key also lifts its un-see tombstone: the note really is seen again.
         self._merge_disk_seen()
         if seen_keys:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
+            self.unseen_tombstones -= set(seen_keys)
             self.seen_note_keys |= set(seen_keys)
         self.new_notes = max(
             0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)

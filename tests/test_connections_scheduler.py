@@ -226,6 +226,66 @@ def test_corrupt_seen_keys_never_break_mark_ran(tmp_path):
     assert DigestScheduler(state_file).seen_note_keys == {"sha256:a"}
 
 
+def test_unsee_syncs_from_disk_before_check_and_save(tmp_path):
+    # Stale (even None) in-memory state must neither miss the key nor clobber
+    # other processes' progress on save.
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    app = DigestScheduler(state_file)  # loaded when no state existed
+    cli = DigestScheduler(state_file)
+    cli.mark_ran(now, seen_keys={"sha256:q", "sha256:w"})
+
+    app.unsee("sha256:q")
+    on_disk = DigestScheduler(state_file)
+    assert on_disk.seen_note_keys == {"sha256:w"}  # q un-seen, W kept
+    assert "sha256:q" in on_disk.unseen_tombstones
+
+
+def test_unsee_does_not_roll_back_reset_epoch(tmp_path):
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    cli = DigestScheduler(state_file)
+    app = DigestScheduler(state_file)
+    cli.mark_ran(now, seen_keys={"sha256:a", "sha256:b"})
+    app.refresh_from_disk()  # app now holds {a, b} at epoch 0
+    cli.reset_seen()  # epoch 1, empty
+
+    app.unsee("sha256:x")  # must adopt the reset, not resurrect {a, b}
+    on_disk = DigestScheduler(state_file)
+    assert on_disk.seen_note_keys == set()
+    assert on_disk.seen_epoch == 1
+
+
+def test_tombstone_survives_stale_holders_union(tmp_path):
+    # Within an epoch the seen-set is add-only: a bare discard would be undone
+    # by any stale process's union. The tombstone must survive it.
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    a = DigestScheduler(state_file)
+    a.mark_ran(now, seen_keys={"sha256:k", "sha256:m"})
+    b = DigestScheduler(state_file)  # stale holder: {k, m} in memory
+    a.unsee("sha256:k")
+
+    b.mark_ran(now, seen_keys={"sha256:n"})  # b's union re-adds k...
+    on_disk = DigestScheduler(state_file)
+    assert "sha256:k" not in on_disk.seen_note_keys  # ...tombstone wins
+    assert on_disk.seen_note_keys >= {"sha256:m", "sha256:n"}
+
+
+def test_consuming_a_window_lifts_the_tombstone(tmp_path):
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    s = DigestScheduler(state_file)
+    s.mark_ran(now, seen_keys={"sha256:k"})
+    s.unsee("sha256:k")
+    assert "sha256:k" not in (s.seen_note_keys or set())
+
+    s.mark_ran(now, seen_keys={"sha256:k"})  # digest re-consumed the note
+    on_disk = DigestScheduler(state_file)
+    assert "sha256:k" in on_disk.seen_note_keys
+    assert on_disk.unseen_tombstones == set()
+
+
 def test_enqueue_with_md_path_unsees_fingerprint(tmp_path, monkeypatch):
     # Delete-and-retranscribe: a freshly written note whose fingerprint was
     # consumed before must become digest material again.
