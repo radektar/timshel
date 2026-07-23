@@ -1741,28 +1741,10 @@ class TimshelMenuApp(rumps.App):
         if not self.transcriber:
             return
 
-        # Local $0 preview: warn (don't block) when assembly says there is too
-        # little new connective material for a paid run to find anything.
-        try:
-            from src.connections.scheduler import estimate_digest_potential
-
-            potential = estimate_digest_potential()
-        except Exception as exc:  # noqa: BLE001 - preview must never block the run
-            logger.debug("digest potential preview failed (%s) — proceeding", exc)
-            potential = None
-        if potential is not None and not potential.ok:
-            clicked = rumps.alert(
-                "Timshel",
-                "Not much new material since the last digest — a run now will "
-                "likely find no new connections, but will still cost an API "
-                "call.\n\nGenerate anyway?",
-                ok="Generate",
-                cancel="Cancel",
-            )
-            if clicked != 1:
-                return
-
         def _run():
+            send_notification(
+                "Timshel", "Generating synthesis digest…", "Reading your notes…"
+            )
             try:
                 from src.connections import run_digest_if_due
 
@@ -1777,10 +1759,40 @@ class TimshelMenuApp(rumps.App):
                 logger.error("Manual digest failed: %s", exc)
                 send_notification("Timshel", "Digest failed", str(exc))
 
-        threading.Thread(target=_run, name="ManualDigest", daemon=True).start()
-        send_notification(
-            "Timshel", "Generating synthesis digest…", "Reading your notes…"
-        )
+        def _preview_then_run():
+            # The $0 preview reads the whole corpus (and the first tester-mode
+            # call loads the dense model) — worker thread, NEVER the AppKit
+            # main thread. Only the confirm dialog hops back to main.
+            try:
+                from src.connections.scheduler import estimate_digest_potential
+
+                potential = estimate_digest_potential()
+            except Exception as exc:  # noqa: BLE001 - preview must never block
+                logger.debug("digest potential preview failed (%s) — proceeding", exc)
+                potential = None
+            if potential is None or potential.ok:
+                _run()
+                return
+
+            def _confirm_on_main() -> None:
+                clicked = rumps.alert(
+                    "Timshel",
+                    "Not much new material since the last digest — a run now "
+                    "will likely find no new connections, but will still cost "
+                    "an API call.\n\nGenerate anyway?",
+                    ok="Generate",
+                    cancel="Cancel",
+                )
+                if clicked == 1:
+                    threading.Thread(
+                        target=_run, name="ManualDigest", daemon=True
+                    ).start()
+
+            _run_on_main_thread(_confirm_on_main)
+
+        threading.Thread(
+            target=_preview_then_run, name="ManualDigestPreview", daemon=True
+        ).start()
 
     def _reset_memory(self, _):
         """Reset transcription memory to a specific date."""

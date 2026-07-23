@@ -2226,7 +2226,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         try:
             from src.connections import enqueue_connection_analysis
 
-            enqueue_connection_analysis(self)
+            enqueue_connection_analysis(self, md_path=md_path)
         except Exception as exc:  # noqa: BLE001
             logger.debug("connection enqueue skipped: %s", exc)
 

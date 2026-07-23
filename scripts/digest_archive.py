@@ -48,23 +48,19 @@ def main() -> int:
         print("no API key in Malinche settings — aborting")
         return 1
 
-    # In-process overrides only (die with the process) — same full prototype
-    # pipeline as `make magic-digest`, so archive digests are comparable.
-    config.PROTOTYPE_TESTER_MODE = True
-    config.INSIGHT_METRICS_ENABLED = True
-    config.VERDICT_ENABLED = True
-    config.SYNTHESIS_ENTITY_COUNT = 4
-    config.SYNTHESIS_DENSE_COUNT = 6
-    config.SYNTHESIS_GRAPH_COUNT = 6
-    config.SYNTHESIS_STANCE_COUNT = 4
-    config.LLM_MODEL_SYNTHESIS = args.model
-    config.LLM_MODEL_VERDICT = args.model
+    # In-process overrides only (die with the process) — the same shared
+    # prototype pipeline as `make magic-digest`, so archive digests are
+    # comparable in the metrics ledger.
+    from src.config.tester_mode import apply_tester_overrides
+
+    apply_tester_overrides(args.model)
 
     from src.connections.candidate_assembly import (
         FIRST_RUN_WINDOW,
         load_corpus,
         note_key,
     )
+    from src.connections.dismissals import DismissalStore
     from src.connections.scheduler import (
         _ensure_seen_migrated,
         get_scheduler,
@@ -76,14 +72,19 @@ def main() -> int:
     if args.reset:
         scheduler.reset_seen()
         print("seen-set reset — the whole archive is new material again.")
-        print("NOTE: if the Timshel app is running, RESTART it afterwards —")
-        print("      it holds the old seen-set in memory and would write it back.")
+        print("(A running Timshel app picks the reset up on its next digest —")
+        print(" the state file carries an epoch, no restart needed.)")
     else:
         _ensure_seen_migrated(scheduler, vault)
 
+    # Count exactly what a run can consume: same muted-note filter as
+    # candidate assembly, so the quoted backlog and cost are honest.
+    dismissals = DismissalStore(vault).load()
+    corpus = [n for n in load_corpus(vault) if not dismissals.note_muted(n.basename)]
+
     def unseen_count() -> int:
         seen = scheduler.seen_note_keys or set()
-        return sum(1 for n in load_corpus(vault) if note_key(n) not in seen)
+        return sum(1 for n in corpus if note_key(n) not in seen)
 
     todo = unseen_count()
     if todo == 0:

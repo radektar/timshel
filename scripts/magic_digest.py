@@ -78,18 +78,13 @@ def main() -> int:
         return 1
 
     vault = Path(config.TRANSCRIBE_DIR)
-    # In-process overrides only (die with the process). The entity channel is
-    # off in the production baseline (unvalidated); the dogfood turns it on so
-    # the digest we measure is the full prototype pipeline.
-    config.PROTOTYPE_TESTER_MODE = True
-    config.INSIGHT_METRICS_ENABLED = True
+    # In-process overrides only (die with the process) — the one shared
+    # definition of the full prototype pipeline, so digest_archive.py rows
+    # stay comparable with these.
+    from src.config.tester_mode import apply_tester_overrides
+
+    apply_tester_overrides(args.model)
     config.VERDICT_ENABLED = not args.no_verdict
-    config.SYNTHESIS_ENTITY_COUNT = 4
-    config.SYNTHESIS_DENSE_COUNT = 6
-    config.SYNTHESIS_GRAPH_COUNT = 6
-    config.SYNTHESIS_STANCE_COUNT = 4
-    config.LLM_MODEL_SYNTHESIS = args.model
-    config.LLM_MODEL_VERDICT = args.model
 
     from src.connections.scheduler import run_digest_if_due
 

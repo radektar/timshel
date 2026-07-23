@@ -2,7 +2,8 @@
 """Preview the REAL connection digest on the live corpus — Haiku vs Opus.
 
 Faithfully replays the production path (`run_digest_if_due`): same candidate
-assembly, same prompt, same schema — but runs synthesis once per model on the
+assembly (including the seen-set window production uses; the date window is
+legacy), same prompt, same schema — but runs synthesis once per model on the
 *same* candidate set and renders a side-by-side comparison to a markdown file
 instead of writing into the vault. This is the on-real-data validation step the
 gold-case eval cannot give: it shows the actual quality of connections on your
@@ -93,8 +94,17 @@ def run_pass(name: str, cfg: dict, key: str, language_hint: str) -> str:
     _apply(**cfg)
     vault = Path(config.TRANSCRIBE_DIR)
     dismissals = DismissalStore(vault).load()
+    # Window like production: by the digest's seen-set when one exists (the
+    # date window is legacy). Read-only — no migration here, so a
+    # pre-migration state falls back to the equivalent newest-N window.
+    from src.connections.scheduler import get_scheduler
+
     cands = assemble_candidates(
-        vault, None, dismissals, first_run_window=cfg["window"]
+        vault,
+        None,
+        dismissals,
+        first_run_window=cfg["window"],
+        seen_keys=get_scheduler().seen_note_keys,
     )
     lang = detect_language(" ".join(n.summary_md for n in cands.notes)[:5000])
     n_new = len(cands.window_basenames)
@@ -133,10 +143,7 @@ def run_pass(name: str, cfg: dict, key: str, language_hint: str) -> str:
         block.append("")
         block.append(_render_connections(result))
         block.append("")
-        print(
-            f"  {name} / {LABEL[model]}: {nconn} conn, "
-            f"${cost:.4f}, {dt:.1f}s"
-        )
+        print(f"  {name} / {LABEL[model]}: {nconn} conn, " f"${cost:.4f}, {dt:.1f}s")
 
     return "\n".join(block)
 

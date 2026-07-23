@@ -75,7 +75,7 @@ magic-digest:
 
 digest-archive:
 	@echo "Archive digest (explicit, PAID). Usage: make digest-archive RUNS=3 RESET=1"
-	./venv312/bin/python scripts/digest_archive.py $(if $(RESET),--reset) --runs $(or $(RUNS),1)
+	./venv312/bin/python scripts/digest_archive.py $(if $(filter-out 0 no false,$(RESET)),--reset) --runs $(or $(RUNS),1)
 
 recall-eval:
 	@echo "H3 recall harness over confirmed planted pairs (local, no API)..."
