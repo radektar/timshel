@@ -1,7 +1,32 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-21 · Faza: kod → test
+Data: 2026-07-23 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Digest: okno po fingerprintach + gate $0 przed API (PR #89, MERGE 2026-07-23)
+
+Diagnoza z testu na drugim Macu: (1) digest liczył "nowość" po dacie nagrania
+z frontmattera — backfill starych nagrań był niewidoczny; (2) ręczny trigger
+palił Opusa (~$0.43) nawet po 1 nagraniu bez powiązań; (3) digest odpalał się
+w środku batcha. Wdrożone (7 commitów): seen-set `note_key()` w stanie
+schedulera (+ persystowany pending, epoka, tombstones) z migracją jednorazową
+z daty (świeża instalacja = lustro legacy pierwszego runu, bez auto-drainu
+archiwum); cap okna 15; lokalny gate przed API (okno≥2 LUB ≥2 silnych
+sąsiadów; bm25-only = szum nagłówków) + cooldown 1h + wiersz `gate-skip` $0
+w metrics.jsonl; ręczny run w menu z preview w wątku tła + dialogiem;
+force z pustym oknem regeneruje świeże okno; seam po transkrypcji od-widuje
+fingerprint (delete-and-retranscribe działa; tombstones adoptowane z dysku —
+lift się propaguje między procesami); `make digest-archive RUNS=N RESET=1`
+= jawny, płatny digest archiwum (reset przez epokę, bez restartu apki).
+**Pętla review: R1 adversarial(10) → R2 full 8-finderów(10) → R3(3 unsee)
+→ R4(2 merge-protokół) → R5 CZYSTA (repro-skrypty + trace).** Suita 1192,
+black/flake8/mypy czyste. Do przetestowania na realnym archiwum: `make
+digest-archive RESET=1 RUNS=2` (próbka ~$0.90) → ocena jakości digestów.
+Poza zakresem (świadomie): digest nie czeka na koniec batcha transkrypcji;
+odmowa summarizera została tytułem notki ("I cannot produce notes...") —
+osobne drobne PR-y. Kalibracja progu gate'a → telemetria gate-skip po 2–4
+tyg. Kontekst: vault 11-Transcripts zbackfillowany (175/175 z fingerprintem,
+duplikat "Domki dla rodzin" scalony).
 
 ## Downloader — wyścig + stale resume NAPRAWIONE (PR #85, merge 2026-07-21)
 
