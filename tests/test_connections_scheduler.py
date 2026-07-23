@@ -171,6 +171,20 @@ def test_mark_ran_merges_disk_seen_from_other_process(tmp_path):
     assert DigestScheduler(state_file).seen_note_keys >= {"sha256:a", "sha256:b"}
 
 
+def test_reset_seen_forgets_without_disk_merge(tmp_path):
+    # The archive re-digest seam: reset must NOT union the old on-disk set
+    # back (that is exactly what it exists to forget).
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 23, 12, 0, 0)
+    s = DigestScheduler(state_file)
+    s.mark_ran(now, seen_keys={"sha256:a", "sha256:b"})
+    s.reset_seen()
+    assert DigestScheduler(state_file).seen_note_keys == set()
+    # Post-reset consumption tracks only what was actually re-digested.
+    s.mark_ran(now, seen_keys={"sha256:c"})
+    assert DigestScheduler(state_file).seen_note_keys == {"sha256:c"}
+
+
 def test_fresh_install_migration_does_not_drain_archive(tmp_path):
     # First-ever migration on a populated vault mirrors the legacy first run:
     # newest FIRST_RUN_WINDOW stay unseen, the rest is marked seen — no

@@ -119,6 +119,17 @@ class DigestScheduler:
         self.new_notes = 0
         self._save()
 
+    def reset_seen(self, keys: Optional[Set[str]] = None) -> None:
+        """Explicitly REPLACE the seen-set — the archive re-digest seam.
+
+        Unlike :meth:`init_seen`/:meth:`mark_ran` this does NOT union the
+        on-disk state: the whole point is to forget. Caveat for callers: a
+        resident app still holds the old set in memory and its next
+        ``mark_ran`` would merge it back — tell the user to restart it.
+        """
+        self.seen_note_keys = set(keys or set())
+        self._save()
+
     def note_gate_skip(self, now: datetime) -> None:
         self._gate_skip_at = now
 
