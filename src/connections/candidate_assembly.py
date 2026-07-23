@@ -34,6 +34,8 @@ from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
 from src.tag_index import TagIndex
 
 _TRANSCRIPT_MARKER = "## Transkrypcja"
+# How many notes seed the very first digest — and the seen-set window cap.
+FIRST_RUN_WINDOW = 15
 _STOPWORDS = set(_PL_STOPWORDS) | set(_EN_STOPWORDS)
 _TOKEN_RE = re.compile(r"[a-z0-9ąćęłńóśźż]+", re.IGNORECASE)
 _BM25_K1 = 1.5
@@ -59,6 +61,16 @@ class NoteRef:
     fingerprint: str
 
 
+def note_key(note: NoteRef) -> str:
+    """Stable identity key for the digest's seen-set.
+
+    The fingerprint when the note has one; a name-derived key otherwise, so
+    even a frontmatter-less note can be marked as seen instead of re-entering
+    the window forever.
+    """
+    return note.fingerprint or f"name:{note.basename}"
+
+
 @dataclass
 class CandidateSet:
     """Ranked candidate notes plus the 'new this week' subset."""
@@ -75,6 +87,17 @@ class CandidateSet:
     # Lets the recall eval tell "never found" from "found but cut by budget" —
     # two different failures needing two different fixes.
     precap_basenames: Set[str] = None  # type: ignore[assignment]
+    # note_key() of every window note — what the scheduler marks as seen after
+    # a run. Populated in every window mode (empty only for an empty set).
+    window_keys: Set[str] = None  # type: ignore[assignment]
+    # Total unseen notes BEFORE the window cap (seen-set mode only; equals the
+    # window size otherwise). unseen_total - len(window) = the backfill leftover
+    # that stays pending for the next digest.
+    unseen_total: int = 0
+    # Loaded (non-muted) corpus size. Lets the scheduler tell "nothing unseen
+    # in a real corpus" (stale trigger counter — clear it) from "vault empty or
+    # unreadable" (leave state alone).
+    corpus_size: int = 0
 
     def __post_init__(self) -> None:
         if self.bridge_basenames is None:
@@ -83,6 +106,8 @@ class CandidateSet:
             self.channel_map = {}
         if self.precap_basenames is None:
             self.precap_basenames = set()
+        if self.window_keys is None:
+            self.window_keys = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -519,7 +544,7 @@ def assemble_candidates(
     vault_dir: Path,
     last_digest_at: Optional[str],
     dismissals: DismissalStore,
-    first_run_window: int = 15,
+    first_run_window: int = FIRST_RUN_WINDOW,
     inject_bridges: int = 0,
     inject_entities: int = 0,
     inject_dense: int = 0,
@@ -527,6 +552,7 @@ def assemble_candidates(
     inject_stance: int = 0,
     dense_skip: int = 0,
     as_of: Optional[str] = None,
+    seen_keys: Optional[Set[str]] = None,
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -547,6 +573,11 @@ def assemble_candidates(
             opposite polarity (0 = off; contradiction-candidate channel).
         as_of: time-travel cutoff (YYYY-MM-DD, inclusive) for the recall
             harness — see :func:`load_corpus`. Production callers omit it.
+        seen_keys: the digest's seen-set (:func:`note_key` values). When given,
+            the window = notes NOT in the set (newest first, capped at
+            ``first_run_window``) — so a backfilled old note counts as new
+            material exactly once, regardless of its recording date. ``None``
+            keeps the legacy date-based window (recall harness / older callers).
     """
     corpus = [
         n
@@ -556,14 +587,27 @@ def assemble_candidates(
     if not corpus:
         return CandidateSet([], set())
 
-    if last_digest_at:
+    if seen_keys is not None:
+        unseen = sorted(
+            (n for n in corpus if note_key(n) not in seen_keys),
+            key=lambda n: n.date,
+            reverse=True,
+        )
+        unseen_total = len(unseen)
+        # Cap the window so a bulk backfill catches up incrementally (15 notes
+        # per digest) instead of blowing one giant prompt; the leftover stays
+        # unseen and enters the next runs.
+        window = unseen[:first_run_window]
+    elif last_digest_at:
         cutoff = last_digest_at[:10]
         window = [n for n in corpus if n.date and n.date >= cutoff]
+        unseen_total = len(window)
     else:
         window = sorted(corpus, key=lambda n: n.date, reverse=True)[:first_run_window]
+        unseen_total = len(window)
 
     if not window:
-        return CandidateSet([], set())
+        return CandidateSet([], set(), corpus_size=len(corpus))
     window_basenames = {n.basename for n in window}
     older = [n for n in corpus if n.basename not in window_basenames]
 
@@ -733,4 +777,7 @@ def assemble_candidates(
         bridge_basenames,
         channel_map=channel_map,
         precap_basenames=precap_basenames,
+        window_keys={note_key(n) for n in window},
+        unseen_total=unseen_total,
+        corpus_size=len(corpus),
     )

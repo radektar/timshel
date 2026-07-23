@@ -1,6 +1,6 @@
 # Olympus Transcriber - Development Makefile
 
-.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester smoke-bundle preview-window eval-synthesis signal-report magic-digest recall-eval
+.PHONY: help install test test-pipeline test-e2e test-ui lint format clean run setup-daemon stop-daemon logs icon build-app build-app-tester build-dmg release release-tester smoke-bundle preview-window eval-synthesis signal-report magic-digest digest-archive recall-eval
 
 help:
 	@echo "Timshel - Development Commands"
@@ -72,6 +72,10 @@ import-text:
 magic-digest:
 	@echo "Magic-insights tester digest (Opus 4.8 + verdict + metrics)..."
 	./venv312/bin/python scripts/magic_digest.py
+
+digest-archive:
+	@echo "Archive digest (explicit, PAID). Usage: make digest-archive RUNS=3 RESET=1"
+	./venv312/bin/python scripts/digest_archive.py $(if $(filter-out 0 no false,$(RESET)),--reset) --runs $(or $(RUNS),1)
 
 recall-eval:
 	@echo "H3 recall harness over confirmed planted pairs (local, no API)..."

@@ -244,3 +244,44 @@ def record_digest_metrics(
     except Exception as exc:  # noqa: BLE001 - instrument must never break the tick
         logger.warning("could not record digest metrics: %s", exc)
         return False
+
+
+def record_gate_skip(
+    *,
+    window: int,
+    neighbors: int,
+    candidates: int,
+    path: Optional[Path] = None,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Append a $0 record for a run the local gate skipped. Never raises.
+
+    The false-negative instrument for the pre-API gate: each row says how much
+    material the gate judged insufficient, so a threshold that is cutting real
+    digests shows up in the ledger instead of disappearing silently. Rows carry
+    ``kind: "gate-skip"`` — digest rows have no ``kind`` field, so existing
+    readers (which use ``.get``) are unaffected.
+    """
+    if not getattr(config, "INSIGHT_METRICS_ENABLED", True):
+        return False
+    try:
+        out = Path(path) if path is not None else metrics_log_path()
+        if out is None:
+            logger.warning("gate-skip metrics dropped: no log path (config?)")
+            return False
+        record = {
+            "v": METRICS_SCHEMA_VERSION,
+            "ts": (now or datetime.now()).isoformat(timespec="seconds"),
+            "kind": "gate-skip",
+            "window": int(window),
+            "neighbors": int(neighbors),
+            "candidates": int(candidates),
+            "cost_usd": 0.0,
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return True
+    except Exception as exc:  # noqa: BLE001 - instrument must never break the tick
+        logger.warning("could not record gate-skip metrics: %s", exc)
+        return False
