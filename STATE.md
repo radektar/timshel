@@ -1,7 +1,32 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-23 · Faza: kod → test
+Data: 2026-07-27 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Onboarding: import notatek + pierwszy digest Sonnet 5 (PR #90, MERGE 2026-07-27)
+
+Aktywacja zamiast czekania tygodnia: wizard (krok IMPORT_NOTES po ekranie
+klucza) zbiera folder z notatkami (txt/md/vtt, zgoda przy liczbie plików);
+po setupie first-session (menu_app) importuje z progressem (retry locka),
+bramki $0, dialog oferty (~$0.15–0.25) i `run_onboarding_digest`: cały
+korpus jako materiał (bez migracji seen), okno CONNECTABLE (gęstość
+tagi/encje/rare-tokens, guard na wszechobecne tokeny), max 2 płatne okna
+(retry), model `claude-sonnet-5` wstrzykiwany per-run (eval 2026-07-24:
+nigdy pusty, Opus dał pusty digest na najnowszym oknie; tygodniowy Opus
+NIETKNIĘTY), verdict zawsze (metryka aktywacji), na końcu mark-all-corpus
+pending=0. Wspólny ogon `_synthesize_and_write` (tygodniówka bajt-w-bajt,
+mark-callback przed metrykami). Hold `suspend_auto_digest` z jawną
+własnością (dialog→wątek digestu); "Later" startuje tygodniowy zegar.
+Telemetria: `onboarding`/`window_fallback` w metrics.jsonl, zapisywane
+też bez tester_mode (kryterium: ≥1 połączenie po verdictcie w sesji 1).
+**E2E live: 60 realnych notek → digest 2 połączenia (prawdziwa
+kontradykcja biznesowa) za $0.23; 20 notek → pusto 2× (mały korpus =
+znany przypadek).** Pętla review: R1(7: 2 HIGH hold-gap + readiness,
+3 MED, 2 LOW) → R2(3 LOW) → fixy zweryfikowane trace+testy. Suita 1220.
+Otwarte: decyzja o modelu TYGODNIOWYM czeka na ślepy odczyt okien 2–3
+(`/tmp/sonnet5_eval_BLIND.md`, klucz u Claude'a); relay demo = osobny
+projekt (decyzja produktowa); dopieszczony wizual onboardingu → strona
+w app-redesign briefie. Plan: `Docs/future/onboarding-first-digest-plan.md`.
 
 ## Digest: okno po fingerprintach + gate $0 przed API (PR #89, MERGE 2026-07-23)
 
