@@ -70,7 +70,9 @@ class IndexingState:
         """A short human status for the menu chip."""
         s = self.snapshot()
         if s["state"] == INDEXING:
-            return f"Indeksuję… {s['done']}/{s['total']}" if s["total"] else "Indeksuję…"
+            return (
+                f"Indeksuję… {s['done']}/{s['total']}" if s["total"] else "Indeksuję…"
+            )
         if s["state"] == READY:
             return "Recall: gotowe"
         if s["state"] == ERROR:
@@ -78,7 +80,9 @@ class IndexingState:
         return "Recall: standby"
 
 
-def run_backfill(engine, state: IndexingState, *, incremental: bool = True) -> Optional[int]:
+def run_backfill(
+    engine, state: IndexingState, *, incremental: bool = True
+) -> Optional[int]:
     """Catch the index up to the vault, updating ``state``. Best-effort — never raises.
 
     Returns the number of notes (re)indexed, or ``None`` on failure. Safe to run on a

@@ -119,9 +119,7 @@ class RecallEngine:
             # healthy index. Mode mismatch is only reachable with an explicit
             # db_path shared across modes — default paths are per-mode.
             mode_mismatch = stored_mode is not None and stored_mode != mode
-            dim_mismatch = (
-                self._dense and stored_dim is not None and stored_dim != dim
-            )
+            dim_mismatch = self._dense and stored_dim is not None and stored_dim != dim
             if mode_mismatch or dim_mismatch:
                 logger.info(
                     "recall: store mode/dim changed (%s/%s -> %s/%s); rebuilding",

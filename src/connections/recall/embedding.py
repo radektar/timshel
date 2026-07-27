@@ -86,7 +86,9 @@ def resolve_embedder(
             from src.config.config import get_config
 
             cfg = get_config()
-            provider = provider or getattr(cfg, "EMBED_PROVIDER", DEFAULT_EMBED_PROVIDER)
+            provider = provider or getattr(
+                cfg, "EMBED_PROVIDER", DEFAULT_EMBED_PROVIDER
+            )
             model = model or getattr(cfg, "EMBED_MODEL", DEFAULT_EMBED_MODEL)
             if threads is None:
                 threads = getattr(cfg, "EMBED_THREADS", None)

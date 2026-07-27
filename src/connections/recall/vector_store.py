@@ -71,7 +71,9 @@ class VaultVectorStore:
             self._db.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(embedding float[{self.dim}])"
             )
-        self._db.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)"
+        )
         self._db.commit()
 
     def _load_extension(self) -> None:
@@ -117,12 +119,22 @@ class VaultVectorStore:
                 cur.execute(
                     "INSERT INTO chunks(note_id, seq, text, parent_text, char_start, char_end, version_hash) "
                     "VALUES (?,?,?,?,?,?,?)",
-                    (note_id, ch.seq, ch.text, ch.parent_text, ch.char_start, ch.char_end, ch.version_hash),
+                    (
+                        note_id,
+                        ch.seq,
+                        ch.text,
+                        ch.parent_text,
+                        ch.char_start,
+                        ch.char_end,
+                        ch.version_hash,
+                    ),
                 )
                 if vectors is not None:
                     vec = vectors[i]
                     if len(vec) != self.dim:
-                        raise ValueError(f"vector dim {len(vec)} != store dim {self.dim}")
+                        raise ValueError(
+                            f"vector dim {len(vec)} != store dim {self.dim}"
+                        )
                     cur.execute(
                         "INSERT INTO chunk_vec(rowid, embedding) VALUES (?, ?)",
                         (cur.lastrowid, self._serialize(vec)),
@@ -133,7 +145,12 @@ class VaultVectorStore:
         with self._lock:
             cur = self._db.cursor()
             if self.dense:
-                ids = [r[0] for r in cur.execute("SELECT id FROM chunks WHERE note_id=?", (note_id,)).fetchall()]
+                ids = [
+                    r[0]
+                    for r in cur.execute(
+                        "SELECT id FROM chunks WHERE note_id=?", (note_id,)
+                    ).fetchall()
+                ]
                 for cid in ids:
                     cur.execute("DELETE FROM chunk_vec WHERE rowid=?", (cid,))
             cur.execute("DELETE FROM chunks WHERE note_id=?", (note_id,))
@@ -159,8 +176,15 @@ class VaultVectorStore:
             ).fetchall()
         hits = [
             Hit(
-                chunk_id=m[0], note_id=m[1], seq=m[2], text=m[3], parent_text=m[4],
-                char_start=m[5], char_end=m[6], version_hash=m[7], distance=float(by_id[m[0]]),
+                chunk_id=m[0],
+                note_id=m[1],
+                seq=m[2],
+                text=m[3],
+                parent_text=m[4],
+                char_start=m[5],
+                char_end=m[6],
+                version_hash=m[7],
+                distance=float(by_id[m[0]]),
             )
             for m in meta
         ]
@@ -174,8 +198,17 @@ class VaultVectorStore:
                 "SELECT id, note_id, seq, text, parent_text, char_start, char_end, version_hash FROM chunks"
             ).fetchall()
         return [
-            Hit(chunk_id=r[0], note_id=r[1], seq=r[2], text=r[3], parent_text=r[4],
-                char_start=r[5], char_end=r[6], version_hash=r[7], distance=0.0)
+            Hit(
+                chunk_id=r[0],
+                note_id=r[1],
+                seq=r[2],
+                text=r[3],
+                parent_text=r[4],
+                char_start=r[5],
+                char_end=r[6],
+                version_hash=r[7],
+                distance=0.0,
+            )
             for r in rows
         ]
 
@@ -185,7 +218,12 @@ class VaultVectorStore:
 
     def note_ids(self) -> List[str]:
         with self._lock:
-            return [r[0] for r in self._db.execute("SELECT DISTINCT note_id FROM chunks").fetchall()]
+            return [
+                r[0]
+                for r in self._db.execute(
+                    "SELECT DISTINCT note_id FROM chunks"
+                ).fetchall()
+            ]
 
     def note_version(self, note_id: str) -> Optional[str]:
         """The stored ``version_hash`` for a note (any chunk — they share it), or None
@@ -207,7 +245,9 @@ class VaultVectorStore:
 
     def get_meta(self, key: str) -> Optional[str]:
         with self._lock:
-            row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            row = self._db.execute(
+                "SELECT value FROM meta WHERE key=?", (key,)
+            ).fetchone()
         return row[0] if row else None
 
     def close(self) -> None:

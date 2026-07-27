@@ -112,7 +112,11 @@ def triage_state_by_sig(path: Optional[Path] = None) -> "dict":
             st = out.stat()
             cache_key = str(out)
             cached = _TRIAGE_CACHE.get(cache_key)
-            if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+            if (
+                cached is not None
+                and cached[0] == st.st_mtime
+                and cached[1] == st.st_size
+            ):
                 return dict(cached[2])  # copy: callers may mutate their view
         except OSError:
             st = None

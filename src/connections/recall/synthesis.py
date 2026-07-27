@@ -150,7 +150,9 @@ class RecallSynthesizer:
         except Exception as exc:  # noqa: BLE001
             reason = _is_permanent_api_error(exc)
             if reason:
-                logger.critical("❌ Claude API permanent error (results-synthesis): %s", exc)
+                logger.critical(
+                    "❌ Claude API permanent error (results-synthesis): %s", exc
+                )
                 raise APIBillingError(str(exc)) from exc
             logger.error("results-synthesis API error: %s", exc, exc_info=True)
             return None

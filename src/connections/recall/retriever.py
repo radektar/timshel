@@ -29,7 +29,9 @@ class Result:
     channels: str  # which channels found it: "dense", "lexical", "dense+lexical"
 
 
-def reciprocal_rank_fusion(rankings: Sequence[Sequence[int]], k: int = 60) -> List[Tuple[int, float]]:
+def reciprocal_rank_fusion(
+    rankings: Sequence[Sequence[int]], k: int = 60
+) -> List[Tuple[int, float]]:
     """RRF over rank lists — rank-based, so BM25/cosine score scales never collide."""
     scores: Dict[int, float] = {}
     for ranking in rankings:
@@ -118,7 +120,12 @@ class HybridRetriever:
             if hit is None:
                 continue
             channels = "+".join(
-                c for c, present in (("dense", chunk_id in dense_set), ("lexical", chunk_id in lex_set)) if present
+                c
+                for c, present in (
+                    ("dense", chunk_id in dense_set),
+                    ("lexical", chunk_id in lex_set),
+                )
+                if present
             )
             results.append(
                 Result(

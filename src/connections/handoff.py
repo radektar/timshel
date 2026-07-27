@@ -83,7 +83,9 @@ def seeded_prompt(
         for i, d in enumerate(chosen, start=1):
             lines.append(f"{i}. {d.strip()}")
     lines.append("")
-    lines.append("Pomóż mi to przemyśleć — bez gotowych odpowiedzi, raczej dobre pytania.")
+    lines.append(
+        "Pomóż mi to przemyśleć — bez gotowych odpowiedzi, raczej dobre pytania."
+    )
     return "\n".join(lines)
 
 
@@ -128,9 +130,7 @@ def ics_text(summary: str, description: str, *, now: Optional[datetime] = None) 
     presume to know when; we just stop the insight from evaporating.
     """
     now = now or datetime.now()
-    start = (now + timedelta(days=1)).replace(
-        hour=9, minute=0, second=0, microsecond=0
-    )
+    start = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
     stamp = now.strftime("%Y%m%dT%H%M%S")
     dtstart = start.strftime("%Y%m%dT%H%M%S")
     return "\r\n".join(
@@ -257,26 +257,38 @@ def dispatch(
         name = tool_name(tool)
         if url:
             ok = _open_url(url)
-            return HandoffResult(ok, "open", f"Wysłano do {name}" if ok else "Nie udało się")
+            return HandoffResult(
+                ok, "open", f"Wysłano do {name}" if ok else "Nie udało się"
+            )
         # no prefill (unknown tool / payload too long): copy, open the bare tool
         ok = _copy(prompt) and _open_url(llm_base_url(tool))
         return HandoffResult(
-            ok, "clipboard",
+            ok,
+            "clipboard",
             f"Prompt skopiowany — wklej w {name}" if ok else "Nie udało się",
         )
 
     if target == CALENDAR:
-        summary = (directions[0].strip() if directions and directions[0].strip()
-                   else (label or "Insight"))
+        summary = (
+            directions[0].strip()
+            if directions and directions[0].strip()
+            else (label or "Insight")
+        )
         ok = _open_ics(ics_text(summary, prompt, now=now))
-        return HandoffResult(ok, "open", "Otwórz w Kalendarzu" if ok else "Nie udało się")
+        return HandoffResult(
+            ok, "open", "Otwórz w Kalendarzu" if ok else "Nie udało się"
+        )
 
     if target == TASK:
-        title = (directions[0].strip() if directions and directions[0].strip()
-                 else (label or "Insight"))
+        title = (
+            directions[0].strip()
+            if directions and directions[0].strip()
+            else (label or "Insight")
+        )
         ok = _osascript(reminders_script(title, prompt))
-        return HandoffResult(ok, "applescript",
-                             "Utworzono zadanie" if ok else "Nie udało się")
+        return HandoffResult(
+            ok, "applescript", "Utworzono zadanie" if ok else "Nie udało się"
+        )
 
     if target == CLIPBOARD:
         ok = _copy(prompt)
