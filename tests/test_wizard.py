@@ -355,3 +355,24 @@ class TestImportNotesStep:
         settings.save()
         wizard = SetupWizard()
         assert wizard.current_step == WizardStep.IMPORT_NOTES
+
+    def test_skip_clears_crash_resume_pick(self, tmp_path, monkeypatch):
+        # Crash-resume: a folder persisted before the crash must NOT survive
+        # an explicit Skip on the resumed step.
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        UserSettings(
+            setup_stage="import_notes", pending_import_dir=str(tmp_path)
+        ).save()
+        monkeypatch.setattr(
+            "src.setup.onboarding_window._APPKIT_AVAILABLE", True, raising=False
+        )
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen",
+            lambda **kw: 0,  # Skip
+        )
+        wizard = SetupWizard()
+        assert wizard._show_import_notes() == "next"
+        assert UserSettings.load().pending_import_dir is None

@@ -1875,17 +1875,26 @@ class TimshelMenuApp(rumps.App):
 
         scheduler = get_scheduler()
         scheduler.suspend_auto_digest()
+        # The hold's ownership can be TRANSFERRED to the offer dialog (and
+        # then the digest thread): _run_on_main_thread is asynchronous, so
+        # releasing in finally would drop the hold before the user even sees
+        # the dialog — the tick would fire a paid weekly digest mid-decision.
+        hold_transferred = False
         try:
             # Consume the flag FIRST (once-only semantics; fingerprint dedupe
             # is the safety net if a rerun ever happens).
             UserSettings.mutate(lambda s: setattr(s, "pending_import_dir", None))
 
-            # The daemon thread constructs the transcriber moments after
-            # _start_daemon() returns — wait briefly for it.
+            # Wait for the INNER transcriber: the app_core wrapper is
+            # assigned before .start() builds it, and importing against the
+            # bare wrapper fails every file in milliseconds.
             deadline = _time.time() + 60
-            while self.transcriber is None and _time.time() < deadline:
+            while (
+                getattr(self.transcriber, "transcriber", None) is None
+                and _time.time() < deadline
+            ):
                 _time.sleep(0.5)
-            if self.transcriber is None:
+            if getattr(self.transcriber, "transcriber", None) is None:
                 logger.warning("first session: transcriber never came up")
                 send_notification(
                     "Timshel",
@@ -1935,6 +1944,12 @@ class TimshelMenuApp(rumps.App):
                 remaining = remaining[got_i + got_d + got_f :]
                 if _time.time() > retry_deadline:
                     logger.warning("first session: gave up waiting for the lock")
+                    send_notification(
+                        "Timshel",
+                        "Import incomplete",
+                        f"{len(remaining)} file(s) left — use File → Import "
+                        "transcripts to finish (duplicates are skipped).",
+                    )
                     break
                 win.update(detail="Waiting for a transcription to finish…")
                 _time.sleep(15)
@@ -1983,6 +1998,8 @@ class TimshelMenuApp(rumps.App):
                 return
 
             def _offer_on_main() -> None:
+                # This callback OWNS the auto-digest hold now: it either
+                # hands it to the digest thread or releases it on decline.
                 clicked = rumps.alert(
                     "Timshel",
                     f"Your notes are in ({imported + duplicates} imported). "
@@ -1993,8 +2010,13 @@ class TimshelMenuApp(rumps.App):
                     cancel="Later",
                 )
                 if clicked != 1:
-                    # Later: the notes bumped the trigger counter, the weekly
-                    # loop owns them from here (standard migration path).
+                    # Later: start the weekly clock WITHOUT consuming — the
+                    # notes enter the first weekly digest on the normal
+                    # rhythm instead of a paid run firing ~30s after "Later".
+                    from datetime import datetime as _dt
+
+                    scheduler.start_weekly_clock(_dt.now())
+                    scheduler.resume_auto_digest()
                     return
                 import threading
 
@@ -2004,24 +2026,33 @@ class TimshelMenuApp(rumps.App):
                     daemon=True,
                 ).start()
 
+            hold_transferred = True
             _run_on_main_thread(_offer_on_main)
         except Exception as exc:  # noqa: BLE001 - onboarding must never crash the app
             logger.error("first session failed: %s", exc, exc_info=True)
         finally:
-            scheduler.resume_auto_digest()
+            if not hold_transferred:
+                scheduler.resume_auto_digest()
 
     def _run_first_digest(self) -> None:
-        """Run the onboarding digest (worker thread) and open Insights."""
+        """Run the onboarding digest (worker thread) and open Insights.
+
+        Inherits the auto-digest hold from the offer dialog (no gap in which
+        the tick could fire a weekly run) and releases it when done.
+        """
         from src.connections.scheduler import get_scheduler, run_onboarding_digest
 
         scheduler = get_scheduler()
-        scheduler.suspend_auto_digest()  # the offer thread's hold is gone
+        # The billing circuit breaker lives on the INNER transcriber, not the
+        # app_core wrapper — pass the object that actually carries
+        # _disable_ai/_ai_disabled_reason.
+        inner = getattr(self.transcriber, "transcriber", None) or self.transcriber
         win = DownloadWindow(
             "Timshel — Finding connections", "Reading your notes… (~1 min)"
         )
         win.show()
         try:
-            path = run_onboarding_digest(self.transcriber)
+            path = run_onboarding_digest(inner)
         except Exception as exc:  # noqa: BLE001
             logger.error("first digest failed: %s", exc, exc_info=True)
             path = None
@@ -2030,27 +2061,33 @@ class TimshelMenuApp(rumps.App):
             scheduler.resume_auto_digest()
 
         if path is not None:
-            # The window IS the notification — consume digest_ready so the
-            # status tick doesn't double-notify.
-            state = getattr(self.transcriber, "state", None)
-            if state is not None and hasattr(state, "digest_ready"):
-                try:
-                    state.digest_ready = None
-                except Exception:  # noqa: BLE001
-                    pass
             _run_on_main_thread(lambda: self._open_insights(None))
-        else:
+            return
 
-            def _empty_on_main() -> None:
+        if getattr(inner, "_ai_disabled_reason", None):
+            # A billing failure is NOT "no connections" — say what happened.
+            def _billing_on_main() -> None:
                 rumps.alert(
                     "Timshel",
-                    "No strong connections in these notes yet — that's "
-                    "normal for a first pass. Timshel keeps looking as you "
-                    "record.",
+                    "The analysis stopped: your Claude account has no "
+                    "credits. Top up at console.anthropic.com and use "
+                    "'Generate digest now' from the menu.",
                     ok="OK",
                 )
 
-            _run_on_main_thread(_empty_on_main)
+            _run_on_main_thread(_billing_on_main)
+            return
+
+        def _empty_on_main() -> None:
+            rumps.alert(
+                "Timshel",
+                "No strong connections in these notes yet — that's "
+                "normal for a first pass. Timshel keeps looking as you "
+                "record.",
+                ok="OK",
+            )
+
+        _run_on_main_thread(_empty_on_main)
 
     def _reset_memory(self, _):
         """Reset transcription memory to a specific date."""

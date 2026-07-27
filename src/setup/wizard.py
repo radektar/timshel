@@ -936,18 +936,27 @@ class SetupWizard:
 
     @staticmethod
     def _count_importable(folder: Path) -> int:
-        """Importable files under ``folder`` (same filter as import_text)."""
+        """Importable files under ``folder`` (same filter as import_text).
+
+        Bounded walk: the count runs synchronously on the wizard path, and a
+        user picking their home directory must not hang the wizard — after
+        50k entries the count is "enough to know it's a lot".
+        """
         from src.ingest import SUPPORTED_SUFFIXES
 
-        return sum(
-            1
-            for p in Path(folder).rglob("*")
-            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
-        )
+        count = 0
+        for i, p in enumerate(Path(folder).rglob("*")):
+            if i > 50_000:
+                break
+            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES:
+                count += 1
+        return count
 
-    def _persist_import_dir(self, folder: str) -> None:
+    def _persist_import_dir(self, folder: Optional[str]) -> None:
         """Persist immediately (not only at FINISH) — same rationale as
-        BASIC_CONFIG: a crash mid-wizard must not lose the choice."""
+        BASIC_CONFIG: a crash mid-wizard must not lose the choice. ``None``
+        clears it: Skip after a crash-resume must not import the folder
+        persisted before the crash."""
         self.settings.pending_import_dir = folder
         self.settings.save()
 
@@ -988,6 +997,7 @@ class SetupWizard:
             if choice == -1:
                 return "cancel"
             if choice == 0:
+                self._persist_import_dir(None)  # Skip clears a crash-resume pick
                 return "next"
 
             from src.ui.dialogs import choose_folder_dialog
@@ -1041,6 +1051,7 @@ class SetupWizard:
         if response == -1:
             return "cancel"
         if response == 1:  # Skip
+            self._persist_import_dir(None)  # clears a crash-resume pick
             return "next"
         from src.ui.dialogs import choose_folder_dialog
 

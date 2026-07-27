@@ -821,3 +821,136 @@ def test_gate_skips_unforced_low_potential_run(tmp_path, monkeypatch):
         assert len(rows_after) == len(rows)
     finally:
         reset_scheduler_for_tests()
+
+
+def test_onboarding_metrics_recorded_even_without_tester_mode(tmp_path, monkeypatch):
+    """The activation instrument must not vanish for non-tester users."""
+    import json as _json
+
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+    from src.connections.synthesis import ConnectionList
+
+    vault = _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "watek alfa"),
+            ("b", "2026-02-01", "t", "watek beta"),
+        ],
+    )
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", False)  # non-tester
+
+    class _EmptySynth:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            return ConnectionList(connections=[])
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _EmptySynth()
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
+    )
+    sched.run_onboarding_digest(transcriber=None)
+    rows = [
+        _json.loads(line)
+        for line in (vault / ".timshel" / "metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert rows and all(r["onboarding"] for r in rows)
+    reset_scheduler_for_tests()
+
+
+def test_onboarding_reregisters_notes_transcribed_mid_run(tmp_path, monkeypatch):
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+    from src.connections.synthesis import ConnectionList
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "watek alfa"),
+            ("b", "2026-02-01", "t", "watek beta"),
+        ],
+    )
+
+    class _SynthBumpingCounter:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            # A recording finishes DURING the paid run.
+            get_scheduler().register_new_notes(1)
+            return ConnectionList(connections=[])
+
+    monkeypatch.setattr(
+        synth_mod,
+        "ConnectionSynthesizer",
+        lambda api_key, model: _SynthBumpingCounter(),
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
+    )
+    sched.run_onboarding_digest(transcriber=None)
+    # mark_ran(pending=0) must NOT strand the mid-run note's trigger.
+    assert get_scheduler().new_notes >= 1
+    reset_scheduler_for_tests()
+
+
+def test_weekly_mark_fires_before_metrics(tmp_path, monkeypatch):
+    """Crash-safety ordering: the consumed window is marked BEFORE the
+    metrics append (pre-refactor semantics restored via the mark callback)."""
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+    from src.connections.synthesis import ConnectionList
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault_note(vault, "n1", "2026-07-01", tags="t")
+    _write_vault_note(vault, "n2", "2026-07-02", tags="t")
+    monkeypatch.setattr(config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config, "DIGEST_LOCK_FILE", tmp_path / "digest.lock")
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", tmp_path / "cs.json")
+    reset_scheduler_for_tests()
+    try:
+
+        class _EmptySynth:
+            model = "claude-opus-4-8"
+            last_usage = None
+
+            def synthesize(self, *a, **kw):
+                return ConnectionList(connections=[])
+
+        monkeypatch.setattr(synth_mod, "get_synthesizer", lambda: _EmptySynth())
+        marked_before_metrics = []
+
+        real_record = sched._record_digest_metrics
+
+        def _spy_record(*a, **kw):
+            marked_before_metrics.append(get_scheduler().last_digest_at is not None)
+            return real_record(*a, **kw)
+
+        monkeypatch.setattr(sched, "_record_digest_metrics", _spy_record)
+        s = get_scheduler()
+        s.register_new_notes(1)
+        sched.run_digest_if_due(transcriber=None, force=True)
+        assert marked_before_metrics == [True]
+    finally:
+        reset_scheduler_for_tests()
+
+
+def test_start_weekly_clock_only_when_never_ran(tmp_path):
+    s = DigestScheduler(tmp_path / "cs.json")
+    now = datetime(2026, 7, 27, 12, 0, 0)
+    s.start_weekly_clock(now)
+    assert s.last_digest_at == now.isoformat(timespec="seconds")
+    later = datetime(2026, 7, 28, 12, 0, 0)
+    s.start_weekly_clock(later)  # no-op: clock already running
+    assert s.last_digest_at == now.isoformat(timespec="seconds")

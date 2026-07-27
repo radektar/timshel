@@ -78,6 +78,19 @@ class DigestScheduler:
     def resume_auto_digest(self) -> None:
         self.auto_digest_suspended = False
 
+    def start_weekly_clock(self, now: datetime) -> None:
+        """Start the weekly cadence WITHOUT consuming anything.
+
+        Declining the onboarding offer ("Later") must not mean "pay ~30s
+        later": with imported notes and a never-ran clock, is_due() would
+        fire on the next tick. Setting the clock (only when never set) makes
+        the first automatic digest arrive on the weekly rhythm; the notes
+        stay unseen and enter it via the standard migration path.
+        """
+        if self.last_digest_at is None:
+            self.last_digest_at = now.isoformat(timespec="seconds")
+            self._save()
+
     def _read_disk_state(self) -> Optional[dict]:
         """Parse the state file, or None. The ONE place the schema is read."""
         try:
@@ -592,6 +605,8 @@ def _synthesize_and_write(
     *,
     onboarding: bool = False,
     window_fallback: bool = False,
+    mark=None,
+    set_ready: bool = True,
 ) -> tuple[Optional[Path], str]:
     """THE one paid synthesis→verdict→write tail, shared by every digest run.
 
@@ -602,6 +617,14 @@ def _synthesize_and_write(
     ``"error"`` (recoverable or billing failure — nothing consumed, caller
     must NOT mark the window seen).
 
+    ``mark`` — optional callback invoked with the digest path (or None) the
+    moment the window counts as CONSUMED, BEFORE the metrics append and the
+    ready flag: a crash mid-tail must not leave a paid window unmarked (it
+    would be re-paid next tick). The weekly path passes its ``_mark``;
+    onboarding marks once itself after its retry loop.
+    ``set_ready=False`` skips the digest_ready flag — the onboarding flow
+    opens the Insights window itself and must not double-notify via the
+    status tick.
     ``verifier_override`` — an explicitly injected verifier runs REGARDLESS
     of ``VERDICT_ENABLED`` (deliberate: the onboarding success metric is
     "verdict-surviving connections", also for non-tester users); ``None``
@@ -635,6 +658,8 @@ def _synthesize_and_write(
         # Synthesis ran and was PAID for but produced nothing — a real
         # H1/H4 data point (a paid run that yielded zero connections).
         logger.info("synthesis: no genuine connections this run")
+        if mark is not None:
+            mark(None)
         _record_digest_metrics(
             synthesizer,
             candidates,
@@ -689,6 +714,8 @@ def _synthesize_and_write(
     if not connections:
         # Every proposal died in verification — a legitimate, PAID outcome.
         logger.info("verdict: no connections survived verification")
+        if mark is not None:
+            mark(None)
         _record_digest_metrics(
             synthesizer,
             candidates,
@@ -703,6 +730,8 @@ def _synthesize_and_write(
 
     path, conn_meta = write_digest_note(connections, len(candidates.notes))
     dismissals.record_digest(path, conn_meta)
+    if mark is not None:
+        mark(path)
     _record_digest_metrics(
         synthesizer,
         candidates,
@@ -713,7 +742,8 @@ def _synthesize_and_write(
         onboarding=onboarding,
         window_fallback=window_fallback,
     )
-    _set_digest_ready(transcriber, path)
+    if set_ready:
+        _set_digest_ready(transcriber, path)
     return path, "written"
 
 
@@ -738,6 +768,10 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
 
     if not config.LLM_API_KEY or config.LLM_PROVIDER != "claude":
         return None
+    if getattr(transcriber, "_ai_disabled_reason", None):
+        # Billing already tripped (e.g. during the import's summaries) —
+        # don't burn another paid call that will fail the same way.
+        return None
     scheduler = get_scheduler()
     now = datetime.now()
     lock_fd = _acquire_digest_lock()
@@ -758,6 +792,7 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
         consumed: Set[str] = set()
         corpus_keys: Set[str] = set()
         final_path: Optional[Path] = None
+        pre_run_notes = scheduler.new_notes
         for attempt in range(1, ONBOARDING_MAX_WINDOWS + 1):
             candidates = _assemble_for_digest(
                 scheduler,
@@ -791,6 +826,10 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
                 language,
                 onboarding=True,
                 window_fallback=candidates.window_fallback,
+                # The first-session flow opens the Insights window itself —
+                # the status tick must not also fire the digest_ready
+                # notification for the same digest.
+                set_ready=False,
             )
             if status == "error":
                 break  # nothing consumed; leave state for the weekly path
@@ -805,9 +844,15 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
             # pre-existing material (fresh-install semantics) and the weekly
             # clock starts now. pending=0 — the import bumped the trigger
             # counter; without the reset the tick would immediately re-digest.
+            # Notes transcribed DURING the run (recorder plugged in mid-
+            # session) bumped the counter after the snapshot — re-register
+            # them so mark_ran's overwrite doesn't strand their trigger.
+            late = max(0, scheduler.new_notes - pre_run_notes)
             scheduler.mark_ran(
                 now, final_path, seen_keys=corpus_keys or consumed, pending=0
             )
+            if late:
+                scheduler.register_new_notes(late)
         return final_path
     finally:
         try:
@@ -936,14 +981,18 @@ def run_digest_if_due(
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]
         )
-        path, status = _synthesize_and_write(
-            transcriber, candidates, dismissals, synthesizer, None, language
+        # _mark passed as the tail's mark callback: it fires the moment the
+        # window counts as consumed ("empty" and "written" both paid), in the
+        # exact pre-refactor order (before metrics/ready). "error" never marks.
+        path, _status = _synthesize_and_write(
+            transcriber,
+            candidates,
+            dismissals,
+            synthesizer,
+            None,
+            language,
+            mark=_mark,
         )
-        if status == "error":
-            return None  # recoverable/billing -> retry next tick, don't reset
-        # "empty" and "written" both consumed (and paid for) the window:
-        # reset the weekly clock and mark it seen either way.
-        _mark(path)
         return path
     finally:
         # Bound the _tokenize LRU's lifetime to one digest pass — otherwise it

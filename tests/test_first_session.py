@@ -185,3 +185,61 @@ class TestFirstSessionSequence:
             assert get_scheduler().auto_digest_suspended is False
         finally:
             reset_scheduler_for_tests()
+
+
+class TestOfferDecline:
+    def test_later_starts_weekly_clock_and_releases_hold(
+        self, app, tmp_path, monkeypatch
+    ):
+        import src.menu_app as menu_mod
+        from src.connections.scheduler import (
+            get_scheduler,
+            reset_scheduler_for_tests,
+        )
+
+        monkeypatch.setattr(
+            menu_mod.config,
+            "CONNECTIONS_STATE_FILE",
+            tmp_path / "cs.json",
+            raising=False,
+        )
+        reset_scheduler_for_tests()
+        try:
+            config_file = tmp_path / "config.json"
+            monkeypatch.setattr(
+                UserSettings, "config_path", staticmethod(lambda: config_file)
+            )
+            UserSettings(pending_import_dir=str(tmp_path)).save()
+            folder = tmp_path / "notes"
+            folder.mkdir()
+            (folder / "a.md").write_text("body", encoding="utf-8")
+
+            monkeypatch.setattr(menu_mod.config, "LLM_API_KEY", "sk-test")
+            monkeypatch.setattr(menu_mod.config, "LLM_PROVIDER", "claude")
+            monkeypatch.setattr(
+                menu_mod.config, "ENABLE_CONNECTION_SYNTHESIS", True, raising=False
+            )
+            monkeypatch.setattr(menu_mod, "DownloadWindow", lambda *a, **kw: Mock())
+            monkeypatch.setattr(menu_mod, "send_notification", Mock())
+            monkeypatch.setattr(menu_mod, "_run_on_main_thread", lambda fn: fn())
+            monkeypatch.setattr(menu_mod.rumps, "alert", lambda *a, **kw: 0)  # Later
+            monkeypatch.setattr(
+                "src.connections.scheduler.estimate_digest_potential",
+                lambda onboarding=False: SimpleNamespace(
+                    window=1, neighbors=2, ok=True
+                ),
+            )
+            digests = []
+            monkeypatch.setattr(
+                "src.connections.scheduler.run_onboarding_digest",
+                lambda transcriber: digests.append(1) or None,
+            )
+            app.transcriber.import_text_file.return_value = True
+
+            app._run_first_session(folder)
+            s = get_scheduler()
+            assert digests == []  # declined -> no paid run
+            assert s.auto_digest_suspended is False  # hold released on decline
+            assert s.last_digest_at is not None  # weekly clock started
+        finally:
+            reset_scheduler_for_tests()

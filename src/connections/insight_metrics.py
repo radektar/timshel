@@ -221,10 +221,16 @@ def record_digest_metrics(
 ) -> bool:
     """Append one digest metrics record to ``metrics.jsonl``. Never raises.
 
-    Gated by ``config.INSIGHT_METRICS_ENABLED``. Returns True on a successful
-    append, False if disabled, misconfigured, or the write failed (all logged).
+    Gated by ``config.INSIGHT_METRICS_ENABLED`` — EXCEPT onboarding rows,
+    which are always recorded: they are the activation instrument ("≥1
+    verdict-surviving connection in session one") and the whole reason the
+    onboarding run pays for its verdict pass even for non-tester users. The
+    row carries counts and the digest filename, no note content.
+
+    Returns True on a successful append, False if disabled, misconfigured,
+    or the write failed (all logged).
     """
-    if not getattr(config, "INSIGHT_METRICS_ENABLED", True):
+    if not onboarding and not getattr(config, "INSIGHT_METRICS_ENABLED", True):
         return False
     try:
         out = Path(path) if path is not None else metrics_log_path()
