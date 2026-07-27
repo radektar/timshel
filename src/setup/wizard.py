@@ -1058,6 +1058,10 @@ class SetupWizard:
         folder = choose_folder_dialog(title="Choose the folder with your notes")
         if folder and self._count_importable(Path(folder)) > 0:
             self._persist_import_dir(folder)
+        else:
+            # Cancelled picker / empty folder: the user's FINAL action chose
+            # nothing — a crash-resume pick must not silently import.
+            self._persist_import_dir(None)
         return "next"
 
     def _show_finish(self) -> str:

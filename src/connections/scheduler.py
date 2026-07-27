@@ -86,7 +86,17 @@ class DigestScheduler:
         fire on the next tick. Setting the clock (only when never set) makes
         the first automatic digest arrive on the weekly rhythm; the notes
         stay unseen and enter it via the standard migration path.
+
+        Sync-protocol participant like every writer: merges the disk state
+        first and adopts a clock another process set mid-dialog — a blind
+        save here would clobber a CLI run's consumed keys.
         """
+        self._merge_disk_seen()
+        data = self._read_disk_state() or {}
+        disk_at = data.get("last_digest_at")
+        if self.last_digest_at is None and isinstance(disk_at, str) and disk_at:
+            self.last_digest_at = disk_at  # another process already ran
+            return
         if self.last_digest_at is None:
             self.last_digest_at = now.isoformat(timespec="seconds")
             self._save()

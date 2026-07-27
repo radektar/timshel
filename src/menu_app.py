@@ -1999,16 +1999,24 @@ class TimshelMenuApp(rumps.App):
 
             def _offer_on_main() -> None:
                 # This callback OWNS the auto-digest hold now: it either
-                # hands it to the digest thread or releases it on decline.
-                clicked = rumps.alert(
-                    "Timshel",
-                    f"Your notes are in ({imported + duplicates} imported). "
-                    "Analyze them now to find the first connections between "
-                    "them? Costs one Claude run (~$0.15–0.25), takes about a "
-                    "minute.",
-                    ok="Analyze now",
-                    cancel="Later",
-                )
+                # hands it to the digest thread or releases it on decline —
+                # and must release it even when the alert itself fails
+                # (rumps.alert has failed before: see the guarded call in
+                # _notify_* below), or weekly digests stay silently frozen.
+                try:
+                    clicked = rumps.alert(
+                        "Timshel",
+                        f"Your notes are in ({imported + duplicates} "
+                        "imported). Analyze them now to find the first "
+                        "connections between them? Costs one Claude run "
+                        "(~$0.15–0.25), takes about a minute.",
+                        ok="Analyze now",
+                        cancel="Later",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("first-session offer alert failed: %s", exc)
+                    scheduler.resume_auto_digest()
+                    return
                 if clicked != 1:
                     # Later: start the weekly clock WITHOUT consuming — the
                     # notes enter the first weekly digest on the normal
@@ -2026,8 +2034,11 @@ class TimshelMenuApp(rumps.App):
                     daemon=True,
                 ).start()
 
-            hold_transferred = True
+            # Flag AFTER the call: if scheduling the callback itself raises,
+            # the finally below must still release the hold (the callback
+            # will never run to do it).
             _run_on_main_thread(_offer_on_main)
+            hold_transferred = True
         except Exception as exc:  # noqa: BLE001 - onboarding must never crash the app
             logger.error("first session failed: %s", exc, exc_info=True)
         finally:
