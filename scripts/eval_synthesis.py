@@ -31,6 +31,7 @@ from tests.fixtures.synthesis_cases import GOLD_CASES  # noqa: E402
 
 MODELS = [
     "claude-opus-4-8",
+    "claude-sonnet-5",
     "claude-sonnet-4-6",
     "claude-haiku-4-5-20251001",
 ]
@@ -41,6 +42,7 @@ MODELS = [
 # the 1M context window is billed at standard rates (no long-context premium).
 PRICES = {
     "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }

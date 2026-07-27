@@ -27,7 +27,7 @@ class TrustedVolume:
     uuid: str
     name: str
     first_seen: str  # ISO-8601 timestamp pierwszego zatwierdzenia
-    decision: str    # "trusted" | "blocked"
+    decision: str  # "trusted" | "blocked"
 
     @classmethod
     def from_dict(cls, data: dict) -> "TrustedVolume":
@@ -49,7 +49,12 @@ class TrustedVolume:
 
 def _now_iso() -> str:
     """ISO-8601 UTC timestamp (sekundowa precyzja, sufiks Z)."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 @dataclass
@@ -96,6 +101,10 @@ class UserSettings:
     setup_completed: bool = defaults.DEFAULT_SETUP_COMPLETED
     setup_version: str = ""
     setup_stage: str = "welcome"
+    # Onboarding: folder the wizard's import step picked; consumed (and
+    # cleared) by the post-wizard first-session flow in menu_app. str, not
+    # Path (JSON). None = nothing pending.
+    pending_import_dir: Optional[str] = None
     index_migrated: bool = False
     legacy_migrated: bool = defaults.DEFAULT_LEGACY_MIGRATED
 
@@ -195,6 +204,7 @@ class UserSettings:
             "setup_completed": self.setup_completed,
             "setup_version": self.setup_version,
             "setup_stage": self.setup_stage,
+            "pending_import_dir": self.pending_import_dir,
             "index_migrated": self.index_migrated,
             "legacy_migrated": self.legacy_migrated,
             "tester_mode": self.tester_mode,

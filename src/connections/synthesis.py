@@ -39,9 +39,13 @@ class Evidence(BaseModel):
     can reconstruct *why* the notes connect without relying on fresh memory.
     """
 
-    note: str = Field(..., description="Exact [[basename]] id — one of the connection's notes.")
+    note: str = Field(
+        ..., description="Exact [[basename]] id — one of the connection's notes."
+    )
     date: str = Field("", description="The note's date as supplied.")
-    quote: str = Field(..., description="A short verbatim fragment from that note's summary.")
+    quote: str = Field(
+        ..., description="A short verbatim fragment from that note's summary."
+    )
 
     @field_validator("note")
     @classmethod
@@ -74,7 +78,9 @@ class Connection(BaseModel):
 
     @field_validator("evidence")
     @classmethod
-    def _evidence_for_known_notes(cls, value: List["Evidence"], info: Any) -> List["Evidence"]:
+    def _evidence_for_known_notes(
+        cls, value: List["Evidence"], info: Any
+    ) -> List["Evidence"]:
         """Drop evidence whose note isn't in the connection (lenient, not fatal)."""
         notes = info.data.get("notes") or []
         known = {n.strip().strip("[]").strip() for n in notes}
@@ -187,7 +193,7 @@ _SYSTEM_PROMPT = (
     "only — never paraphrase into a quote, never invent a date.\n"
     "- 'directions' must be 2-4 NON-PRESCRIPTIVE options the person could "
     "pursue, each a self-contained invitation or question of ~1-2 sentences "
-    '(enough to stand alone without the fresh context). Phrase as questions '
+    "(enough to stand alone without the fresh context). Phrase as questions "
     '("Could you…?"), never instruct ("do X"). Clean language only — no English '
     "words dropped into another language.\n"
     "- Do NOT re-propose anything under ALREADY-DISMISSED.\n"

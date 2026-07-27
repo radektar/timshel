@@ -22,7 +22,9 @@ def connection_signature(notes: Iterable[str], synthesis_type: str) -> str:
     not the UI display constant) — the sidecar carries it so the window can pass a
     precomputed sig rather than recompute (and drift).
     """
-    key = synthesis_type.strip().lower() + "|" + "|".join(
-        sorted(n.strip() for n in notes)
+    key = (
+        synthesis_type.strip().lower()
+        + "|"
+        + "|".join(sorted(n.strip() for n in notes))
     )
     return hashlib.sha1(key.encode("utf-8")).hexdigest()

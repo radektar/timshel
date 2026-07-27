@@ -13,6 +13,7 @@ ensure_ready()
 
 try:
     import rumps
+
     RUMPS_AVAILABLE = True
 except ImportError:
     RUMPS_AVAILABLE = False
@@ -26,12 +27,14 @@ if RUMPS_AVAILABLE:
 
 try:
     from PyObjCTools import AppHelper
+
     _APPHELPER_AVAILABLE = True
 except ImportError:
     _APPHELPER_AVAILABLE = False
 
 try:
     from AppKit import NSThread
+
     _NSTHREAD_AVAILABLE = True
 except ImportError:
     _NSTHREAD_AVAILABLE = False
@@ -105,7 +108,9 @@ from src.ui.pro_activation import show_pro_status
 from src.ui.download_window import DownloadWindow
 
 
-def _render_sigil_menu_png(pixel, *, alpha=1.0, dot_hex=None, sigil_rgb=(0.0, 0.0, 0.0)):
+def _render_sigil_menu_png(
+    pixel, *, alpha=1.0, dot_hex=None, sigil_rgb=(0.0, 0.0, 0.0)
+):
     """Render the menu-bar wave sigil (redesign F) to PNG bytes.
 
     Geometry from ``theme.SIGIL_BARS``. Base/dim variants are black at ``alpha``
@@ -150,9 +155,7 @@ class TimshelMenuApp(rumps.App):
     def __init__(self):
         """Initialize menu bar application."""
         if not RUMPS_AVAILABLE:
-            raise ImportError(
-                "rumps not available. Install with: pip install rumps"
-            )
+            raise ImportError("rumps not available. Install with: pip install rumps")
 
         super(TimshelMenuApp, self).__init__(
             "Timshel",
@@ -285,10 +288,12 @@ class TimshelMenuApp(rumps.App):
 
         # Start status update timer
         rumps.Timer(self._update_status, 2).start()  # Update every 2 seconds
-        
+
         # Start retranscribe menu refresh timer
-        rumps.Timer(self._refresh_retranscribe_menu, 10).start()  # Update every 10 seconds
-        
+        rumps.Timer(
+            self._refresh_retranscribe_menu, 10
+        ).start()  # Update every 10 seconds
+
         # Check if wizard is needed (first run)
         self._dependencies_checked = False
         if SetupWizard.needs_setup():
@@ -431,6 +436,9 @@ class TimshelMenuApp(rumps.App):
             # Wizard zakończony pomyślnie - start transcribera
             logger.info("Wizard finished — starting transcriber")
             self._start_daemon()
+            # AFTER _start_daemon: its reload_config() must run first so the
+            # import writes to the wizard-chosen folder with the wizard key.
+            self._maybe_start_first_session()
         else:
             # User cancelled wizard
             self.status_item.title = "Status: Configuration required"
@@ -606,6 +614,7 @@ class TimshelMenuApp(rumps.App):
             except Exception:  # noqa: BLE001
                 pass
         else:
+
             def _on_main() -> None:
                 rumps.alert(
                     title="Transcription failed",
@@ -668,22 +677,24 @@ class TimshelMenuApp(rumps.App):
         _run_on_main_thread(_panel)
         return result["paths"]
 
-    def _run_text_import(self, paths: List[Path]) -> None:
-        """Import a batch of transcript files (background thread).
+    def _import_batch(self, paths: List[Path], progress=None):
+        """Import files one by one; the shared engine of both import flows.
 
-        Per-file failures never abort the batch; a busy lock stops the whole
-        run (a transcription is in progress). Reports ok/duplicate/failed.
+        Per-file failures never abort the batch; a busy workflow lock stops
+        the run (a transcription is in progress). ``progress(i, total,
+        path)`` fires before each file. Returns ``(imported, duplicates,
+        failed, lock_aborted)``.
         """
         total = len(paths)
-        try:
-            send_notification("Timshel", "Importing", f"Importing {total} file(s)…")
-        except Exception:  # noqa: BLE001
-            pass
-
         imported = 0
         duplicates = 0
         failed = 0
-        for path in paths:
+        for i, path in enumerate(paths, 1):
+            if progress is not None:
+                try:
+                    progress(i, total, path)
+                except Exception:  # noqa: BLE001 - UI must not break the import
+                    pass
             try:
                 # status tells a freshly-written note from an already-indexed
                 # duplicate — otherwise a re-import reports "Imported N" while
@@ -698,32 +709,50 @@ class TimshelMenuApp(rumps.App):
                     failed += 1
             except RetranscribeLockBusyError:
                 logger.info("Text import busy — transcription in progress")
-
-                done_so_far = imported
-
-                def _on_main() -> None:
-                    rumps.alert(
-                        title="⏳ Transcription in progress",
-                        message=(
-                            f"Imported {done_so_far} of {total} before another "
-                            "transcription started. Re-run to import the rest "
-                            "(duplicates are skipped)."
-                        ),
-                        ok="OK",
-                    )
-
-                _run_on_main_thread(_on_main)
-                return
+                return imported, duplicates, failed, True
             except (FileNotFoundError, ValueError) as exc:
                 logger.warning("Text import rejected %s: %s", path, exc)
                 failed += 1
             except Exception as exc:  # noqa: BLE001
                 logger.error("Text import failed for %s: %s", path, exc, exc_info=True)
                 failed += 1
+        return imported, duplicates, failed, False
+
+    def _run_text_import(self, paths: List[Path]) -> None:
+        """Import a batch of transcript files (background thread).
+
+        Thin wrapper over :meth:`_import_batch` — notifications + summary.
+        """
+        total = len(paths)
+        try:
+            send_notification("Timshel", "Importing", f"Importing {total} file(s)…")
+        except Exception:  # noqa: BLE001
+            pass
+
+        imported, duplicates, failed, lock_aborted = self._import_batch(paths)
+        if lock_aborted:
+            done_so_far = imported
+
+            def _on_main() -> None:
+                rumps.alert(
+                    title="⏳ Transcription in progress",
+                    message=(
+                        f"Imported {done_so_far} of {total} before another "
+                        "transcription started. Re-run to import the rest "
+                        "(duplicates are skipped)."
+                    ),
+                    ok="OK",
+                )
+
+            _run_on_main_thread(_on_main)
+            return
 
         logger.info(
             "✓ Text import complete: %d new, %d duplicate, %d failed of %d",
-            imported, duplicates, failed, total,
+            imported,
+            duplicates,
+            failed,
+            total,
         )
         # Lead with what actually changed. "0 new, 10 already in vault" is the
         # honest message when everything was a re-import — not "Imported 10".
@@ -830,7 +859,9 @@ class TimshelMenuApp(rumps.App):
             if confirm == 1:
                 settings.trusted_volumes = []
                 settings.save()
-                rumps.alert(title="Cleared", message="The decision list is empty.", ok="OK")
+                rumps.alert(
+                    title="Cleared", message="The decision list is empty.", ok="OK"
+                )
 
     def _review_mounted_volumes(self, settings: UserSettings) -> None:
         """Iteruj po podłączonych /Volumes i pytaj o nieznane dyski.
@@ -843,7 +874,11 @@ class TimshelMenuApp(rumps.App):
 
         volumes_root = Path("/Volumes")
         if not volumes_root.exists():
-            rumps.alert(title="No /Volumes", message="The /Volumes directory does not exist.", ok="OK")
+            rumps.alert(
+                title="No /Volumes",
+                message="The /Volumes directory does not exist.",
+                ok="OK",
+            )
             return
 
         try:
@@ -943,7 +978,7 @@ class TimshelMenuApp(rumps.App):
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
             return False
-    
+
     def _download_dependencies(self):
         """Download all missing dependencies asynchronously."""
         if self._download_active:
@@ -977,7 +1012,9 @@ class TimshelMenuApp(rumps.App):
             def _on_main() -> None:
                 self._download_active = False
                 if self._download_window is not None:
-                    self._download_window.update(detail="Download complete", progress=1.0)
+                    self._download_window.update(
+                        detail="Download complete", progress=1.0
+                    )
                     self._download_window.close()
                 logger.info("✓ All dependencies downloaded")
                 rumps.alert(
@@ -987,6 +1024,7 @@ class TimshelMenuApp(rumps.App):
                 )
                 self.status_item.title = "Status: Ready"
                 self._update_icon(AppStatus.IDLE)
+
             _run_on_main_thread(_on_main)
 
         def error_callback(exc: Exception):
@@ -1008,7 +1046,9 @@ class TimshelMenuApp(rumps.App):
                     self.status_item.title = "Status: No internet"
                 elif isinstance(exc, DiskSpaceError):
                     logger.error(f"Disk space error: {exc}")
-                    rumps.alert(title="⚠️ Not enough disk space", message=str(exc), ok="OK")
+                    rumps.alert(
+                        title="⚠️ Not enough disk space", message=str(exc), ok="OK"
+                    )
                     self.status_item.title = "Status: Not enough disk space"
                 elif isinstance(exc, DownloadError):
                     logger.error(f"Download error: {exc}")
@@ -1027,6 +1067,7 @@ class TimshelMenuApp(rumps.App):
                     )
                     self.status_item.title = "Status: Error"
                 self._update_icon(AppStatus.ERROR)
+
             _run_on_main_thread(_on_main)
 
         started = self._download_manager.download_async(
@@ -1118,6 +1159,7 @@ class TimshelMenuApp(rumps.App):
                 )
                 self.status_item.title = "Status: Ready"
                 self._update_icon(AppStatus.IDLE)
+
             _run_on_main_thread(_on_main)
 
         def error_callback(exc: Exception) -> None:
@@ -1133,6 +1175,7 @@ class TimshelMenuApp(rumps.App):
                 )
                 self.status_item.title = "Status: Repair failed"
                 self._update_icon(AppStatus.ERROR)
+
             _run_on_main_thread(_on_main)
 
         started = self._download_manager.repair_whisper_async(
@@ -1142,7 +1185,9 @@ class TimshelMenuApp(rumps.App):
         )
         if not started:
             self._download_active = False
-            logger.warning("whisper-cli repair did not start (download already in progress)")
+            logger.warning(
+                "whisper-cli repair did not start (download already in progress)"
+            )
 
     def _prompt_unknown_volume(
         self, volume_path, uuid: str, timeout: float = 600
@@ -1164,7 +1209,9 @@ class TimshelMenuApp(rumps.App):
         state = {"decision": DECISION_NONE, "timed_out": False}
         state_lock = threading.Lock()
         done = threading.Event()
-        volume_name = volume_path.name if hasattr(volume_path, "name") else str(volume_path)
+        volume_name = (
+            volume_path.name if hasattr(volume_path, "name") else str(volume_path)
+        )
 
         def _ask_on_main() -> None:
             decision = DECISION_NONE
@@ -1214,9 +1261,7 @@ class TimshelMenuApp(rumps.App):
             )
             return DECISION_NONE
         decision = state["decision"]
-        logger.info(
-            f"Volume '{volume_name}' (uuid={uuid}) decision={decision}"
-        )
+        logger.info(f"Volume '{volume_name}' (uuid={uuid}) decision={decision}")
         return decision
 
     @staticmethod
@@ -1463,7 +1508,9 @@ class TimshelMenuApp(rumps.App):
 
         if not config.TRANSCRIBE_DIR:
             return None
-        date_str = datetime.now().strftime("%Y-%m-%d")  # match digest_writer's 4-digit year
+        date_str = datetime.now().strftime(
+            "%Y-%m-%d"
+        )  # match digest_writer's 4-digit year
         return save_answer(query, answer, config.TRANSCRIBE_DIR, date_str=date_str)
 
     def _notes_count_for_insights(self):
@@ -1794,19 +1841,280 @@ class TimshelMenuApp(rumps.App):
             target=_preview_then_run, name="ManualDigestPreview", daemon=True
         ).start()
 
+    def _maybe_start_first_session(self) -> None:
+        """Spawn the first-session (onboarding) thread when a pending import
+        exists. Called right after _start_daemon() from both launch paths."""
+        try:
+            pending = UserSettings.load().pending_import_dir
+        except Exception as exc:  # noqa: BLE001 - onboarding must never block launch
+            logger.debug("first session: settings unreadable (%s)", exc)
+            return
+        if not pending:
+            return
+        import threading
+
+        threading.Thread(
+            target=self._run_first_session,
+            args=(Path(pending),),
+            name="FirstSession",
+            daemon=True,
+        ).start()
+
+    def _run_first_session(self, folder: Path) -> None:
+        """Import the wizard-chosen folder, then offer the first digest.
+
+        The activation moment: the user should leave their first session with
+        a real insight from their OWN notes, not a promise for next week.
+        Worker thread; every UI touch hops via _run_on_main_thread. The
+        auto-digest hold keeps the 30s tick from firing a weekly run over the
+        freshly imported notes before the user answers the offer dialog.
+        """
+        import time as _time
+
+        from src.connections.scheduler import get_scheduler
+
+        scheduler = get_scheduler()
+        scheduler.suspend_auto_digest()
+        # The hold's ownership can be TRANSFERRED to the offer dialog (and
+        # then the digest thread): _run_on_main_thread is asynchronous, so
+        # releasing in finally would drop the hold before the user even sees
+        # the dialog — the tick would fire a paid weekly digest mid-decision.
+        hold_transferred = False
+        try:
+            # Consume the flag FIRST (once-only semantics; fingerprint dedupe
+            # is the safety net if a rerun ever happens).
+            UserSettings.mutate(lambda s: setattr(s, "pending_import_dir", None))
+
+            # Wait for the INNER transcriber: the app_core wrapper is
+            # assigned before .start() builds it, and importing against the
+            # bare wrapper fails every file in milliseconds.
+            deadline = _time.time() + 60
+            while (
+                getattr(self.transcriber, "transcriber", None) is None
+                and _time.time() < deadline
+            ):
+                _time.sleep(0.5)
+            if getattr(self.transcriber, "transcriber", None) is None:
+                logger.warning("first session: transcriber never came up")
+                send_notification(
+                    "Timshel",
+                    "Import postponed",
+                    "Could not start the import — use File → Import transcripts.",
+                )
+                return
+
+            from src.ingest import SUPPORTED_SUFFIXES
+
+            paths = sorted(
+                p
+                for p in folder.rglob("*")
+                if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
+            )
+            if not paths:
+                send_notification(
+                    "Timshel", "Nothing to import", "No txt/md/vtt files found."
+                )
+                return
+
+            win = DownloadWindow("Timshel — Importing your notes", "Preparing…")
+            win.show()
+            imported = duplicates = failed = 0
+            remaining = list(paths)
+            retry_deadline = _time.time() + 300
+            while remaining:
+                done_before = imported + duplicates + failed
+                i0 = done_before
+
+                def _progress(i, total, p, base=i0, alltotal=len(paths)):
+                    win.update(
+                        detail=f"{base + i}/{alltotal} — {p.name}",
+                        progress=(base + i) / alltotal,
+                    )
+
+                got_i, got_d, got_f, lock_aborted = self._import_batch(
+                    remaining, progress=_progress
+                )
+                imported += got_i
+                duplicates += got_d
+                failed += got_f
+                if not lock_aborted:
+                    break
+                # The daemon seized the workflow lock (a mounted recorder
+                # right after start) — wait it out, retry what's left.
+                remaining = remaining[got_i + got_d + got_f :]
+                if _time.time() > retry_deadline:
+                    logger.warning("first session: gave up waiting for the lock")
+                    send_notification(
+                        "Timshel",
+                        "Import incomplete",
+                        f"{len(remaining)} file(s) left — use File → Import "
+                        "transcripts to finish (duplicates are skipped).",
+                    )
+                    break
+                win.update(detail="Waiting for a transcription to finish…")
+                _time.sleep(15)
+            win.close_after(1)
+            logger.info(
+                "first session import: %d new, %d duplicate, %d failed of %d",
+                imported,
+                duplicates,
+                failed,
+                len(paths),
+            )
+
+            # First-digest gates ($0): no material, or no AI configured —
+            # the key screen was the hook; nothing more to do here.
+            if imported + duplicates == 0:
+                send_notification(
+                    "Timshel", "Import finished", "No notes were imported."
+                )
+                return
+            if (
+                not config.LLM_API_KEY
+                or config.LLM_PROVIDER != "claude"
+                or not getattr(config, "ENABLE_CONNECTION_SYNTHESIS", True)
+            ):
+                send_notification(
+                    "Timshel",
+                    "Notes imported",
+                    f"{imported + duplicates} notes are in. Add a Claude key "
+                    "in Settings to find connections between them.",
+                )
+                return
+
+            from src.connections.scheduler import estimate_digest_potential
+
+            try:
+                potential = estimate_digest_potential(onboarding=True)
+            except Exception as exc:  # noqa: BLE001 - preview must never block
+                logger.debug("first session: potential preview failed (%s)", exc)
+                potential = None
+            if potential is not None and not potential.ok:
+                send_notification(
+                    "Timshel",
+                    "Notes imported",
+                    "Connections will surface as your corpus grows.",
+                )
+                return
+
+            def _offer_on_main() -> None:
+                # This callback OWNS the auto-digest hold now: it either
+                # hands it to the digest thread or releases it on decline —
+                # and must release it even when the alert itself fails
+                # (rumps.alert has failed before: see the guarded call in
+                # _notify_* below), or weekly digests stay silently frozen.
+                try:
+                    clicked = rumps.alert(
+                        "Timshel",
+                        f"Your notes are in ({imported + duplicates} "
+                        "imported). Analyze them now to find the first "
+                        "connections between them? Costs one Claude run "
+                        "(~$0.15–0.25), takes about a minute.",
+                        ok="Analyze now",
+                        cancel="Later",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("first-session offer alert failed: %s", exc)
+                    scheduler.resume_auto_digest()
+                    return
+                if clicked != 1:
+                    # Later: start the weekly clock WITHOUT consuming — the
+                    # notes enter the first weekly digest on the normal
+                    # rhythm instead of a paid run firing ~30s after "Later".
+                    from datetime import datetime as _dt
+
+                    scheduler.start_weekly_clock(_dt.now())
+                    scheduler.resume_auto_digest()
+                    return
+                import threading
+
+                threading.Thread(
+                    target=self._run_first_digest,
+                    name="FirstDigest",
+                    daemon=True,
+                ).start()
+
+            # Flag AFTER the call: if scheduling the callback itself raises,
+            # the finally below must still release the hold (the callback
+            # will never run to do it).
+            _run_on_main_thread(_offer_on_main)
+            hold_transferred = True
+        except Exception as exc:  # noqa: BLE001 - onboarding must never crash the app
+            logger.error("first session failed: %s", exc, exc_info=True)
+        finally:
+            if not hold_transferred:
+                scheduler.resume_auto_digest()
+
+    def _run_first_digest(self) -> None:
+        """Run the onboarding digest (worker thread) and open Insights.
+
+        Inherits the auto-digest hold from the offer dialog (no gap in which
+        the tick could fire a weekly run) and releases it when done.
+        """
+        from src.connections.scheduler import get_scheduler, run_onboarding_digest
+
+        scheduler = get_scheduler()
+        # The billing circuit breaker lives on the INNER transcriber, not the
+        # app_core wrapper — pass the object that actually carries
+        # _disable_ai/_ai_disabled_reason.
+        inner = getattr(self.transcriber, "transcriber", None) or self.transcriber
+        win = DownloadWindow(
+            "Timshel — Finding connections", "Reading your notes… (~1 min)"
+        )
+        win.show()
+        try:
+            path = run_onboarding_digest(inner)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("first digest failed: %s", exc, exc_info=True)
+            path = None
+        finally:
+            win.close_after(1)
+            scheduler.resume_auto_digest()
+
+        if path is not None:
+            _run_on_main_thread(lambda: self._open_insights(None))
+            return
+
+        if getattr(inner, "_ai_disabled_reason", None):
+            # A billing failure is NOT "no connections" — say what happened.
+            def _billing_on_main() -> None:
+                rumps.alert(
+                    "Timshel",
+                    "The analysis stopped: your Claude account has no "
+                    "credits. Top up at console.anthropic.com and use "
+                    "'Generate digest now' from the menu.",
+                    ok="OK",
+                )
+
+            _run_on_main_thread(_billing_on_main)
+            return
+
+        def _empty_on_main() -> None:
+            rumps.alert(
+                "Timshel",
+                "No strong connections in these notes yet — that's "
+                "normal for a first pass. Timshel keeps looking as you "
+                "record.",
+                ok="OK",
+            )
+
+        _run_on_main_thread(_empty_on_main)
+
     def _reset_memory(self, _):
         """Reset transcription memory to a specific date."""
         target_date = choose_date_dialog(default_days=7)
-        
+
         if target_date is None:
             logger.info("User cancelled reset memory dialog")
             return  # User cancelled
-        
+
         logger.info(f"Resetting memory to date: {target_date.strftime('%Y-%m-%d')}")
         success = reset_state(target_date)
 
         if success:
-            logger.info(f"Memory reset successful, sending notification for date: {target_date.strftime('%Y-%m-%d')}")
+            logger.info(
+                f"Memory reset successful, sending notification for date: {target_date.strftime('%Y-%m-%d')}"
+            )
             send_notification(
                 title="Timshel",
                 message=f"From: {target_date.strftime('%Y-%m-%d')}",
@@ -1819,10 +2127,10 @@ class TimshelMenuApp(rumps.App):
     def _show_settings(self, _):
         """Show settings window with maintenance/disks tabs wired to MenuApp callbacks."""
         callbacks = {
-            "reset_memory":   self._reset_memory,
+            "reset_memory": self._reset_memory,
             "repair_whisper": self._repair_whisper_clicked,
-            "open_logs":      self._open_logs,
-            "show_about":     self._show_about,
+            "open_logs": self._open_logs,
+            "show_about": self._show_about,
             "review_volumes": self._manage_volumes_clicked,
             "forget_all_volumes": self._forget_all_volumes,
         }
@@ -1897,27 +2205,23 @@ class TimshelMenuApp(rumps.App):
 
     def _get_staged_files(self) -> List[Path]:
         """Get list of audio files in staging directory.
-        
+
         Returns:
             List of audio file paths, sorted by modification time
             (newest first), limited to 10 files
         """
         if not config.LOCAL_RECORDINGS_DIR.exists():
             return []
-        
+
         files = []
         for ext in config.AUDIO_EXTENSIONS:
             # Search both lowercase and uppercase extensions
             files.extend(config.LOCAL_RECORDINGS_DIR.glob(f"*{ext}"))
             files.extend(config.LOCAL_RECORDINGS_DIR.glob(f"*{ext.upper()}"))
-        
+
         # Sort by modification time (newest first) and limit to 10
-        sorted_files = sorted(
-            files,
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )[:10]
-        
+        sorted_files = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+
         return sorted_files
 
     def _refresh_retranscribe_menu(self, _):
@@ -1926,11 +2230,11 @@ class TimshelMenuApp(rumps.App):
         # (fresh NSMenuItem allocation/teardown through the ObjC bridge each
         # time). The staging dir changes only when a recorder is plugged in,
         # so skip the rebuild when the inputs are byte-for-byte identical.
-        staged_files = [] if self._retranscription_in_progress else self._get_staged_files()
+        staged_files = (
+            [] if self._retranscription_in_progress else self._get_staged_files()
+        )
         try:
-            staged_sig = tuple(
-                (f.name, f.stat().st_mtime) for f in staged_files
-            )
+            staged_sig = tuple((f.name, f.stat().st_mtime) for f in staged_files)
         except OSError:
             staged_sig = None  # stat raced; force a rebuild
         snapshot = (
@@ -1949,7 +2253,7 @@ class TimshelMenuApp(rumps.App):
                 self.retranscribe_menu.clear()
         except (AttributeError, TypeError):
             pass
-        
+
         # Show busy state during retranscription
         if self._retranscription_in_progress:
             busy_item = rumps.MenuItem(
@@ -1965,7 +2269,7 @@ class TimshelMenuApp(rumps.App):
             empty_item.set_callback(None)
             self.retranscribe_menu.add(empty_item)
             return
-        
+
         for audio_file in staged_files:
             try:
                 mtime = datetime.fromtimestamp(audio_file.stat().st_mtime)
@@ -1973,7 +2277,7 @@ class TimshelMenuApp(rumps.App):
                 label = f"📁 {audio_file.name} ({date_str})"
             except OSError:
                 label = f"📁 {audio_file.name}"
-            
+
             item = rumps.MenuItem(label)
             # Store file path for callback
             item._audio_path = audio_file
@@ -1982,7 +2286,7 @@ class TimshelMenuApp(rumps.App):
 
     def _retranscribe_file_callback(self, sender):
         """Handle retranscribe native-menu item click."""
-        self._retranscribe_path(getattr(sender, '_audio_path', None))
+        self._retranscribe_path(getattr(sender, "_audio_path", None))
 
     def _retranscribe_panel_file(self, filename):
         """Handle a re-transcribe row click from the status panel.
@@ -2026,14 +2330,14 @@ class TimshelMenuApp(rumps.App):
             ok="Yes, retranscribe",
             cancel="Cancel",
         )
-        
+
         if response != 1:  # Cancel
             return
-        
+
         # Set flag BEFORE starting thread
         self._retranscription_in_progress = True
         self._retranscription_file = audio_path.name
-        
+
         # Send start notification
         send_notification(
             title="Timshel",
@@ -2045,7 +2349,9 @@ class TimshelMenuApp(rumps.App):
         def do_retranscribe():
             try:
                 if self.transcriber and self.transcriber.transcriber:
-                    success = self.transcriber.transcriber.force_retranscribe(audio_path)
+                    success = self.transcriber.transcriber.force_retranscribe(
+                        audio_path
+                    )
 
                     if success:
                         send_notification(
@@ -2064,6 +2370,7 @@ class TimshelMenuApp(rumps.App):
                     "Retranscribe lock-busy for %s — informing user",
                     audio_path.name,
                 )
+
                 def _on_main_lock_busy() -> None:
                     rumps.alert(
                         title="⏳ Automatic transcription in progress",
@@ -2074,6 +2381,7 @@ class TimshelMenuApp(rumps.App):
                         ),
                         ok="OK",
                     )
+
                 _run_on_main_thread(_on_main_lock_busy)
             except Exception as e:
                 logger.error(f"Retranscribe error: {e}", exc_info=True)
@@ -2086,7 +2394,7 @@ class TimshelMenuApp(rumps.App):
                 # Always clear flag when done
                 self._retranscription_in_progress = False
                 self._retranscription_file = None
-        
+
         thread = threading.Thread(target=do_retranscribe, daemon=True)
         thread.start()
 
@@ -2196,9 +2504,7 @@ class TimshelMenuApp(rumps.App):
         logger.info("Uruchamianie daemona transcribera...")
         self._running = True
         self.daemon_thread = threading.Thread(
-            target=self._run_daemon,
-            daemon=True,
-            name="TranscriberDaemon"
+            target=self._run_daemon, daemon=True, name="TranscriberDaemon"
         )
         self.daemon_thread.start()
 
@@ -2214,6 +2520,9 @@ class TimshelMenuApp(rumps.App):
         # If wizard is not needed, start daemon immediately
         if not SetupWizard.needs_setup():
             self._start_daemon()
+            # Resume path: a first-session import chosen in the wizard that
+            # never ran (crash/quit before it fired) starts on next launch.
+            self._maybe_start_first_session()
 
         # Run menu app (blocks until quit)
         super(TimshelMenuApp, self).run()
@@ -2262,4 +2571,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

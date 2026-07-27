@@ -33,7 +33,8 @@ def _oneline(text: str) -> str:
 
 def _yaml_str(text: str) -> str:
     """A YAML-safe double-quoted scalar body for user text: single-line, with `\\` and
-    `"` escaped so a query containing a quote/backslash can't corrupt the frontmatter."""
+    `"` escaped so a query containing a quote/backslash can't corrupt the frontmatter.
+    """
     return _oneline(text).replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -74,7 +75,9 @@ def render_answer_md(query: str, answer, *, date_str: str) -> str:
             lines.append(f"- {_oneline(d)}")
         lines.append("")
     if not getattr(answer, "answered", True):
-        lines.append("*Notatki nie pokrywają tego pytania — odpowiedź powyżej mówi to wprost.*")
+        lines.append(
+            "*Notatki nie pokrywają tego pytania — odpowiedź powyżej mówi to wprost.*"
+        )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -97,5 +100,7 @@ def save_answer(
     out_dir = Path(vault_dir) / subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = _unique_path(out_dir, f"{date_str} Recall - {_slug(query)}")
-    path.write_text(render_answer_md(query, answer, date_str=date_str), encoding="utf-8")
+    path.write_text(
+        render_answer_md(query, answer, date_str=date_str), encoding="utf-8"
+    )
     return path

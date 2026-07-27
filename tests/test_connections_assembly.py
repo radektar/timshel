@@ -97,6 +97,70 @@ def test_seen_keys_window_capped_newest_first(vault):
     assert cs.unseen_total == 6  # leftover 2 stays pending for the next run
 
 
+def test_connectable_window_prefers_threaded_over_newest(vault):
+    # "hub" is old but shares a tag + vocabulary with others; "lonely" is the
+    # newest but connects to nothing. The onboarding window must pick hub.
+    _write_note(vault, "hub", "2025-01-01", tags="sauna", summary="projekt sauna deski")
+    _write_note(vault, "peer", "2025-02-01", tags="sauna", summary="sauna deski budowa")
+    _write_note(vault, "lonely", "2026-07-01", tags="xyz", summary="zupelnie osobno")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert "hub" in cs.window_basenames and "peer" in cs.window_basenames
+    assert "lonely" not in cs.window_basenames
+    assert cs.window_fallback is False
+
+
+def test_connectable_window_all_zero_falls_back_to_newest(vault):
+    # No shared threads at all -> behaves like the newest window (+ flag).
+    _write_note(vault, "a", "2026-01-01", tags="jeden", summary="alfa beta")
+    _write_note(vault, "b", "2026-02-01", tags="dwa", summary="gamma delta")
+    _write_note(vault, "c", "2026-03-01", tags="trzy", summary="epsilon zeta")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert cs.window_basenames == {"c", "b"}  # newest two
+    assert cs.window_fallback is True
+
+
+def test_connectable_window_deterministic(vault):
+    for name in ("n1", "n2", "n3", "n4"):
+        _write_note(vault, name, "2026-06-01", tags="t", summary="wspolny watek")
+    windows = [
+        assemble_candidates(
+            vault,
+            None,
+            DismissalStore(vault),
+            first_run_window=2,
+            seen_keys=set(),
+            window_mode="connectable",
+        ).window_basenames
+        for _ in range(3)
+    ]
+    assert windows[0] == windows[1] == windows[2]
+
+
+def test_newest_mode_unchanged_and_corpus_keys_populated(vault):
+    _write_note(vault, "old", "2026-01-01", summary="alpha")
+    _write_note(vault, "new", "2026-06-01", summary="alpha")
+    cs = assemble_candidates(
+        vault, None, DismissalStore(vault), first_run_window=1, seen_keys=set()
+    )
+    assert cs.window_basenames == {"new"}  # newest-first, as before
+    assert cs.corpus_keys == {"sha256:old", "sha256:new"}
+    assert cs.window_fallback is False
+
+
 def test_tag_bridge_pulls_older_sharing_tag(vault):
     _write_note(vault, "new", "2026-06-20", tags="sauna", summary="cokolwiek nowego")
     _write_note(vault, "older_shared", "2026-05-01", tags="sauna", summary="stare ale")

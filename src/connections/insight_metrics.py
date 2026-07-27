@@ -46,6 +46,10 @@ METRICS_SCHEMA_VERSION = 2
 #: for a budget guard — better to over-report cost than under-report it).
 _PRICES_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "claude-opus-4-8": (5.0, 25.0),
+    # Standard rate (verified 2026-07-24). Intro promo $2/$10 runs through
+    # 2026-08-31 — we model the permanent rate, so the ledger over-reports
+    # cost slightly during the promo instead of under-reporting after it.
+    "claude-sonnet-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
@@ -137,12 +141,19 @@ def build_record(
     verdict_model: str = "",
     verdict_usage: object = None,
     verdict_dropped: int = 0,
+    onboarding: bool = False,
+    window_fallback: bool = False,
     now: Optional[datetime] = None,
 ) -> Dict[str, object]:
     """Assemble one metrics record (pure — no I/O).
 
     ``cost_usd`` is the run TOTAL; ``synthesis_cost_usd`` preserves the v1
     meaning. Verdict fields are zero/empty when the pass did not run.
+    ``onboarding`` marks the first-session run (the activation instrument:
+    "≥1 verdict-surviving connection in session one" is measured off it);
+    ``window_fallback`` flags an onboarding retry window that degraded to
+    newest-first (no connectable material left) — additive fields, schema
+    stays v2.
     """
     tokens = usage_tokens(usage)
     synthesis_cost = estimate_cost_usd(
@@ -183,6 +194,8 @@ def build_record(
         "verdict_output_tokens": v_tokens["output_tokens"],
         "verdict_cost_usd": verdict_cost,
         "verdict_dropped": int(verdict_dropped),
+        "onboarding": bool(onboarding),
+        "window_fallback": bool(window_fallback),
         "cost_usd": round(synthesis_cost + verdict_cost, 6),
         **tokens,
     }
@@ -201,15 +214,23 @@ def record_digest_metrics(
     verdict_model: str = "",
     verdict_usage: object = None,
     verdict_dropped: int = 0,
+    onboarding: bool = False,
+    window_fallback: bool = False,
     path: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> bool:
     """Append one digest metrics record to ``metrics.jsonl``. Never raises.
 
-    Gated by ``config.INSIGHT_METRICS_ENABLED``. Returns True on a successful
-    append, False if disabled, misconfigured, or the write failed (all logged).
+    Gated by ``config.INSIGHT_METRICS_ENABLED`` — EXCEPT onboarding rows,
+    which are always recorded: they are the activation instrument ("≥1
+    verdict-surviving connection in session one") and the whole reason the
+    onboarding run pays for its verdict pass even for non-tester users. The
+    row carries counts and the digest filename, no note content.
+
+    Returns True on a successful append, False if disabled, misconfigured,
+    or the write failed (all logged).
     """
-    if not getattr(config, "INSIGHT_METRICS_ENABLED", True):
+    if not onboarding and not getattr(config, "INSIGHT_METRICS_ENABLED", True):
         return False
     try:
         out = Path(path) if path is not None else metrics_log_path()
@@ -228,6 +249,8 @@ def record_digest_metrics(
             verdict_model=verdict_model,
             verdict_usage=verdict_usage,
             verdict_dropped=verdict_dropped,
+            onboarding=onboarding,
+            window_fallback=window_fallback,
             now=now,
         )
         out.parent.mkdir(parents=True, exist_ok=True)

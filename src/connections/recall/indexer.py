@@ -22,7 +22,7 @@ def split_frontmatter(text: str) -> tuple:
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end != -1:
-            return text[3:end], text[end + 4:]
+            return text[3:end], text[end + 4 :]
     return "", text
 
 
@@ -31,9 +31,9 @@ def _title_and_date(frontmatter: str, fallback: str) -> tuple:
     for line in frontmatter.splitlines():
         s = line.strip()
         if s.startswith("title:"):
-            title = s[len("title:"):].strip().strip('"').strip("'") or title
+            title = s[len("title:") :].strip().strip('"').strip("'") or title
         elif s.startswith("date:"):
-            date = s[len("date:"):].strip()
+            date = s[len("date:") :].strip()
     return title, date
 
 

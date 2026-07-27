@@ -31,6 +31,14 @@ from typing import Optional, Set
 from src.config import config
 from src.logger import logger
 
+# Onboarding first-digest model — chosen by the 2026-07-24 blind eval on the
+# real corpus: never returned an empty digest (Opus did, on the newest
+# window), ~2x faster, ~half the cost. Injected per-run; the weekly default
+# (tester_mode -> Opus) is untouched.
+ONBOARDING_DIGEST_MODEL = "claude-sonnet-5"
+# Owner's cost ceiling: at most this many PAID windows in one first session.
+ONBOARDING_MAX_WINDOWS = 2
+
 
 class DigestScheduler:
     """Decides when a digest is due and records when one ran."""
@@ -58,7 +66,40 @@ class DigestScheduler:
         # one gate-skip record per distinct skipped window, not one per hour.
         self._gate_skip_at: Optional[datetime] = None
         self._gate_skip_sig: Optional[frozenset] = None
+        # In-memory hold: the first-session (onboarding) flow suspends the
+        # automatic weekly path so the 30s tick cannot fire a digest over
+        # freshly imported notes BEFORE the user answers the offer dialog.
+        self.auto_digest_suspended: bool = False
         self._load()
+
+    def suspend_auto_digest(self) -> None:
+        self.auto_digest_suspended = True
+
+    def resume_auto_digest(self) -> None:
+        self.auto_digest_suspended = False
+
+    def start_weekly_clock(self, now: datetime) -> None:
+        """Start the weekly cadence WITHOUT consuming anything.
+
+        Declining the onboarding offer ("Later") must not mean "pay ~30s
+        later": with imported notes and a never-ran clock, is_due() would
+        fire on the next tick. Setting the clock (only when never set) makes
+        the first automatic digest arrive on the weekly rhythm; the notes
+        stay unseen and enter it via the standard migration path.
+
+        Sync-protocol participant like every writer: merges the disk state
+        first and adopts a clock another process set mid-dialog — a blind
+        save here would clobber a CLI run's consumed keys.
+        """
+        self._merge_disk_seen()
+        data = self._read_disk_state() or {}
+        disk_at = data.get("last_digest_at")
+        if self.last_digest_at is None and isinstance(disk_at, str) and disk_at:
+            self.last_digest_at = disk_at  # another process already ran
+            return
+        if self.last_digest_at is None:
+            self.last_digest_at = now.isoformat(timespec="seconds")
+            self._save()
 
     def _read_disk_state(self) -> Optional[dict]:
         """Parse the state file, or None. The ONE place the schema is read."""
@@ -378,7 +419,14 @@ def _set_digest_ready(transcriber: object, path: Path) -> None:
 
 
 def _record_digest_metrics(
-    synthesizer, candidates, connections, path, verifier=None, verdict_dropped=0
+    synthesizer,
+    candidates,
+    connections,
+    path,
+    verifier=None,
+    verdict_dropped=0,
+    onboarding=False,
+    window_fallback=False,
 ) -> None:
     """Append the per-digest cost + coverage record. Best-effort, never raises.
 
@@ -403,6 +451,8 @@ def _record_digest_metrics(
             getattr(verifier, "last_usage", None) if verifier is not None else None
         ),
         verdict_dropped=verdict_dropped,
+        onboarding=onboarding,
+        window_fallback=window_fallback,
     )
 
 
@@ -483,43 +533,63 @@ def digest_potential(candidates) -> DigestPotential:
 
 
 def _assemble_for_digest(
-    scheduler: DigestScheduler, vault: Path, dismissals, legacy_window: bool = False
+    scheduler: DigestScheduler,
+    vault: Path,
+    dismissals,
+    legacy_window: bool = False,
+    onboarding: bool = False,
+    onboarding_exclude: Optional[Set[str]] = None,
 ):
     """THE digest candidate assembly — the run and the $0 preview both call
     this, so their windows and channel configuration can never diverge.
 
     ``legacy_window=True`` ignores the seen-set and takes the newest
-    first-run window instead (the forced-regenerate fallback). Refreshes the
-    scheduler from disk first so a resident process never assembles against
-    a window another process already consumed and paid for.
+    first-run window instead (the forced-regenerate fallback).
+    ``onboarding=True`` treats the WHOLE corpus as first-session material
+    (deliberately skipping ``_ensure_seen_migrated`` — migration would
+    degenerate the connectable window to newest-15) and selects the most
+    connectable window; ``onboarding_exclude`` removes an already-consumed
+    first window so the retry picks the next one. Refreshes the scheduler
+    from disk first so a resident process never assembles against a window
+    another process already consumed and paid for.
     """
+    from src.connections import candidate_assembly
     from src.connections.candidate_assembly import assemble_candidates
 
     scheduler.refresh_from_disk()
-    seen = None if legacy_window else _ensure_seen_migrated(scheduler, vault)
+    if onboarding:
+        seen: Optional[Set[str]] = set(onboarding_exclude or ())
+        window_mode = "connectable"
+    else:
+        seen = None if legacy_window else _ensure_seen_migrated(scheduler, vault)
+        window_mode = "newest"
     return assemble_candidates(
         vault,
-        None if legacy_window else scheduler.last_digest_at,
+        None if (legacy_window or onboarding) else scheduler.last_digest_at,
         dismissals,
+        first_run_window=candidate_assembly.FIRST_RUN_WINDOW,
         inject_bridges=config.SYNTHESIS_BRIDGE_COUNT,
         inject_entities=config.SYNTHESIS_ENTITY_COUNT,
         inject_dense=config.SYNTHESIS_DENSE_COUNT,
         inject_graph=config.SYNTHESIS_GRAPH_COUNT,
         inject_stance=config.SYNTHESIS_STANCE_COUNT,
         seen_keys=seen,
+        window_mode=window_mode,
     )
 
 
-def estimate_digest_potential() -> DigestPotential:
+def estimate_digest_potential(onboarding: bool = False) -> DigestPotential:
     """Assemble candidates locally and score them — the manual-trigger preview.
 
     Shares :func:`_assemble_for_digest` with the paid run, so the preview can
     never warn about a run the scheduler itself would have paid for (the dense
     channel fails soft without its index; its engine is cached per process, so
-    only the very first tester-mode call pays the model load). The tokenize
-    LRU is cleared on exit for the same reason the digest run clears it: don't
-    pin note texts in the resident app. Callers must NOT invoke this on the
-    UI main thread — it reads the whole corpus.
+    only the very first tester-mode call pays the model load). With
+    ``onboarding=True`` it previews the same connectable window
+    :func:`run_onboarding_digest` would consume — preview/run parity holds in
+    both modes. The tokenize LRU is cleared on exit for the same reason the
+    digest run clears it: don't pin note texts in the resident app. Callers
+    must NOT invoke this on the UI main thread — it reads the whole corpus.
     """
     from src.connections.candidate_assembly import clear_tokenize_cache
     from src.connections.dismissals import DismissalStore
@@ -528,9 +598,280 @@ def estimate_digest_potential() -> DigestPotential:
     scheduler = get_scheduler()
     dismissals = DismissalStore(vault).load()
     try:
-        return digest_potential(_assemble_for_digest(scheduler, vault, dismissals))
+        return digest_potential(
+            _assemble_for_digest(scheduler, vault, dismissals, onboarding=onboarding)
+        )
     finally:
         clear_tokenize_cache()
+
+
+def _synthesize_and_write(
+    transcriber,
+    candidates,
+    dismissals,
+    synthesizer,
+    verifier_override,
+    language,
+    *,
+    onboarding: bool = False,
+    window_fallback: bool = False,
+    mark=None,
+    set_ready: bool = True,
+) -> tuple[Optional[Path], str]:
+    """THE one paid synthesis→verdict→write tail, shared by every digest run.
+
+    Duplicating this tail in scripts is what caused pipeline drift before —
+    keep it single. Returns ``(path, status)`` with status one of:
+    ``"written"`` (digest on disk, sidecar + metrics + digest_ready fired),
+    ``"empty"`` (PAID run, nothing survived — metrics recorded, no digest),
+    ``"error"`` (recoverable or billing failure — nothing consumed, caller
+    must NOT mark the window seen).
+
+    ``mark`` — optional callback invoked with the digest path (or None) the
+    moment the window counts as CONSUMED, BEFORE the metrics append and the
+    ready flag: a crash mid-tail must not leave a paid window unmarked (it
+    would be re-paid next tick). The weekly path passes its ``_mark``;
+    onboarding marks once itself after its retry loop.
+    ``set_ready=False`` skips the digest_ready flag — the onboarding flow
+    opens the Insights window itself and must not double-notify via the
+    status tick.
+    ``verifier_override`` — an explicitly injected verifier runs REGARDLESS
+    of ``VERDICT_ENABLED`` (deliberate: the onboarding success metric is
+    "verdict-surviving connections", also for non-tester users); ``None``
+    keeps the config-gated factory behaviour.
+    """
+    from src.connections.digest_writer import write_digest_note
+    from src.summarizer import APIBillingError
+
+    def _disable(exc) -> None:
+        disable_ai = getattr(transcriber, "_disable_ai", None)
+        if callable(disable_ai):
+            disable_ai("billing", exc)
+
+    try:
+        result = synthesizer.synthesize(
+            candidates, dismissals.dismissed_descriptions(), language
+        )
+    except APIBillingError as exc:
+        _disable(exc)
+        return None, "error"
+    if result is None:
+        return None, "error"
+
+    known = {n.basename for n in candidates.notes}
+    connections = [
+        c
+        for c in result.connections
+        if len(c.notes) >= 2 and all(b in known for b in c.notes)
+    ]
+    if not connections:
+        # Synthesis ran and was PAID for but produced nothing — a real
+        # H1/H4 data point (a paid run that yielded zero connections).
+        logger.info("synthesis: no genuine connections this run")
+        if mark is not None:
+            mark(None)
+        _record_digest_metrics(
+            synthesizer,
+            candidates,
+            [],
+            None,
+            onboarding=onboarding,
+            window_fallback=window_fallback,
+        )
+        return None, "empty"
+
+    # Verdict pass: verify the proposed connections against fuller note text
+    # BEFORE anything is written, so the digest, the sidecar and the action
+    # instrument only ever see survivors. Fail OPEN on any recoverable
+    # problem — verification must never lose a digest to an API hiccup.
+    verdict_verifier = None  # set only when a verdict actually completed
+    verdict_dropped = 0
+    if verifier_override is not None:
+        verifier = verifier_override
+    elif getattr(config, "VERDICT_ENABLED", False):
+        from src.connections.verdict import get_verifier
+
+        verifier = get_verifier()
+    else:
+        verifier = None
+    if verifier is not None:
+        from src.connections.verdict import apply_verdicts
+
+        try:
+            verdicts = verifier.verify(
+                connections,
+                {n.basename: n for n in candidates.notes},
+                language,
+            )
+        except APIBillingError as exc:
+            _disable(exc)
+            return None, "error"
+        # verify() returns None on a recoverable error (fail open): keep
+        # all, and do NOT stamp a verdict model/cost onto the ledger — a
+        # verdict that never completed must not read as one that ran clean.
+        if verdicts is not None:
+            kept = apply_verdicts(connections, verdicts)
+            verdict_dropped = len(connections) - len(kept)
+            if verdict_dropped:
+                logger.info(
+                    "verdict: dropped %d/%d connections",
+                    verdict_dropped,
+                    len(connections),
+                )
+            connections = kept
+            verdict_verifier = verifier
+
+    if not connections:
+        # Every proposal died in verification — a legitimate, PAID outcome.
+        logger.info("verdict: no connections survived verification")
+        if mark is not None:
+            mark(None)
+        _record_digest_metrics(
+            synthesizer,
+            candidates,
+            [],
+            None,
+            verifier=verdict_verifier,
+            verdict_dropped=verdict_dropped,
+            onboarding=onboarding,
+            window_fallback=window_fallback,
+        )
+        return None, "empty"
+
+    path, conn_meta = write_digest_note(connections, len(candidates.notes))
+    dismissals.record_digest(path, conn_meta)
+    if mark is not None:
+        mark(path)
+    _record_digest_metrics(
+        synthesizer,
+        candidates,
+        connections,
+        path,
+        verifier=verdict_verifier,
+        verdict_dropped=verdict_dropped,
+        onboarding=onboarding,
+        window_fallback=window_fallback,
+    )
+    if set_ready:
+        _set_digest_ready(transcriber, path)
+    return path, "written"
+
+
+def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
+    """The first-session digest: the activation moment, policy separate from
+    the weekly path.
+
+    Whole corpus = first-session material (no seen-set migration), the most
+    CONNECTABLE window, synthesis + verdict on ``ONBOARDING_DIGEST_MODEL``
+    (injected per-run — the weekly default is untouched), and at most
+    ``ONBOARDING_MAX_WINDOWS`` paid attempts: an empty first window retries
+    once on the next connectable window. Afterwards the WHOLE corpus is
+    marked seen with ``pending=0`` — byte-identical semantics to a fresh
+    install (no paid auto-drain of the archive) and the weekly clock starts
+    now. Returns the digest path, or None when both windows came up empty
+    (or on error). Never raises.
+    """
+    from src.connections.dismissals import DismissalStore
+    from src.connections.synthesis import ConnectionSynthesizer
+    from src.connections.verdict import ConnectionVerifier
+    from src.summarizer import detect_language
+
+    if not config.LLM_API_KEY or config.LLM_PROVIDER != "claude":
+        return None
+    if getattr(transcriber, "_ai_disabled_reason", None):
+        # Billing already tripped (e.g. during the import's summaries) —
+        # don't burn another paid call that will fail the same way.
+        return None
+    scheduler = get_scheduler()
+    now = datetime.now()
+    lock_fd = _acquire_digest_lock()
+    if lock_fd is None:
+        logger.info("onboarding digest: another digest run holds the lock")
+        return None
+    try:
+        vault = Path(config.TRANSCRIBE_DIR)
+        dismissals = DismissalStore(vault).load()
+        dismissals.sync_frontmatter_dismissals()
+        synthesizer = ConnectionSynthesizer(
+            api_key=config.LLM_API_KEY, model=ONBOARDING_DIGEST_MODEL
+        )
+        verifier = ConnectionVerifier(
+            api_key=config.LLM_API_KEY, model=ONBOARDING_DIGEST_MODEL
+        )
+
+        consumed: Set[str] = set()
+        corpus_keys: Set[str] = set()
+        final_path: Optional[Path] = None
+        pre_run_notes = scheduler.new_notes
+        for attempt in range(1, ONBOARDING_MAX_WINDOWS + 1):
+            candidates = _assemble_for_digest(
+                scheduler,
+                vault,
+                dismissals,
+                onboarding=True,
+                onboarding_exclude=consumed,
+            )
+            corpus_keys |= candidates.corpus_keys
+            if len(candidates.notes) < 2 or not candidates.window_basenames:
+                logger.info("onboarding digest: window %d has no material", attempt)
+                break
+            language = detect_language(
+                " ".join(n.summary_md for n in candidates.notes)[:5000]
+            )
+            logger.info(
+                "onboarding digest: attempt %d/%d — %d candidates "
+                "(%d in window, fallback=%s)",
+                attempt,
+                ONBOARDING_MAX_WINDOWS,
+                len(candidates.notes),
+                len(candidates.window_basenames),
+                candidates.window_fallback,
+            )
+            path, status = _synthesize_and_write(
+                transcriber,
+                candidates,
+                dismissals,
+                synthesizer,
+                verifier,
+                language,
+                onboarding=True,
+                window_fallback=candidates.window_fallback,
+                # The first-session flow opens the Insights window itself —
+                # the status tick must not also fire the digest_ready
+                # notification for the same digest.
+                set_ready=False,
+            )
+            if status == "error":
+                break  # nothing consumed; leave state for the weekly path
+            consumed |= candidates.window_keys
+            if status == "written":
+                final_path = path
+                break
+            # "empty": paid attempt, retry with the next connectable window.
+
+        if consumed:
+            # At least one PAID window ran: the whole corpus becomes
+            # pre-existing material (fresh-install semantics) and the weekly
+            # clock starts now. pending=0 — the import bumped the trigger
+            # counter; without the reset the tick would immediately re-digest.
+            # Notes transcribed DURING the run (recorder plugged in mid-
+            # session) bumped the counter after the snapshot — re-register
+            # them so mark_ran's overwrite doesn't strand their trigger.
+            late = max(0, scheduler.new_notes - pre_run_notes)
+            scheduler.mark_ran(
+                now, final_path, seen_keys=corpus_keys or consumed, pending=0
+            )
+            if late:
+                scheduler.register_new_notes(late)
+        return final_path
+    finally:
+        try:
+            from src.connections.candidate_assembly import clear_tokenize_cache
+
+            clear_tokenize_cache()
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+        _release_digest_lock(lock_fd)
 
 
 def run_digest_if_due(
@@ -543,13 +884,15 @@ def run_digest_if_due(
     """
     # Lazy imports keep `import src.connections` light (no anthropic/pydantic
     # unless a digest actually runs) and avoid import cycles with transcriber.
-    from src.connections.digest_writer import write_digest_note
     from src.connections.dismissals import DismissalStore
     from src.connections.synthesis import get_synthesizer
-    from src.summarizer import APIBillingError, detect_language
+    from src.summarizer import detect_language
 
     scheduler = get_scheduler()
     now = datetime.now()
+    if not force and scheduler.auto_digest_suspended:
+        # First-session flow in progress: the offer dialog owns the next run.
+        return None
     if not force and not scheduler.is_due(now):
         return None
     if not force and scheduler.gate_cooldown_active(now):
@@ -648,100 +991,18 @@ def run_digest_if_due(
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]
         )
-        try:
-            result = synthesizer.synthesize(
-                candidates, dismissals.dismissed_descriptions(), language
-            )
-        except APIBillingError as exc:
-            disable_ai = getattr(transcriber, "_disable_ai", None)
-            if callable(disable_ai):
-                disable_ai("billing", exc)
-            return None
-        if result is None:
-            return None  # recoverable error -> retry next tick, don't reset
-
-        known = {n.basename for n in candidates.notes}
-        connections = [
-            c
-            for c in result.connections
-            if len(c.notes) >= 2 and all(b in known for b in c.notes)
-        ]
-        if not connections:
-            # Synthesis ran and was PAID for but produced nothing — a real
-            # H1/H4 data point (a paid run that yielded zero connections), so
-            # record it, exactly like the verdict-all-dropped branch below.
-            logger.info("synthesis: no genuine connections this run")
-            # Reset weekly clock; write no digest. The window WAS consumed
-            # (and paid for), so it is marked seen like any other run.
-            _mark()
-            _record_digest_metrics(synthesizer, candidates, [], None)
-            return None
-
-        # Verdict pass (prototype): verify the proposed connections against
-        # fuller note text BEFORE anything is written, so the digest, the
-        # sidecar and the action instrument only ever see survivors. Fail
-        # OPEN on any recoverable problem — verification must never lose a
-        # digest to an API hiccup.
-        verdict_verifier = None  # set only when a verdict actually completed
-        verdict_dropped = 0
-        if getattr(config, "VERDICT_ENABLED", False):
-            from src.connections.verdict import apply_verdicts, get_verifier
-
-            verifier = get_verifier()
-            if verifier is not None:
-                try:
-                    verdicts = verifier.verify(
-                        connections,
-                        {n.basename: n for n in candidates.notes},
-                        language,
-                    )
-                except APIBillingError as exc:
-                    disable_ai = getattr(transcriber, "_disable_ai", None)
-                    if callable(disable_ai):
-                        disable_ai("billing", exc)
-                    return None
-                # verify() returns None on a recoverable error (fail open): keep
-                # all, and do NOT stamp a verdict model/cost onto the ledger — a
-                # verdict that never completed must not read as one that ran clean.
-                if verdicts is not None:
-                    kept = apply_verdicts(connections, verdicts)
-                    verdict_dropped = len(connections) - len(kept)
-                    if verdict_dropped:
-                        logger.info(
-                            "verdict: dropped %d/%d connections",
-                            verdict_dropped,
-                            len(connections),
-                        )
-                    connections = kept
-                    verdict_verifier = verifier
-
-        if not connections:
-            # Every proposal died in verification — a legitimate, PAID outcome:
-            # record the metrics (H1/H4 data point), reset the clock, write nothing.
-            logger.info("verdict: no connections survived verification")
-            _mark()
-            _record_digest_metrics(
-                synthesizer,
-                candidates,
-                [],
-                None,
-                verifier=verdict_verifier,
-                verdict_dropped=verdict_dropped,
-            )
-            return None
-
-        path, conn_meta = write_digest_note(connections, len(candidates.notes))
-        dismissals.record_digest(path, conn_meta)
-        _mark(path)
-        _record_digest_metrics(
-            synthesizer,
+        # _mark passed as the tail's mark callback: it fires the moment the
+        # window counts as consumed ("empty" and "written" both paid), in the
+        # exact pre-refactor order (before metrics/ready). "error" never marks.
+        path, _status = _synthesize_and_write(
+            transcriber,
             candidates,
-            connections,
-            path,
-            verifier=verdict_verifier,
-            verdict_dropped=verdict_dropped,
+            dismissals,
+            synthesizer,
+            None,
+            language,
+            mark=_mark,
         )
-        _set_digest_ready(transcriber, path)
         return path
     finally:
         # Bound the _tokenize LRU's lifetime to one digest pass — otherwise it

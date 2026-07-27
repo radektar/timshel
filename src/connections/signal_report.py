@@ -162,7 +162,9 @@ def render(summary: Summary) -> str:
     if s.events == 0:
         lines.append("")
         lines.append("Brak danych jeszcze — żaden insight nie był triażowany.")
-        lines.append("(Otwórz Insights, zrób handoff/Zachowaj/Odrzuć — wróci tu sygnał.)")
+        lines.append(
+            "(Otwórz Insights, zrób handoff/Zachowaj/Odrzuć — wróci tu sygnał.)"
+        )
         return "\n".join(lines)
 
     span = ""
@@ -205,14 +207,20 @@ def render(summary: Summary) -> str:
 
     if s.missing_sig:
         lines.append("")
-        lines.append(f"⚠ {s.missing_sig} event(s) bez sig — nie wliczone do rate (data quality).")
+        lines.append(
+            f"⚠ {s.missing_sig} event(s) bez sig — nie wliczone do rate (data quality)."
+        )
 
     # one-line read for the N=1 gate
     lines.append("")
     if s.actioned > 0:
-        lines.append(f"→ {s.actioned}/{s.engaged} insightów zrodziło akcję. Brama żyje — patrz na trend.")
+        lines.append(
+            f"→ {s.actioned}/{s.engaged} insightów zrodziło akcję. Brama żyje — patrz na trend."
+        )
     else:
-        lines.append("→ 🔴 zero handoffów mimo zaangażowania — kill-signal: wróć do jakości tezy/syntezy.")
+        lines.append(
+            "→ 🔴 zero handoffów mimo zaangażowania — kill-signal: wróć do jakości tezy/syntezy."
+        )
 
     return "\n".join(lines)
 

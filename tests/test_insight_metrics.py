@@ -176,3 +176,22 @@ def test_record_appends_and_is_readable(tmp_path, monkeypatch):
     assert [r["digest"] for r in rows] == ["d1.md", "d2.md"]
     assert rows[0]["connection_types"] == ["shared-thread", "emergent-idea"]
     assert rows[1]["connections"] == 0
+
+
+def test_build_record_onboarding_fields_roundtrip():
+    from src.connections.insight_metrics import build_record
+
+    default = build_record(
+        model="claude-sonnet-5", usage=None, candidates=3, connections=1
+    )
+    assert default["onboarding"] is False and default["window_fallback"] is False
+
+    row = build_record(
+        model="claude-sonnet-5",
+        usage=None,
+        candidates=3,
+        connections=0,
+        onboarding=True,
+        window_fallback=True,
+    )
+    assert row["onboarding"] is True and row["window_fallback"] is True
