@@ -497,6 +497,191 @@ def test_gate_skip_sig_stamped_only_after_successful_write(tmp_path, monkeypatch
         reset_scheduler_for_tests()
 
 
+def _onboarding_env(tmp_path, monkeypatch, notes):
+    """Shared scaffolding for run_onboarding_digest tests."""
+    import src.connections.synthesis as synth_mod
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    for name, date, tags, summary in notes:
+        _write_vault_note(vault, name, date, tags=tags, summary=summary)
+    monkeypatch.setattr(config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config, "DIGEST_LOCK_FILE", tmp_path / "digest.lock")
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", tmp_path / "cs.json")
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    monkeypatch.setattr(config, "VERDICT_ENABLED", False)
+    monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
+    monkeypatch.setattr(config, "LLM_PROVIDER", "claude")
+
+    def _factories_must_not_run():
+        raise AssertionError("onboarding must inject its models, not use factories")
+
+    monkeypatch.setattr(synth_mod, "get_synthesizer", _factories_must_not_run)
+    reset_scheduler_for_tests()
+    return vault
+
+
+def test_onboarding_digest_injects_sonnet_marks_corpus(tmp_path, monkeypatch):
+    import json as _json
+
+    import src.connections.scheduler as sched
+    from src.connections.synthesis import Connection, ConnectionList
+
+    vault = _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "wspolny watek alfa"),
+            ("b", "2026-02-01", "t", "wspolny watek beta"),
+            ("c", "2026-03-01", "inne", "osobny temat"),
+        ],
+    )
+    seen_models = []
+
+    class _Synth:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, candidates, dismissed=None, language=None):
+            seen_models.append(self.model)
+            return ConnectionList(
+                connections=[
+                    Connection(
+                        type="shared-thread",
+                        notes=["a", "b"],
+                        rationale="why",
+                        evidence=[],
+                        directions=["q1?", "q2?"],
+                    )
+                ]
+            )
+
+    class _Verifier:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def verify(self, connections, notes_by_basename, language=None):
+            return None  # recoverable -> fail open, keep all
+
+    monkeypatch.setattr(
+        sched, "ConnectionSynthesizer", lambda api_key, model: _Synth(), raising=False
+    )
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _Synth()
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: _Verifier()
+    )
+
+    path = sched.run_onboarding_digest(transcriber=None)
+    assert path is not None and path.exists()
+    assert seen_models  # injected synthesizer ran; factory would have raised
+
+    s = get_scheduler()
+    # Whole corpus marked seen (fresh-install semantics), counter zeroed.
+    assert s.seen_note_keys >= {"sha256:a", "sha256:b", "sha256:c"}
+    assert s.new_notes == 0
+    assert s.last_digest_at is not None
+
+    rows = [
+        _json.loads(line)
+        for line in (vault / ".timshel" / "metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert rows[-1]["onboarding"] is True
+    reset_scheduler_for_tests()
+
+
+def test_onboarding_digest_retries_second_window_once(tmp_path, monkeypatch):
+    import json as _json
+
+    import src.connections.scheduler as sched
+    from src.connections.synthesis import ConnectionList
+
+    vault = _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "wspolny watek alfa"),
+            ("b", "2026-02-01", "t", "wspolny watek beta"),
+            ("c", "2026-03-01", "u", "inny watek gamma"),
+            ("d", "2026-04-01", "u", "inny watek delta"),
+        ],
+    )
+    windows_seen = []
+
+    class _EmptySynth:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, candidates, dismissed=None, language=None):
+            windows_seen.append(frozenset(candidates.window_basenames))
+            return ConnectionList(connections=[])
+
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _EmptySynth()
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
+    )
+    monkeypatch.setattr(config, "MAX_SYNTHESIS_NOTES", 25)
+
+    # Window cap 2 -> two disjoint windows exist; both come up empty.
+    import src.connections.candidate_assembly as ca
+
+    monkeypatch.setattr(ca, "FIRST_RUN_WINDOW", 2)
+
+    path = sched.run_onboarding_digest(transcriber=None)
+    assert path is None
+    assert len(windows_seen) == sched.ONBOARDING_MAX_WINDOWS  # exactly 2 paid
+    assert windows_seen[0] != windows_seen[1]  # second attempt = NEXT window
+    rows = [
+        _json.loads(line)
+        for line in (vault / ".timshel" / "metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert len(rows) == 2 and all(r["onboarding"] for r in rows)
+    # Corpus still marked seen after two empty PAID attempts.
+    assert get_scheduler().seen_note_keys >= {"sha256:a", "sha256:b"}
+    reset_scheduler_for_tests()
+
+
+def test_suspend_auto_digest_blocks_unforced_run(tmp_path, monkeypatch):
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _write_vault_note(vault, "n1", "2026-07-01", tags="t")
+    _write_vault_note(vault, "n2", "2026-07-02", tags="t")
+    monkeypatch.setattr(config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config, "DIGEST_LOCK_FILE", tmp_path / "digest.lock")
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", tmp_path / "cs.json")
+
+    def _must_not_run():
+        raise AssertionError("suspended tick must return before the synthesizer")
+
+    monkeypatch.setattr(synth_mod, "get_synthesizer", _must_not_run)
+    reset_scheduler_for_tests()
+    try:
+        s = get_scheduler()
+        s.register_new_notes(1)  # never ran + material -> is_due True
+        s.suspend_auto_digest()
+        assert sched.run_digest_if_due(transcriber=None, force=False) is None
+        s.resume_auto_digest()
+        assert s.auto_digest_suspended is False
+    finally:
+        reset_scheduler_for_tests()
+
+
 def test_stale_counter_cleared_when_nothing_unseen(tmp_path, monkeypatch):
     """new_notes > 0 with zero unseen notes must self-heal, not loop forever."""
     import json as _json

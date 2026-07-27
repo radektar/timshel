@@ -94,6 +94,12 @@ class CandidateSet:
     # window size otherwise). unseen_total - len(window) = the backfill leftover
     # that stays pending for the next digest.
     unseen_total: int = 0
+    # note_key() of EVERY corpus note — lets the onboarding run mark the whole
+    # corpus seen after its window without a second corpus read.
+    corpus_keys: Set[str] = None  # type: ignore[assignment]
+    # True when window_mode="connectable" degraded to newest-first (no
+    # connectable material left) — telemetry for the onboarding kill-criterion.
+    window_fallback: bool = False
     # Loaded (non-muted) corpus size. Lets the scheduler tell "nothing unseen
     # in a real corpus" (stale trigger counter — clear it) from "vault empty or
     # unreadable" (leave state alone).
@@ -108,6 +114,8 @@ class CandidateSet:
             self.precap_basenames = set()
         if self.window_keys is None:
             self.window_keys = set()
+        if self.corpus_keys is None:
+            self.corpus_keys = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -346,6 +354,63 @@ def _entity_neighbors(
     return [note for _, _, note in scored[:max_n]]
 
 
+def _connectable_window(
+    unseen: List[NoteRef], corpus: List[NoteRef], max_n: int
+) -> tuple:
+    """The most CONNECTABLE window — the onboarding first-digest selector.
+
+    Newest-first is right for the weekly cadence but wrong for a first
+    session over a whole imported archive: an arbitrary newest-15 can be
+    incoherent and the verdict pass kills everything (an empty first digest
+    is a failed activation). Score each unseen note by its count of distinct
+    connectable THREADS — signals at least one other corpus note shares —
+    using the same strong channels :func:`digest_potential` trusts (tags,
+    entities, rare-token bridges; bm25 deliberately excluded: every note
+    shares the section-header tokens). Deterministic, index-based, no O(n²)
+    pairwise pass. All-zero scores fall back to newest-first.
+
+    Returns ``(window, fallback)`` — ``fallback`` True when no note scored.
+    """
+    if not unseen:
+        return [], False
+    tag_df: Counter = Counter()
+    ent_df: Counter = Counter()
+    for note in corpus:
+        for t in note.norm_tags:
+            tag_df[t] += 1
+        for e in entity_keys(note.summary_md):
+            ent_df[e] += 1
+    df = _corpus_doc_freq(corpus)
+
+    n_corpus = len(corpus)
+
+    def score(note: NoteRef) -> float:
+        # A thread is shared by SOME notes, not all: df >= 2 makes a term
+        # evidence of a connection, df < corpus size drops ubiquitous
+        # artifacts (the "## Podsumowanie" header token, an every-note tag)
+        # that would otherwise score uniformly in small corpora. Weights:
+        # curated tags strongest, entities survive vocabulary drift, rare
+        # tokens (the bridge channel's band) noisiest.
+        tags = sum(1 for t in note.norm_tags if 2 <= tag_df[t] < n_corpus)
+        ents = sum(1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < n_corpus)
+        rare = sum(
+            1
+            for w in set(_tokenize(note.summary_md))
+            if 2 <= df[w] <= min(_BRIDGE_RARE_DF, n_corpus - 1)
+        )
+        return 2.0 * tags + 1.5 * ents + 1.0 * rare
+
+    scored = [(score(n), n) for n in unseen]
+    if all(s == 0 for s, _ in scored):
+        newest = sorted(unseen, key=lambda n: n.date, reverse=True)[:max_n]
+        return newest, True
+    # Three stable sorts = deterministic (-score, date desc, basename asc).
+    scored.sort(key=lambda item: item[1].basename)
+    scored.sort(key=lambda item: item[1].date, reverse=True)
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [n for _, n in scored[:max_n]], False
+
+
 def _graph_neighbors(
     corpus: List[NoteRef],
     window: List[NoteRef],
@@ -553,6 +618,7 @@ def assemble_candidates(
     dense_skip: int = 0,
     as_of: Optional[str] = None,
     seen_keys: Optional[Set[str]] = None,
+    window_mode: str = "newest",
 ) -> CandidateSet:
     """Build the candidate set for one synthesis pass.
 
@@ -578,6 +644,10 @@ def assemble_candidates(
             ``first_run_window``) — so a backfilled old note counts as new
             material exactly once, regardless of its recording date. ``None``
             keeps the legacy date-based window (recall harness / older callers).
+        window_mode: ``"newest"`` (default, production weekly window) or
+            ``"connectable"`` (onboarding first digest: the most connectable
+            unseen notes per :func:`_connectable_window`). Only applies in
+            seen-set mode.
     """
     corpus = [
         n
@@ -597,14 +667,22 @@ def assemble_candidates(
         # Cap the window so a bulk backfill catches up incrementally (15 notes
         # per digest) instead of blowing one giant prompt; the leftover stays
         # unseen and enters the next runs.
-        window = unseen[:first_run_window]
+        if window_mode == "connectable":
+            window, window_fallback = _connectable_window(
+                unseen, corpus, first_run_window
+            )
+        else:
+            window = unseen[:first_run_window]
+            window_fallback = False
     elif last_digest_at:
         cutoff = last_digest_at[:10]
         window = [n for n in corpus if n.date and n.date >= cutoff]
         unseen_total = len(window)
+        window_fallback = False
     else:
         window = sorted(corpus, key=lambda n: n.date, reverse=True)[:first_run_window]
         unseen_total = len(window)
+        window_fallback = False
 
     if not window:
         return CandidateSet([], set(), corpus_size=len(corpus))
@@ -780,4 +858,6 @@ def assemble_candidates(
         window_keys={note_key(n) for n in window},
         unseen_total=unseen_total,
         corpus_size=len(corpus),
+        corpus_keys={note_key(n) for n in corpus},
+        window_fallback=window_fallback,
     )

@@ -141,12 +141,19 @@ def build_record(
     verdict_model: str = "",
     verdict_usage: object = None,
     verdict_dropped: int = 0,
+    onboarding: bool = False,
+    window_fallback: bool = False,
     now: Optional[datetime] = None,
 ) -> Dict[str, object]:
     """Assemble one metrics record (pure — no I/O).
 
     ``cost_usd`` is the run TOTAL; ``synthesis_cost_usd`` preserves the v1
     meaning. Verdict fields are zero/empty when the pass did not run.
+    ``onboarding`` marks the first-session run (the activation instrument:
+    "≥1 verdict-surviving connection in session one" is measured off it);
+    ``window_fallback`` flags an onboarding retry window that degraded to
+    newest-first (no connectable material left) — additive fields, schema
+    stays v2.
     """
     tokens = usage_tokens(usage)
     synthesis_cost = estimate_cost_usd(
@@ -187,6 +194,8 @@ def build_record(
         "verdict_output_tokens": v_tokens["output_tokens"],
         "verdict_cost_usd": verdict_cost,
         "verdict_dropped": int(verdict_dropped),
+        "onboarding": bool(onboarding),
+        "window_fallback": bool(window_fallback),
         "cost_usd": round(synthesis_cost + verdict_cost, 6),
         **tokens,
     }
@@ -205,6 +214,8 @@ def record_digest_metrics(
     verdict_model: str = "",
     verdict_usage: object = None,
     verdict_dropped: int = 0,
+    onboarding: bool = False,
+    window_fallback: bool = False,
     path: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> bool:
@@ -232,6 +243,8 @@ def record_digest_metrics(
             verdict_model=verdict_model,
             verdict_usage=verdict_usage,
             verdict_dropped=verdict_dropped,
+            onboarding=onboarding,
+            window_fallback=window_fallback,
             now=now,
         )
         out.parent.mkdir(parents=True, exist_ok=True)

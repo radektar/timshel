@@ -26,6 +26,7 @@ class WizardStep(Enum):
     SOURCE_CONFIG = auto()
     BASIC_CONFIG = auto()
     AI_CONFIG = auto()
+    IMPORT_NOTES = auto()
     FINISH = auto()
 
 
@@ -39,6 +40,9 @@ class SetupWizard:
         WizardStep.DOWNLOAD,
         WizardStep.PERMISSIONS,
         WizardStep.AI_CONFIG,
+        # After the key screen (the key is the hook: "add a key, then let's
+        # analyze YOUR notes"), right before FINISH.
+        WizardStep.IMPORT_NOTES,
         WizardStep.FINISH,
     ]
 
@@ -46,9 +50,7 @@ class SetupWizard:
         """Initialize the wizard."""
         self.current_step_index = 0
         self.settings = UserSettings.load()
-        self.downloader = DependencyDownloader(
-            progress_callback=self._on_progress
-        )
+        self.downloader = DependencyDownloader(progress_callback=self._on_progress)
         self.dependency_manager = DependencyManager(self.downloader)
         self._download_status = ""
         self._download_in_progress = False
@@ -68,6 +70,7 @@ class SetupWizard:
             "download": WizardStep.DOWNLOAD,
             "permissions": WizardStep.PERMISSIONS,
             "ai_config": WizardStep.AI_CONFIG,
+            "import_notes": WizardStep.IMPORT_NOTES,
             "finish": WizardStep.FINISH,
         }
         step = stage_map.get(stage_name)
@@ -96,9 +99,9 @@ class SetupWizard:
 
         # Re-run wizard only when compatibility line changes (major.minor),
         # not for alpha/patch bumps inside the same release line.
-        return SetupWizard._version_line(settings.setup_version) != SetupWizard._version_line(
-            APP_VERSION
-        )
+        return SetupWizard._version_line(
+            settings.setup_version
+        ) != SetupWizard._version_line(APP_VERSION)
 
     @property
     def current_step(self) -> WizardStep:
@@ -149,6 +152,7 @@ class SetupWizard:
             WizardStep.SOURCE_CONFIG: self._show_source_config,
             WizardStep.BASIC_CONFIG: self._show_basic_config,
             WizardStep.AI_CONFIG: self._show_ai_config,
+            WizardStep.IMPORT_NOTES: self._show_import_notes,
         }
         handler = step_handlers.get(self.current_step)
         if handler:
@@ -256,9 +260,7 @@ class SetupWizard:
             self._download_complete = True
             self._download_in_progress = False
             if self._download_window is not None:
-                self._download_window.update(
-                    detail="✓ Download complete", progress=1.0
-                )
+                self._download_window.update(detail="✓ Download complete", progress=1.0)
                 self._download_window.close_after(1.2)
             try:
                 rumps.notification(
@@ -367,20 +369,22 @@ class SetupWizard:
 
     def _source_config_alert_fallback(self) -> int:
         """Plain-alert source-mode picker. Returns 1 / 0 / -1 like the window."""
-        return int(rumps.alert(
-            title="📁 Recording sources",
-            message=(
-                "Where should Timshel pull recordings from?\n\n"
-                "• Ask for every new disk (recommended) — Timshel asks "
-                "the first time a new disk is connected whether it's a "
-                "recorder. The decision is remembered.\n\n"
-                "• Specific disk names (advanced) — only volumes with the "
-                "names you provide (e.g. LS-P1, ZOOM-H6)."
-            ),
-            ok="Ask on new disk",
-            cancel="Specific disk names",
-            other="Cancel",
-        ))
+        return int(
+            rumps.alert(
+                title="📁 Recording sources",
+                message=(
+                    "Where should Timshel pull recordings from?\n\n"
+                    "• Ask for every new disk (recommended) — Timshel asks "
+                    "the first time a new disk is connected whether it's a "
+                    "recorder. The decision is remembered.\n\n"
+                    "• Specific disk names (advanced) — only volumes with the "
+                    "names you provide (e.g. LS-P1, ZOOM-H6)."
+                ),
+                ok="Ask on new disk",
+                cancel="Specific disk names",
+                other="Cancel",
+            )
+        )
 
     def _prompt_specific_disks(self) -> str:
         """Collect explicit disk names for the legacy 'specific' watch mode."""
@@ -415,7 +419,10 @@ class SetupWizard:
 
         from AppKit import NSButton, NSMakeRect, NSPopUpButton, NSTextField, NSView
 
-        from src.ui.folder_picker import apply_basic_settings, select_folder_with_warning
+        from src.ui.folder_picker import (
+            apply_basic_settings,
+            select_folder_with_warning,
+        )
 
         language_codes = list(SUPPORTED_LANGUAGES.keys())
         model_codes = list(SUPPORTED_MODELS.keys())
@@ -599,7 +606,9 @@ class SetupWizard:
 
                 accessory = NSView.alloc().initWithFrame_(NSRect((0, 0), (460, 170)))
 
-                folder_label = NSTextField.alloc().initWithFrame_(NSRect((0, 140), (130, 20)))
+                folder_label = NSTextField.alloc().initWithFrame_(
+                    NSRect((0, 140), (130, 20))
+                )
                 folder_label.setStringValue_("Output folder:")
                 folder_label.setBezeled_(False)
                 folder_label.setDrawsBackground_(False)
@@ -607,7 +616,9 @@ class SetupWizard:
                 folder_label.setSelectable_(False)
                 accessory.addSubview_(folder_label)
 
-                folder_value = NSTextField.alloc().initWithFrame_(NSRect((130, 140), (330, 20)))
+                folder_value = NSTextField.alloc().initWithFrame_(
+                    NSRect((130, 140), (330, 20))
+                )
                 display_folder = (
                     selected_folder
                     if len(selected_folder) <= 60
@@ -628,7 +639,9 @@ class SetupWizard:
                 if pick_button is not None:
                     accessory.addSubview_(pick_button)
 
-                language_label = NSTextField.alloc().initWithFrame_(NSRect((0, 68), (130, 20)))
+                language_label = NSTextField.alloc().initWithFrame_(
+                    NSRect((0, 68), (130, 20))
+                )
                 language_label.setStringValue_("Language:")
                 language_label.setBezeled_(False)
                 language_label.setDrawsBackground_(False)
@@ -636,13 +649,19 @@ class SetupWizard:
                 language_label.setSelectable_(False)
                 accessory.addSubview_(language_label)
 
-                language_popup = NSPopUpButton.alloc().initWithFrame_(NSRect((130, 64), (330, 26)))
+                language_popup = NSPopUpButton.alloc().initWithFrame_(
+                    NSRect((130, 64), (330, 26))
+                )
                 for code, name in SUPPORTED_LANGUAGES.items():
                     language_popup.addItemWithTitle_(f"{name} ({code})")
-                language_popup.selectItemAtIndex_(language_codes.index(selected_language))
+                language_popup.selectItemAtIndex_(
+                    language_codes.index(selected_language)
+                )
                 accessory.addSubview_(language_popup)
 
-                model_label = NSTextField.alloc().initWithFrame_(NSRect((0, 28), (130, 20)))
+                model_label = NSTextField.alloc().initWithFrame_(
+                    NSRect((0, 28), (130, 20))
+                )
                 model_label.setStringValue_("Model:")
                 model_label.setBezeled_(False)
                 model_label.setDrawsBackground_(False)
@@ -650,7 +669,9 @@ class SetupWizard:
                 model_label.setSelectable_(False)
                 accessory.addSubview_(model_label)
 
-                model_popup = NSPopUpButton.alloc().initWithFrame_(NSRect((130, 24), (330, 26)))
+                model_popup = NSPopUpButton.alloc().initWithFrame_(
+                    NSRect((130, 24), (330, 26))
+                )
                 for code, name in SUPPORTED_MODELS.items():
                     model_popup.addItemWithTitle_(f"{code.upper()}: {name}")
                 model_popup.selectItemAtIndex_(model_codes.index(selected_model))
@@ -911,6 +932,121 @@ class SetupWizard:
         else:
             self.settings.enable_ai_summaries = False
 
+        return "next"
+
+    @staticmethod
+    def _count_importable(folder: Path) -> int:
+        """Importable files under ``folder`` (same filter as import_text)."""
+        from src.ingest import SUPPORTED_SUFFIXES
+
+        return sum(
+            1
+            for p in Path(folder).rglob("*")
+            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
+        )
+
+    def _persist_import_dir(self, folder: str) -> None:
+        """Persist immediately (not only at FINISH) — same rationale as
+        BASIC_CONFIG: a crash mid-wizard must not lose the choice."""
+        self.settings.pending_import_dir = folder
+        self.settings.save()
+
+    def _show_import_notes(self) -> str:
+        """Optional: pick a folder of existing notes to import after setup.
+
+        The actual import (and the first-digest offer) runs POST-wizard in
+        MenuApp's first-session flow — the transcriber doesn't exist yet
+        while the wizard is on screen. This step only collects consent +
+        the folder.
+        """
+        from src.setup.onboarding_window import (
+            _APPKIT_AVAILABLE,
+            show_onboarding_screen,
+        )
+
+        if not _APPKIT_AVAILABLE:
+            return self._import_notes_legacy()
+
+        idx = self.STEPS_ORDER.index(WizardStep.IMPORT_NOTES)
+        while True:
+            choice = show_onboarding_screen(
+                title="Bring your existing notes (optional)",
+                body=(
+                    "Already have transcripts or notes (txt, md, vtt)? "
+                    "Timshel can import them right after setup and find the "
+                    "first connections between them. Importing runs your AI "
+                    "summaries (~$0.01–0.05 per note)."
+                ),
+                primary="Choose folder…",
+                secondary="Skip",
+                tertiary="Cancel",
+                step_index=idx,
+                step_count=len(self.STEPS_ORDER),
+            )
+            if choice is None:
+                return self._import_notes_legacy()
+            if choice == -1:
+                return "cancel"
+            if choice == 0:
+                return "next"
+
+            from src.ui.dialogs import choose_folder_dialog
+
+            folder = choose_folder_dialog(
+                title="Choose the folder with your notes",
+                message="txt, md and vtt files are imported (subfolders too).",
+            )
+            if not folder:
+                continue  # picker cancelled — back to the offer screen
+            count = self._count_importable(Path(folder))
+            if count == 0:
+                rumps.alert(
+                    title="Timshel",
+                    message="No importable files found there (txt, md, vtt).",
+                    ok="OK",
+                )
+                continue
+            message = (
+                f"Found {count} notes — they'll be imported after setup " "finishes."
+            )
+            if count > 200:
+                message += (
+                    "\n\nThat's a lot: summaries for every note may take a "
+                    "while and cost a few dollars."
+                )
+            confirmed = rumps.alert(
+                title="Timshel",
+                message=message,
+                ok="OK",
+                cancel="Choose a different folder",
+            )
+            if confirmed == 1:
+                self._persist_import_dir(folder)
+                return "next"
+
+    def _import_notes_legacy(self) -> str:
+        """Import step — plain alert fallback (no AppKit)."""
+        response = rumps.alert(
+            title="📥 Bring your existing notes (optional)",
+            message=(
+                "Already have transcripts or notes (txt, md, vtt)?\n"
+                "Timshel can import them right after setup and find the "
+                "first connections between them.\n\n"
+                "Importing runs your AI summaries (~$0.01–0.05 per note)."
+            ),
+            ok="Skip",
+            cancel="Choose folder…",
+            other="Cancel",
+        )
+        if response == -1:
+            return "cancel"
+        if response == 1:  # Skip
+            return "next"
+        from src.ui.dialogs import choose_folder_dialog
+
+        folder = choose_folder_dialog(title="Choose the folder with your notes")
+        if folder and self._count_importable(Path(folder)) > 0:
+            self._persist_import_dir(folder)
         return "next"
 
     def _show_finish(self) -> str:
