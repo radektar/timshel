@@ -35,9 +35,14 @@ from src.connections.synthesis import ConnectionSynthesizer  # noqa: E402
 from src.summarizer import APIBillingError, detect_language  # noqa: E402
 
 MODELS = ["claude-haiku-4-5-20251001", "claude-opus-4-8"]
-LABEL = {"claude-haiku-4-5-20251001": "Haiku 4.5", "claude-opus-4-8": "Opus 4.8"}
+LABEL = {
+    "claude-haiku-4-5-20251001": "Haiku 4.5",
+    "claude-sonnet-5": "Sonnet 5",
+    "claude-opus-4-8": "Opus 4.8",
+}
 PRICES = {  # USD per 1M tokens (input, output) — verified 2026-06-23
     "claude-opus-4-8": (5.0, 25.0),  # standard rate; $15/$75 was Opus 4.1
+    "claude-sonnet-5": (3.0, 15.0),  # standard; intro $2/$10 until 2026-08-31
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
 

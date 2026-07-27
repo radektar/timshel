@@ -46,6 +46,10 @@ METRICS_SCHEMA_VERSION = 2
 #: for a budget guard — better to over-report cost than under-report it).
 _PRICES_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "claude-opus-4-8": (5.0, 25.0),
+    # Standard rate (verified 2026-07-24). Intro promo $2/$10 runs through
+    # 2026-08-31 — we model the permanent rate, so the ledger over-reports
+    # cost slightly during the promo instead of under-reporting after it.
+    "claude-sonnet-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
