@@ -1,5 +1,7 @@
 """Unit tests for the shared importable-file discovery (src/ingest/discovery)."""
 
+from pathlib import Path
+
 import pytest
 
 from src.config import config
@@ -52,12 +54,47 @@ def test_count_and_import_agree(vault, tmp_path):
     assert SetupWizard._count_importable(src) == len(list_importable(src)) == 5
 
 
-def test_traversal_is_bounded(vault, tmp_path, monkeypatch):
+def test_parent_of_vault_is_importable(vault, tmp_path, monkeypatch):
+    """The flagship layout: transcripts live INSIDE an Obsidian vault, so
+    importing the Obsidian root must work — only the vault subtree is
+    dropped, and files sitting directly in the parent are kept."""
+    obsidian = tmp_path / "Obsidian"
+    transcripts = obsidian / "11-Transcripts"
+    (transcripts / "sub").mkdir(parents=True)
+    monkeypatch.setattr(config, "TRANSCRIBE_DIR", transcripts)
+    (obsidian / "root-note.md").write_text("x", encoding="utf-8")
+    (obsidian / "Daily").mkdir()
+    (obsidian / "Daily" / "d.md").write_text("x", encoding="utf-8")
+    (transcripts / "own.md").write_text("x", encoding="utf-8")
+    (transcripts / "sub" / "deep.md").write_text("x", encoding="utf-8")
+
+    assert is_vault_path(obsidian) is False  # parent NOT refused
+    assert is_vault_path(transcripts) is True
+    assert is_vault_path(transcripts / "sub") is True
+    found = {p.name for p in list_importable(obsidian)}
+    assert found == {"root-note.md", "d.md"}  # vault subtree excluded
+
+
+def test_bound_stops_the_walk_not_just_the_result(vault, tmp_path, monkeypatch):
+    """The cap must bound the WORK — a sorted() over the whole tree would
+    finish the walk before any cap could apply (the wizard counts on the UI
+    path, so picking ~ must not hang it)."""
     import src.ingest.discovery as discovery
 
-    monkeypatch.setattr(discovery, "MAX_SCANNED_ENTRIES", 3)
     src = tmp_path / "notes"
     src.mkdir()
-    for i in range(10):
-        (src / f"n{i}.md").write_text("x", encoding="utf-8")
-    assert len(list_importable(src)) <= 3  # cap honoured, no hang on ~
+    for i in range(20):
+        (src / f"n{i:02d}.md").write_text("x", encoding="utf-8")
+
+    visited = []
+    real_rglob = Path.rglob
+
+    def _counting_rglob(self, pattern):
+        for p in real_rglob(self, pattern):
+            visited.append(p)
+            yield p
+
+    monkeypatch.setattr(Path, "rglob", _counting_rglob)
+    monkeypatch.setattr(discovery, "MAX_SCANNED_ENTRIES", 5)
+    list_importable(src)
+    assert len(visited) <= 6  # walk stopped, tree never fully materialised

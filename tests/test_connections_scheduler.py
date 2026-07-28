@@ -1049,3 +1049,36 @@ def test_onboarding_busy_when_lock_held(tmp_path, monkeypatch):
     finally:
         sched._release_digest_lock(held)
         reset_scheduler_for_tests()
+
+
+def test_hold_survives_unrelated_writes_from_another_process(tmp_path):
+    """A CLI's routine save (unsee after a transcription) must not wipe a
+    live first-session hold — that process would then pay for a weekly
+    digest mid-onboarding — nor resurrect one the owner released."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    cli = DigestScheduler(state_file)  # separate process
+
+    app.suspend_auto_digest(now)
+    cli.unsee("sha256:k")  # unrelated write while the hold is live
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+    assert cli.auto_digest_on_hold(now) is True  # the CLI must not pay
+
+    app.resume_auto_digest()
+    cli.mark_ran(now, seen_keys={"sha256:z"})  # stale holder writes again
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_settle_never_rolls_the_clock_back(tmp_path):
+    """settle_after_import always saves, so it must adopt a NEWER clock from
+    disk instead of writing a stale in-memory one back."""
+    state_file = tmp_path / "cs.json"
+    stale = DigestScheduler(state_file)
+    stale.last_digest_at = "2026-07-01T00:00:00"
+
+    fresh = DigestScheduler(state_file)
+    fresh.mark_ran(datetime(2026, 7, 20, 12, 0, 0))  # another process ran
+
+    stale.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))
+    assert DigestScheduler(state_file).last_digest_at.startswith("2026-07-20")

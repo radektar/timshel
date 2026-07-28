@@ -76,6 +76,11 @@ class DigestScheduler:
         # honour it and a crash cannot freeze the cadence forever.
         self.auto_digest_suspended: bool = False
         self.auto_digest_hold_until: Optional[str] = None
+        # True only for the process that set or cleared the hold. Every other
+        # writer adopts the disk value before saving, so an unrelated write
+        # (a CLI's unsee after a transcription) can neither wipe a live hold
+        # nor resurrect one the owner has released.
+        self._hold_owned: bool = False
         self._load()
 
     def suspend_auto_digest(self, now: Optional[datetime] = None) -> None:
@@ -90,15 +95,17 @@ class DigestScheduler:
         weekly digests forever.
         """
         stamp = (now or datetime.now()) + timedelta(minutes=AUTO_DIGEST_HOLD_MINUTES)
+        self._merge_disk_seen()
         self.auto_digest_suspended = True
         self.auto_digest_hold_until = stamp.isoformat(timespec="seconds")
-        self._merge_disk_seen()
+        self._hold_owned = True  # our value wins this write
         self._save()
 
     def resume_auto_digest(self) -> None:
+        self._merge_disk_seen()
         self.auto_digest_suspended = False
         self.auto_digest_hold_until = None
-        self._merge_disk_seen()
+        self._hold_owned = True  # releasing is authoritative too
         self._save()
 
     def auto_digest_on_hold(self, now: datetime) -> bool:
@@ -134,12 +141,11 @@ class DigestScheduler:
         :meth:`mark_ran` applies to a backfill backlog, so a bulk import
         cannot escalate to the every-2-days cadence either.
         """
-        self._merge_disk_seen()
-        data = self._read_disk_state() or {}
-        disk_at = data.get("last_digest_at")
-        if self.last_digest_at is None and isinstance(disk_at, str) and disk_at:
-            self.last_digest_at = disk_at  # another process already ran
-        elif self.last_digest_at is None:
+        # refresh_from_disk (not a hand-rolled read): it adopts a NEWER clock
+        # as well as the seen-set, so this save cannot roll the cadence back
+        # to a stale in-memory timestamp.
+        self.refresh_from_disk()
+        if self.last_digest_at is None:
             self.last_digest_at = now.isoformat(timespec="seconds")
         self.new_notes = min(self.new_notes, config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
         self._save()
@@ -211,6 +217,14 @@ class DigestScheduler:
                 # after its own merge, and only the transcribing daemon ever
                 # un-sees — there is a single tombstone producer.
                 self.unseen_tombstones = disk_tombstones
+            # The first-session hold belongs to whoever set it: a writer that
+            # doesn't own it adopts the disk value, so an unrelated save (a
+            # CLI's unsee) can neither clear a live hold — letting that
+            # process pay for a weekly digest mid-onboarding — nor write a
+            # released one back and freeze the cadence for the whole TTL.
+            if not self._hold_owned:
+                hold = data.get("auto_digest_hold_until")
+                self.auto_digest_hold_until = hold if isinstance(hold, str) else None
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
             # Runs even with no seen-set on disk (pre-migration): the
