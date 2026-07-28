@@ -101,9 +101,6 @@ class TestUserSettings:
         assert settings.watch_mode == DEFAULT_WATCH_MODE  # fallback to default
 
 
-
-
-
 class TestUserSettingsMutate:
     """UserSettings.mutate — atomic load→fn→save under the write lock."""
 
@@ -161,9 +158,7 @@ class TestUserSettingsMutate:
 
         def persist(uuid, name):
             barrier.wait(timeout=5)
-            UserSettings.mutate(
-                lambda s: s.add_trusted_volume(uuid, name, "trusted")
-            )
+            UserSettings.mutate(lambda s: s.add_trusted_volume(uuid, name, "trusted"))
 
         threads = [
             threading.Thread(target=persist, args=(f"UUID-{i}", f"Disk{i}"))

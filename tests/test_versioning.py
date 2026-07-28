@@ -84,4 +84,3 @@ def test_creates_v2_and_v3(tmp_path: Path) -> None:
     assert len(entry.versions) == 3
     assert entry.versions[1]["markdown_path"] == "file.v2.md"
     assert entry.versions[2]["markdown_path"] == "file.v3.md"
-

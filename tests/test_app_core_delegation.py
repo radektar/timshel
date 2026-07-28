@@ -54,6 +54,6 @@ def test_wrapper_signature_matches_inner():
     wrapper_params = set(
         inspect.signature(TimshelTranscriber.import_text_file).parameters
     )
-    assert inner_params <= wrapper_params, (
-        f"wrapper missing params: {inner_params - wrapper_params}"
-    )
+    assert (
+        inner_params <= wrapper_params
+    ), f"wrapper missing params: {inner_params - wrapper_params}"

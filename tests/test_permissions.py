@@ -18,6 +18,7 @@ class TestPermissions:
 
     def test_check_fda_with_access(self, monkeypatch):
         """Zwraca True gdy ma dostęp."""
+
         def mock_iterdir(self):
             return iter([])
 
@@ -28,6 +29,7 @@ class TestPermissions:
 
     def test_check_fda_without_access(self, monkeypatch):
         """Zwraca False gdy PermissionError."""
+
         def raise_permission_error(self):
             raise PermissionError("Access denied")
 
@@ -61,6 +63,7 @@ class TestPermissions:
 
     def test_check_volume_access_permission_error(self, monkeypatch):
         """Zwraca False gdy PermissionError."""
+
         def raise_permission_error(self):
             raise PermissionError("Access denied")
 
@@ -74,6 +77,3 @@ class TestPermissions:
         """Zwraca False gdy volumen nie istnieje."""
         volume = Path("/Volumes/nonexistent")
         assert check_volume_access(volume) is False
-
-
-

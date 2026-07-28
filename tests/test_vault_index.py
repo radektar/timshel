@@ -117,4 +117,3 @@ def test_add_preserves_existing_size_when_new_entry_has_zero(tmp_path: Path) -> 
         ),
     )
     assert idx.lookup_by_filename_size("DS0003.MP3", 98765) is not None
-

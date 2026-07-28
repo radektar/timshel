@@ -23,7 +23,9 @@ def _is_ensure_ready_call(node: ast.stmt) -> bool:
         return False
     if not isinstance(node.value, ast.Call):
         return False
-    return isinstance(node.value.func, ast.Name) and node.value.func.id == "ensure_ready"
+    return (
+        isinstance(node.value.func, ast.Name) and node.value.func.id == "ensure_ready"
+    )
 
 
 def _is_forbidden_import(node: ast.stmt) -> bool:
@@ -51,13 +53,15 @@ def _assert_bootstrap_order(module_path: Path) -> None:
 
     assert bootstrap_index is not None, f"{module_path} must import ensure_ready"
     assert call_index is not None, f"{module_path} must call ensure_ready()"
-    assert call_index > bootstrap_index, f"{module_path} must call ensure_ready after import"
+    assert (
+        call_index > bootstrap_index
+    ), f"{module_path} must call ensure_ready after import"
 
     for idx, stmt in enumerate(parsed.body):
         if _is_forbidden_import(stmt):
-            assert idx > call_index, (
-                f"{module_path} imports config/logger before ensure_ready()"
-            )
+            assert (
+                idx > call_index
+            ), f"{module_path} imports config/logger before ensure_ready()"
 
 
 def test_main_calls_bootstrap_before_config_imports():

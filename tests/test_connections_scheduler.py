@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.config import config
 from src.connections.scheduler import (
@@ -576,8 +577,9 @@ def test_onboarding_digest_injects_sonnet_marks_corpus(tmp_path, monkeypatch):
         verdict_mod, "ConnectionVerifier", lambda api_key, model: _Verifier()
     )
 
-    path = sched.run_onboarding_digest(transcriber=None)
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
     assert path is not None and path.exists()
+    assert outcome == "written"
     assert seen_models  # injected synthesizer ran; factory would have raised
 
     s = get_scheduler()
@@ -638,8 +640,8 @@ def test_onboarding_digest_retries_second_window_once(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ca, "FIRST_RUN_WINDOW", 2)
 
-    path = sched.run_onboarding_digest(transcriber=None)
-    assert path is None
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert path is None and outcome == "empty"
     assert len(windows_seen) == sched.ONBOARDING_MAX_WINDOWS  # exactly 2 paid
     assert windows_seen[0] != windows_seen[1]  # second attempt = NEXT window
     rows = [
@@ -946,11 +948,168 @@ def test_weekly_mark_fires_before_metrics(tmp_path, monkeypatch):
         reset_scheduler_for_tests()
 
 
-def test_start_weekly_clock_only_when_never_ran(tmp_path):
-    s = DigestScheduler(tmp_path / "cs.json")
-    now = datetime(2026, 7, 27, 12, 0, 0)
-    s.start_weekly_clock(now)
+def test_settle_after_import_starts_clock_and_clamps_counter(tmp_path):
+    """Post-import state must be cheap on EVERY exit path: clock started,
+    counter below the pattern trigger (a bulk import must not escalate to
+    the every-2-days cadence)."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.register_new_notes(100)  # a 100-note import
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    s.settle_after_import(now)
+
     assert s.last_digest_at == now.isoformat(timespec="seconds")
-    later = datetime(2026, 7, 28, 12, 0, 0)
-    s.start_weekly_clock(later)  # no-op: clock already running
+    assert s.new_notes == config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1
+    assert s.is_due(now) is False  # no paid run seconds later
+    # Not due on the pattern cadence either (that is the cost escalation).
+    assert s.is_due(now + timedelta(days=3)) is False
+    assert s.is_due(now + timedelta(days=8)) is True  # weekly rhythm holds
+
+    reloaded = DigestScheduler(state_file)  # persisted
+    assert reloaded.last_digest_at == s.last_digest_at
+
+    later = datetime(2026, 7, 29, 12, 0, 0)
+    s.settle_after_import(later)  # clock already running -> untouched
     assert s.last_digest_at == now.isoformat(timespec="seconds")
+
+
+def test_auto_digest_hold_is_persisted_and_expires(tmp_path):
+    """A hold must reach OTHER processes (daemon) and never freeze the
+    cadence forever after a crash."""
+    from src.connections.scheduler import AUTO_DIGEST_HOLD_MINUTES
+
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+
+    daemon = DigestScheduler(state_file)  # separate process
+    assert daemon.auto_digest_on_hold(now) is True
+    assert (
+        daemon.auto_digest_on_hold(
+            now + timedelta(minutes=AUTO_DIGEST_HOLD_MINUTES + 1)
+        )
+        is False
+    )  # self-expires: a crash mid-dialog can't freeze digests
+
+    app.resume_auto_digest()
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_onboarding_outcomes_are_distinguishable(tmp_path, monkeypatch):
+    """A false 'your notes have no connections' at the activation moment is
+    the worst possible lie — every non-empty outcome must be tellable apart."""
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "watek alfa"),
+            ("b", "2026-02-01", "t", "watek beta"),
+        ],
+    )
+    # No key configured -> nothing attempted.
+    monkeypatch.setattr(config, "LLM_API_KEY", "")
+    assert sched.run_onboarding_digest(transcriber=None) == (None, "unavailable")
+    monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
+
+    # Billing already tripped during the import's summaries.
+    tripped = SimpleNamespace(_ai_disabled_reason="billing")
+    assert sched.run_onboarding_digest(transcriber=tripped) == (None, "billing")
+
+    # Recoverable synthesis failure -> "error", NOT "empty".
+    class _Failing:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            return None  # recoverable
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _Failing()
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
+    )
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert (path, outcome) == (None, "error")
+    reset_scheduler_for_tests()
+
+
+def test_onboarding_busy_when_lock_held(tmp_path, monkeypatch):
+    import src.connections.scheduler as sched
+
+    _onboarding_env(tmp_path, monkeypatch, [("a", "2026-01-01", "t", "alfa")])
+    held = sched._acquire_digest_lock()
+    try:
+        assert sched.run_onboarding_digest(transcriber=None) == (None, "busy")
+    finally:
+        sched._release_digest_lock(held)
+        reset_scheduler_for_tests()
+
+
+def test_hold_survives_unrelated_writes_from_another_process(tmp_path):
+    """A CLI's routine save (unsee after a transcription) must not wipe a
+    live first-session hold — that process would then pay for a weekly
+    digest mid-onboarding — nor resurrect one the owner released."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    cli = DigestScheduler(state_file)  # separate process
+
+    app.suspend_auto_digest(now)
+    cli.unsee("sha256:k")  # unrelated write while the hold is live
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+    assert cli.auto_digest_on_hold(now) is True  # the CLI must not pay
+
+    app.resume_auto_digest()
+    cli.mark_ran(now, seen_keys={"sha256:z"})  # stale holder writes again
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_settle_never_rolls_the_clock_back(tmp_path):
+    """settle_after_import always saves, so it must adopt a NEWER clock from
+    disk instead of writing a stale in-memory one back."""
+    state_file = tmp_path / "cs.json"
+    stale = DigestScheduler(state_file)
+    stale.last_digest_at = "2026-07-01T00:00:00"
+
+    fresh = DigestScheduler(state_file)
+    fresh.mark_ran(datetime(2026, 7, 20, 12, 0, 0))  # another process ran
+
+    stale.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))
+    assert DigestScheduler(state_file).last_digest_at.startswith("2026-07-20")
+
+
+def test_hold_ownership_ends_with_the_release(tmp_path):
+    """After releasing, a hold set by ANOTHER process must be adopted again
+    — the released owner must not overwrite it with its stale None."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+    app.resume_auto_digest()
+
+    other = DigestScheduler(state_file)
+    other.suspend_auto_digest(now)  # a second flow holds it now
+    app.unsee("sha256:transcript")  # unrelated write by the ex-owner
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+
+
+def test_reset_seen_preserves_another_process_hold(tmp_path):
+    """`digest_archive --reset` forgets the seen-set, not a live hold."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)  # loaded before the hold exists
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+
+    cli.reset_seen()
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+
+    app.resume_auto_digest()
+    cli.reset_seen()  # ...and does not resurrect a released one
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False

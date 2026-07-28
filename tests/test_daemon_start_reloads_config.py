@@ -34,9 +34,7 @@ def isolated_config(tmp_path, monkeypatch):
     path = UserSettings.config_path()
 
     def _write(output_dir: Path) -> None:
-        path.write_text(
-            json.dumps({"output_dir": str(output_dir)}), encoding="utf-8"
-        )
+        path.write_text(json.dumps({"output_dir": str(output_dir)}), encoding="utf-8")
 
     yield _write
     _config_mod._config_instance = None

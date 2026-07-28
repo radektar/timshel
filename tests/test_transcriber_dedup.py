@@ -64,4 +64,3 @@ def test_fallback_match_upgrades_index_to_sha256(tmp_path: Path) -> None:
     assert entry.source_filename == "DS0001.mp3"
     assert entry.markdown_path == "existing.md"
     assert entry.versions
-

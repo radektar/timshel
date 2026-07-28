@@ -24,7 +24,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Set
 
@@ -38,6 +38,10 @@ from src.logger import logger
 ONBOARDING_DIGEST_MODEL = "claude-sonnet-5"
 # Owner's cost ceiling: at most this many PAID windows in one first session.
 ONBOARDING_MAX_WINDOWS = 2
+# How long a first-session hold on the automatic digest stays valid. Long
+# enough for an import + a dialog the user may leave open; short enough that
+# a crash mid-flow cannot freeze weekly digests (the hold self-expires).
+AUTO_DIGEST_HOLD_MINUTES = 60
 
 
 class DigestScheduler:
@@ -66,40 +70,105 @@ class DigestScheduler:
         # one gate-skip record per distinct skipped window, not one per hour.
         self._gate_skip_at: Optional[datetime] = None
         self._gate_skip_sig: Optional[frozenset] = None
-        # In-memory hold: the first-session (onboarding) flow suspends the
-        # automatic weekly path so the 30s tick cannot fire a digest over
-        # freshly imported notes BEFORE the user answers the offer dialog.
+        # First-session hold on the automatic weekly path (see
+        # suspend_auto_digest): in-memory flag for this process plus a
+        # PERSISTED deadline so other processes (daemon, relaunched app)
+        # honour it and a crash cannot freeze the cadence forever.
         self.auto_digest_suspended: bool = False
+        self.auto_digest_hold_until: Optional[str] = None
+        # True only for the process that set or cleared the hold. Every other
+        # writer adopts the disk value before saving, so an unrelated write
+        # (a CLI's unsee after a transcription) can neither wipe a live hold
+        # nor resurrect one the owner has released.
+        self._hold_owned: bool = False
         self._load()
 
-    def suspend_auto_digest(self) -> None:
+    def suspend_auto_digest(self, now: Optional[datetime] = None) -> None:
+        """Hold the automatic path — PERSISTED, so every process honours it.
+
+        The hold protects the user's consent: while the first-session flow
+        runs (import → offer dialog → paid run), no tick may fire a weekly
+        digest over the freshly imported notes. An in-memory flag only
+        reached this process; a LaunchAgent daemon (same app_core tick) or
+        this app relaunched after a crash would happily pay. The stored
+        deadline also self-expires, so a crash mid-dialog cannot freeze
+        weekly digests forever.
+        """
+        stamp = (now or datetime.now()) + timedelta(minutes=AUTO_DIGEST_HOLD_MINUTES)
+        self._merge_disk_seen()
         self.auto_digest_suspended = True
+        self.auto_digest_hold_until = stamp.isoformat(timespec="seconds")
+        self._hold_owned = True  # our value wins this write
+        self._save()
 
     def resume_auto_digest(self) -> None:
-        self.auto_digest_suspended = False
-
-    def start_weekly_clock(self, now: datetime) -> None:
-        """Start the weekly cadence WITHOUT consuming anything.
-
-        Declining the onboarding offer ("Later") must not mean "pay ~30s
-        later": with imported notes and a never-ran clock, is_due() would
-        fire on the next tick. Setting the clock (only when never set) makes
-        the first automatic digest arrive on the weekly rhythm; the notes
-        stay unseen and enter it via the standard migration path.
-
-        Sync-protocol participant like every writer: merges the disk state
-        first and adopts a clock another process set mid-dialog — a blind
-        save here would clobber a CLI run's consumed keys.
-        """
         self._merge_disk_seen()
+        self.auto_digest_suspended = False
+        self.auto_digest_hold_until = None
+        self._hold_owned = True  # releasing is authoritative too
+        self._save()
+        # Ownership ends with the release: a later hold set by ANOTHER
+        # process must be adopted again, not overwritten by our stale None.
+        self._hold_owned = False
+
+    def auto_digest_on_hold(self, now: datetime) -> bool:
+        """True while a first-session hold is active (this process or another).
+
+        Reads the persisted deadline so a separate daemon process sees the
+        hold too; an expired deadline is ignored (and lazily cleared).
+        """
+        if self.auto_digest_suspended:
+            return True
         data = self._read_disk_state() or {}
-        disk_at = data.get("last_digest_at")
-        if self.last_digest_at is None and isinstance(disk_at, str) and disk_at:
-            self.last_digest_at = disk_at  # another process already ran
-            return
+        until = data.get("auto_digest_hold_until")
+        if not isinstance(until, str) or not until:
+            return False
+        try:
+            deadline = datetime.fromisoformat(until)
+        except ValueError:
+            return False
+        return now < deadline
+
+    def settle_after_import(self, now: datetime) -> None:
+        """Make the post-import state CHEAP and consistent, immediately.
+
+        Called the moment the first-session import finishes — before the
+        offer dialog, before anything can fail. The import bumps the
+        new-notes counter per file and a fresh install has no clock, so
+        every later exit path (transient API error, crash, "Later", no key,
+        low potential) would otherwise leave ``is_due()`` true and the next
+        tick would pay for a digest the user never approved.
+
+        Starts the weekly clock (only if never started) and clamps the
+        counter below the pattern trigger — the same rule
+        :meth:`mark_ran` applies to a backfill backlog, so a bulk import
+        cannot escalate to the every-2-days cadence either.
+        """
+        # refresh_from_disk (not a hand-rolled read): it adopts a NEWER clock
+        # as well as the seen-set, so this save cannot roll the cadence back
+        # to a stale in-memory timestamp.
+        self.refresh_from_disk()
         if self.last_digest_at is None:
             self.last_digest_at = now.isoformat(timespec="seconds")
-            self._save()
+        self.new_notes = min(self.new_notes, config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
+        self._save()
+
+    def _adopt_disk_hold(self, data: Optional[dict] = None) -> None:
+        """Take the on-disk hold unless THIS process owns it.
+
+        The first-session hold belongs to whoever set it: a writer that
+        doesn't own it must carry the disk value through its own save, or an
+        unrelated write (a CLI's unsee after a transcription, an archive
+        reset) would either clear a live hold — letting that process pay for
+        a weekly digest mid-onboarding — or write a released one back and
+        freeze the cadence for the rest of the TTL.
+        """
+        if self._hold_owned:
+            return
+        if data is None:
+            data = self._read_disk_state() or {}
+        hold = data.get("auto_digest_hold_until")
+        self.auto_digest_hold_until = hold if isinstance(hold, str) else None
 
     def _read_disk_state(self) -> Optional[dict]:
         """Parse the state file, or None. The ONE place the schema is read."""
@@ -123,6 +192,8 @@ class DigestScheduler:
             self.seen_note_keys = set(raw_seen) if raw_seen is not None else None
             self.seen_epoch = int(data.get("seen_epoch", 0) or 0)
             self.unseen_tombstones = set(data.get("unseen_tombstones", []) or [])
+            hold = data.get("auto_digest_hold_until")
+            self.auto_digest_hold_until = hold if isinstance(hold, str) else None
             # Persisted pending (backfill leftover): without it, a restart
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
@@ -166,6 +237,12 @@ class DigestScheduler:
                 # after its own merge, and only the transcribing daemon ever
                 # un-sees — there is a single tombstone producer.
                 self.unseen_tombstones = disk_tombstones
+            # The first-session hold belongs to whoever set it: a writer that
+            # doesn't own it adopts the disk value, so an unrelated save (a
+            # CLI's unsee) can neither clear a live hold — letting that
+            # process pay for a weekly digest mid-onboarding — nor write a
+            # released one back and freeze the cadence for the whole TTL.
+            self._adopt_disk_hold(data)
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
             # Runs even with no seen-set on disk (pre-migration): the
@@ -204,6 +281,7 @@ class DigestScheduler:
                 "new_notes": int(self.new_notes),
                 "seen_epoch": int(self.seen_epoch),
                 "unseen_tombstones": sorted(self.unseen_tombstones),
+                "auto_digest_hold_until": self.auto_digest_hold_until,
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -271,6 +349,9 @@ class DigestScheduler:
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
         self.unseen_tombstones = set()  # everything is unseen now anyway
+        # Forget the SEEN-SET, not someone else's first-session hold: this is
+        # the one writer that deliberately skips _merge_disk_seen.
+        self._adopt_disk_hold(data)
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
@@ -757,7 +838,7 @@ def _synthesize_and_write(
     return path, "written"
 
 
-def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
+def run_onboarding_digest(transcriber: object = None) -> tuple:
     """The first-session digest: the activation moment, policy separate from
     the weekly path.
 
@@ -768,8 +849,18 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
     once on the next connectable window. Afterwards the WHOLE corpus is
     marked seen with ``pending=0`` — byte-identical semantics to a fresh
     install (no paid auto-drain of the archive) and the weekly clock starts
-    now. Returns the digest path, or None when both windows came up empty
-    (or on error). Never raises.
+    now.
+
+    Returns ``(path, outcome)`` — the caller MUST distinguish these, because
+    telling a user "your notes have no strong connections" when nothing was
+    analyzed is a false verdict at the one moment that decides activation:
+      * ``"written"`` — digest on disk (``path`` set),
+      * ``"empty"`` — ran and paid, nothing survived verification,
+      * ``"error"`` — synthesis/verification failed (nothing consumed),
+      * ``"billing"`` — no credits / AI disabled (nothing attempted),
+      * ``"busy"`` — another digest run holds the lock (nothing attempted),
+      * ``"unavailable"`` — no API key / non-Claude provider.
+    Never raises.
     """
     from src.connections.dismissals import DismissalStore
     from src.connections.synthesis import ConnectionSynthesizer
@@ -777,17 +868,17 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
     from src.summarizer import detect_language
 
     if not config.LLM_API_KEY or config.LLM_PROVIDER != "claude":
-        return None
+        return None, "unavailable"
     if getattr(transcriber, "_ai_disabled_reason", None):
         # Billing already tripped (e.g. during the import's summaries) —
         # don't burn another paid call that will fail the same way.
-        return None
+        return None, "billing"
     scheduler = get_scheduler()
     now = datetime.now()
     lock_fd = _acquire_digest_lock()
     if lock_fd is None:
         logger.info("onboarding digest: another digest run holds the lock")
-        return None
+        return None, "busy"
     try:
         vault = Path(config.TRANSCRIBE_DIR)
         dismissals = DismissalStore(vault).load()
@@ -803,6 +894,7 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
         corpus_keys: Set[str] = set()
         final_path: Optional[Path] = None
         pre_run_notes = scheduler.new_notes
+        outcome = "empty"  # no material at all reads as "nothing to connect"
         for attempt in range(1, ONBOARDING_MAX_WINDOWS + 1):
             candidates = _assemble_for_digest(
                 scheduler,
@@ -842,8 +934,16 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
                 set_ready=False,
             )
             if status == "error":
-                break  # nothing consumed; leave state for the weekly path
+                # Nothing consumed. Distinguish a billing stop (the user must
+                # top up) from a transient failure (retry makes sense).
+                outcome = (
+                    "billing"
+                    if getattr(transcriber, "_ai_disabled_reason", None)
+                    else "error"
+                )
+                break
             consumed |= candidates.window_keys
+            outcome = status  # "written" | "empty"
             if status == "written":
                 final_path = path
                 break
@@ -863,7 +963,7 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
             )
             if late:
                 scheduler.register_new_notes(late)
-        return final_path
+        return final_path, outcome
     finally:
         try:
             from src.connections.candidate_assembly import clear_tokenize_cache
@@ -890,8 +990,10 @@ def run_digest_if_due(
 
     scheduler = get_scheduler()
     now = datetime.now()
-    if not force and scheduler.auto_digest_suspended:
-        # First-session flow in progress: the offer dialog owns the next run.
+    if not force and scheduler.auto_digest_on_hold(now):
+        # First-session flow in progress (this process or another): the offer
+        # dialog owns the next run. Logged so a stuck hold is diagnosable.
+        logger.debug("digest: automatic path on first-session hold")
         return None
     if not force and not scheduler.is_due(now):
         return None

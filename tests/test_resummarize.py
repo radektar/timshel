@@ -25,7 +25,6 @@ _SPEC.loader.exec_module(rsv)
 from src.summarizer import is_fallback_summary  # noqa: E402
 from src.vocabulary import find_alias_misses  # noqa: E402
 
-
 _NOTE = (
     '---\ntitle: "Strategia TekTutoreski"\ndate: 2026-06-01\n'
     "fingerprint: sha256:abc\nversion: 1\ntags: [transcription]\n---\n\n"
@@ -145,7 +144,9 @@ class TestGuards:
         assert not is_fallback_summary("## Podsumowanie\n\nPrawdziwa treść.")
         # A real action item that merely mentions reviewing the transcript must
         # NOT be misread as a fallback (would discard a good alias-fix retry).
-        assert not is_fallback_summary("## Lista działań\n- Przejrzeć transkrypcję ręcznie")
+        assert not is_fallback_summary(
+            "## Lista działań\n- Przejrzeć transkrypcję ręcznie"
+        )
 
     def test_discovery_ignores_subfolders(self, tmp_path):
         (tmp_path / "a.md").write_text("x", encoding="utf-8")

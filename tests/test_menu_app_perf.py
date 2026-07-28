@@ -93,16 +93,33 @@ def test_update_icon_guard_skips_repeat_status(monkeypatch):
 
     # rumps stores the icon via a property; emulate with a plain attribute that
     # records every assignment.
-    monkeypatch.setattr(type(app), "icon", property(
-        lambda self: getattr(self, "_icon_val", None),
-        lambda self, v: (icon_sets.append(v), setattr(self, "_icon_val", v)),
-    ), raising=False)
-    monkeypatch.setattr(type(app), "title", property(
-        lambda self: None, lambda self, v: None,
-    ), raising=False)
-    monkeypatch.setattr(type(app), "template", property(
-        lambda self: None, lambda self, v: None,
-    ), raising=False)
+    monkeypatch.setattr(
+        type(app),
+        "icon",
+        property(
+            lambda self: getattr(self, "_icon_val", None),
+            lambda self, v: (icon_sets.append(v), setattr(self, "_icon_val", v)),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        type(app),
+        "title",
+        property(
+            lambda self: None,
+            lambda self, v: None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        type(app),
+        "template",
+        property(
+            lambda self: None,
+            lambda self, v: None,
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(app, "_apply_status_icon", lambda s: None)
 
     app._update_icon(AppStatus.IDLE)

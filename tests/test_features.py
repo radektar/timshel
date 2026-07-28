@@ -1,6 +1,7 @@
 import pytest
 from src.config.features import FeatureTier, FeatureFlags
 
+
 class TestFeatureFlags:
     def test_free_tier_defaults(self):
         """FREE tier should only have basic features enabled."""

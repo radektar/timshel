@@ -22,12 +22,14 @@ from src.transcriber import Transcriber  # noqa: E402
 
 
 def _iter_sources(args):
+    from src.ingest import iter_importable
+
     for arg in args:
         p = Path(arg).expanduser()
         if p.is_dir():
-            for f in sorted(p.rglob("*")):
-                if f.is_file() and f.suffix.lower() in SUPPORTED_SUFFIXES:
-                    yield f
+            # Shared discovery: same suffixes, hidden-dir and vault exclusions
+            # (and bound) the wizard/first-session import use.
+            yield from iter_importable(p)
         elif p.is_file():
             yield p
         else:
@@ -41,8 +43,10 @@ def main(argv) -> int:
 
     sources = list(_iter_sources(argv))
     if not sources:
-        print("No importable files found (supported: "
-              f"{', '.join(sorted(SUPPORTED_SUFFIXES))}).")
+        print(
+            "No importable files found (supported: "
+            f"{', '.join(sorted(SUPPORTED_SUFFIXES))})."
+        )
         return 1
 
     transcriber = Transcriber(config=config)

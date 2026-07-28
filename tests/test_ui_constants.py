@@ -18,9 +18,7 @@ class TestUIConstants:
         """APP_VERSION follows SemVer 2.0.0, incl. optional prerelease/build metadata."""
         import re
 
-        semver = re.compile(
-            r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
-        )
+        semver = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
         assert semver.match(APP_VERSION), (
             f"APP_VERSION '{APP_VERSION}' must match SemVer 2.0.0 "
             "(MAJOR.MINOR.PATCH with optional -prerelease/+build)"
@@ -66,7 +64,7 @@ class TestUIConstants:
             "folder_picker_default",
             "folder_picker_back",
         ]
-        
+
         for key in required_keys:
             assert key in TEXTS, f"TEXTS should contain key '{key}'"
             assert TEXTS[key], f"TEXTS['{key}'] should not be empty"
@@ -78,10 +76,12 @@ class TestUIConstants:
 
     def test_about_message_contains_version(self):
         """About message contains APP_VERSION."""
-        assert APP_VERSION in TEXTS["about_message"], "About message should contain version"
+        assert (
+            APP_VERSION in TEXTS["about_message"]
+        ), "About message should contain version"
 
     def test_about_message_contains_app_name(self):
         """About message contains APP_NAME."""
-        assert APP_NAME in TEXTS["about_message"], "About message should contain app name"
-
-
+        assert (
+            APP_NAME in TEXTS["about_message"]
+        ), "About message should contain app name"

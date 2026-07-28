@@ -197,7 +197,9 @@ def test_find_matching_volumes_returns_deterministic_order(tmp_path):
     _make_volume(tmp_path, "ALPHA")
     _make_volume(tmp_path, "MIKE")
 
-    settings = UserSettings(watch_mode="specific", watched_volumes=["ZETA", "ALPHA", "MIKE"])
+    settings = UserSettings(
+        watch_mode="specific", watched_volumes=["ZETA", "ALPHA", "MIKE"]
+    )
 
     with _stub_uuid("UUID-X"):
         result = find_matching_volumes(settings, volumes_root=tmp_path)

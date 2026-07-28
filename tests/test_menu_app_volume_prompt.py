@@ -40,9 +40,7 @@ def test_prompt_timeout_returns_none_decision(monkeypatch):
 def test_late_answer_is_recorded(monkeypatch, tmp_path):
     """A 'Yes' clicked after the timeout must still be persisted."""
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(
-        UserSettings, "config_path", staticmethod(lambda: config_file)
-    )
+    monkeypatch.setattr(UserSettings, "config_path", staticmethod(lambda: config_file))
 
     captured = {}
     monkeypatch.setattr(
@@ -67,9 +65,7 @@ def test_answer_before_timeout_returned_not_late_recorded(monkeypatch, tmp_path)
     """The normal path: dialog answered in time → decision returned inline,
     _record_late_decision not involved."""
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(
-        UserSettings, "config_path", staticmethod(lambda: config_file)
-    )
+    monkeypatch.setattr(UserSettings, "config_path", staticmethod(lambda: config_file))
 
     # Run the closure IMMEDIATELY (as the main thread would).
     monkeypatch.setattr("src.menu_app._run_on_main_thread", lambda fn: fn())

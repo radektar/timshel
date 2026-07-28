@@ -90,9 +90,10 @@ def test_no_declared_price(name: str):
                 continue  # infra cost line, not a product price
             if not any(m in low for m in UNDECIDED_MARKERS):
                 offenders.append(line.strip())
-    assert offenders == [], (
-        f"{name}: price stated as if decided (must be TBD/considered):\n"
-        + "\n".join(offenders)
+    assert (
+        offenders == []
+    ), f"{name}: price stated as if decided (must be TBD/considered):\n" + "\n".join(
+        offenders
     )
 
 
@@ -138,7 +139,9 @@ def test_pricing_options_match_across_docs():
     for token in ("$5–$12/mo", "$25/mo", "$79 lifetime"):
         t = token.lower()
         assert t in backlog, f"BACKLOG.md missing pricing option '{token}'"
-        assert t in plan, f"PUBLIC-DISTRIBUTION-PLAN.md missing pricing option '{token}'"
+        assert (
+            t in plan
+        ), f"PUBLIC-DISTRIBUTION-PLAN.md missing pricing option '{token}'"
 
 
 def test_byok_explained_not_just_named():

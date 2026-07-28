@@ -109,7 +109,8 @@ def test_continue_in_llm_dispatches_selection_and_logs(log_path, monkeypatch):
 def test_handoff_without_selection_is_noop(log_path, monkeypatch):
     called = {"n": 0}
     monkeypatch.setattr(
-        ho, "dispatch",
+        ho,
+        "dispatch",
         lambda *a, **k: called.__setitem__("n", called["n"] + 1)
         or ho.HandoffResult(True, "open", "x"),
     )
@@ -120,7 +121,9 @@ def test_handoff_without_selection_is_noop(log_path, monkeypatch):
 
 
 def test_calendar_handoff_logs_decide(log_path, monkeypatch):
-    monkeypatch.setattr(ho, "dispatch", lambda *a, **k: ho.HandoffResult(True, "open", "ok"))
+    monkeypatch.setattr(
+        ho, "dispatch", lambda *a, **k: ho.HandoffResult(True, "open", "ok")
+    )
     ctrl = _ctrl()
     ctrl.directionClicked_(_Sender(0))
     ctrl.calendarClicked_(None)
@@ -137,7 +140,9 @@ def test_handoff_toast_marshalled_back_to_main(log_path, monkeypatch):
     )
     ctrl = _ctrl()
     shown = []
-    monkeypatch.setattr(ctrl, "_show_toast", lambda msg: shown.append(msg), raising=False)
+    monkeypatch.setattr(
+        ctrl, "_show_toast", lambda msg: shown.append(msg), raising=False
+    )
 
     ctrl.directionClicked_(_Sender(0))
     ctrl.copyClicked_(None)
@@ -162,7 +167,9 @@ def test_switch_llm_cycles_and_persists(monkeypatch):
         def save(self_inner):
             saved["tool"] = self_inner.ai_handoff_tool
 
-    monkeypatch.setattr("src.config.settings.UserSettings.load", classmethod(lambda cls: _S()))
+    monkeypatch.setattr(
+        "src.config.settings.UserSettings.load", classmethod(lambda cls: _S())
+    )
 
     ctrl = _ctrl()
 

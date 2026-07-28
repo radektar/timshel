@@ -29,7 +29,7 @@ class TestStateManager:
         assert success is True
         assert temp_state_file.exists()
 
-        with open(temp_state_file, 'r') as f:
+        with open(temp_state_file, "r") as f:
             data = json.load(f)
             assert "last_sync" in data
             last_sync = datetime.fromisoformat(data["last_sync"])
@@ -44,7 +44,7 @@ class TestStateManager:
         success = reset_state(target_date)
         assert success is True
 
-        with open(temp_state_file, 'r') as f:
+        with open(temp_state_file, "r") as f:
             data = json.load(f)
             last_sync = datetime.fromisoformat(data["last_sync"])
             assert last_sync == target_date
@@ -53,7 +53,7 @@ class TestStateManager:
         """Test reset_state creates backup of existing file."""
         # Create initial state file
         initial_date = datetime(2025, 1, 1)
-        with open(temp_state_file, 'w') as f:
+        with open(temp_state_file, "w") as f:
             json.dump({"last_sync": initial_date.isoformat()}, f)
 
         # Reset to new date
@@ -65,7 +65,7 @@ class TestStateManager:
         assert backup_file.exists()
 
         # Check backup contains original date
-        with open(backup_file, 'r') as f:
+        with open(backup_file, "r") as f:
             backup_data = json.load(f)
             backup_date = datetime.fromisoformat(backup_data["last_sync"])
             assert backup_date == initial_date
@@ -73,7 +73,7 @@ class TestStateManager:
     def test_get_last_sync_time_existing_file(self, temp_state_file):
         """Test get_last_sync_time with existing state file."""
         target_date = datetime(2025, 1, 15, 12, 0, 0)
-        with open(temp_state_file, 'w') as f:
+        with open(temp_state_file, "w") as f:
             json.dump({"last_sync": target_date.isoformat()}, f)
 
         last_sync = get_last_sync_time()
@@ -93,7 +93,7 @@ class TestStateManager:
     def test_get_last_sync_time_corrupted_file(self, temp_state_file):
         """Test get_last_sync_time with corrupted state file."""
         # Write invalid JSON
-        with open(temp_state_file, 'w') as f:
+        with open(temp_state_file, "w") as f:
             f.write("invalid json{")
 
         last_sync = get_last_sync_time()
@@ -107,7 +107,7 @@ class TestStateManager:
         save_sync_time()
         assert temp_state_file.exists()
 
-        with open(temp_state_file, 'r') as f:
+        with open(temp_state_file, "r") as f:
             data = json.load(f)
             assert "last_sync" in data
             saved_time = datetime.fromisoformat(data["last_sync"])
@@ -119,15 +119,15 @@ class TestStateManager:
     def test_reset_state_timezone_aware(self, temp_state_file):
         """Test reset_state handles timezone-aware datetime."""
         from datetime import timezone
+
         target_date = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         success = reset_state(target_date)
         assert success is True
 
-        with open(temp_state_file, 'r') as f:
+        with open(temp_state_file, "r") as f:
             data = json.load(f)
             last_sync = datetime.fromisoformat(data["last_sync"])
             # Should be timezone-naive
             assert last_sync.tzinfo is None
             # But date/time should match (ignoring timezone)
             assert last_sync.replace(tzinfo=timezone.utc) == target_date
-

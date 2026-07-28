@@ -67,7 +67,9 @@ def test_apply_basic_settings_rejects_unknown_language(tmp_path):
         )
 
 
-def test_select_folder_with_warning_returns_selected_path_and_triggers_icloud_warning(tmp_path):
+def test_select_folder_with_warning_returns_selected_path_and_triggers_icloud_warning(
+    tmp_path,
+):
     warnings = []
 
     def fake_choose(**_kwargs):

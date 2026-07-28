@@ -1903,13 +1903,20 @@ class TimshelMenuApp(rumps.App):
                 )
                 return
 
-            from src.ingest import SUPPORTED_SUFFIXES
+            from src.ingest import is_vault_path, list_importable
 
-            paths = sorted(
-                p
-                for p in folder.rglob("*")
-                if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
-            )
+            if is_vault_path(folder):
+                # Belt and braces: the wizard blocks this, but a stale
+                # pending_import_dir (vault moved in Settings after the pick)
+                # must never re-ingest Timshel's own notes and digests.
+                logger.warning("first session: refusing to import the vault itself")
+                send_notification(
+                    "Timshel",
+                    "Import skipped",
+                    "That folder is where Timshel stores its own notes.",
+                )
+                return
+            paths = list_importable(folder)
             if not paths:
                 send_notification(
                     "Timshel", "Nothing to import", "No txt/md/vtt files found."
@@ -1961,6 +1968,15 @@ class TimshelMenuApp(rumps.App):
                 failed,
                 len(paths),
             )
+            # Make the state cheap and consistent NOW, while nothing can fail:
+            # the import bumped the trigger counter per file and a fresh
+            # install has no clock, so without this every later exit path
+            # (API error, crash, "Later", no key, low potential) would leave
+            # is_due() true and the next tick would pay for a digest the user
+            # never approved.
+            from datetime import datetime as _dt
+
+            scheduler.settle_after_import(_dt.now())
 
             # First-digest gates ($0): no material, or no AI configured —
             # the key screen was the hook; nothing more to do here.
@@ -2018,12 +2034,10 @@ class TimshelMenuApp(rumps.App):
                     scheduler.resume_auto_digest()
                     return
                 if clicked != 1:
-                    # Later: start the weekly clock WITHOUT consuming — the
-                    # notes enter the first weekly digest on the normal
-                    # rhythm instead of a paid run firing ~30s after "Later".
-                    from datetime import datetime as _dt
-
-                    scheduler.start_weekly_clock(_dt.now())
+                    # Later: the clock was already started (and the counter
+                    # clamped) by settle_after_import, so the notes enter the
+                    # first digest on the weekly rhythm — no paid run fires
+                    # seconds after declining.
                     scheduler.resume_auto_digest()
                     return
                 import threading
@@ -2063,10 +2077,10 @@ class TimshelMenuApp(rumps.App):
         )
         win.show()
         try:
-            path = run_onboarding_digest(inner)
+            path, outcome = run_onboarding_digest(inner)
         except Exception as exc:  # noqa: BLE001
             logger.error("first digest failed: %s", exc, exc_info=True)
-            path = None
+            path, outcome = None, "error"
         finally:
             win.close_after(1)
             scheduler.resume_auto_digest()
@@ -2075,30 +2089,39 @@ class TimshelMenuApp(rumps.App):
             _run_on_main_thread(lambda: self._open_insights(None))
             return
 
-        if getattr(inner, "_ai_disabled_reason", None):
-            # A billing failure is NOT "no connections" — say what happened.
-            def _billing_on_main() -> None:
-                rumps.alert(
-                    "Timshel",
-                    "The analysis stopped: your Claude account has no "
-                    "credits. Top up at console.anthropic.com and use "
-                    "'Generate digest now' from the menu.",
-                    ok="OK",
-                )
+        # Never claim "your notes have no connections" unless the run
+        # actually finished and found none — at the activation moment a
+        # false verdict costs the user's trust in the product.
+        messages = {
+            "empty": (
+                "No strong connections in these notes yet — that's normal "
+                "for a first pass. Timshel keeps looking as you record."
+            ),
+            "billing": (
+                "The analysis stopped: your Claude account has no credits. "
+                "Top up at console.anthropic.com, then use 'Generate digest "
+                "now' from the menu."
+            ),
+            "busy": (
+                "Timshel was busy with another analysis. Try 'Generate "
+                "digest now' from the menu in a moment."
+            ),
+            "unavailable": (
+                "No Claude API key is configured, so the analysis didn't "
+                "run. Add one in Settings, then use 'Generate digest now'."
+            ),
+        }
+        message = messages.get(
+            outcome,
+            "The analysis couldn't finish (connection or service problem). "
+            "Your notes are safe — try 'Generate digest now' from the menu.",
+        )
+        logger.info("first digest outcome: %s", outcome)
 
-            _run_on_main_thread(_billing_on_main)
-            return
+        def _outcome_on_main() -> None:
+            rumps.alert("Timshel", message, ok="OK")
 
-        def _empty_on_main() -> None:
-            rumps.alert(
-                "Timshel",
-                "No strong connections in these notes yet — that's "
-                "normal for a first pass. Timshel keeps looking as you "
-                "record.",
-                ok="OK",
-            )
-
-        _run_on_main_thread(_empty_on_main)
+        _run_on_main_thread(_outcome_on_main)
 
     def _reset_memory(self, _):
         """Reset transcription memory to a specific date."""

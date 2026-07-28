@@ -31,6 +31,6 @@ def test_model_checksums_use_supported_prefix_format() -> None:
         artifact = f"ggml-{_canonical(model)}.bin"
         checksum = CHECKSUMS[artifact]
         assert isinstance(checksum, str)
-        assert (
-            sha1_re.match(checksum) or sha256_re.match(checksum)
+        assert sha1_re.match(checksum) or sha256_re.match(
+            checksum
         ), f"Invalid checksum format for {artifact}: {checksum}"

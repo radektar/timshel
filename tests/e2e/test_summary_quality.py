@@ -212,7 +212,9 @@ def test_english_transcript_yields_english_summary(summarizer, judge_client):
         f"{result.get('summary', '')}"
     )
     score = _run_or_skip(lambda: _judge_score(judge_client, question))
-    assert score >= 4, f"English transcript did not yield an English summary ({score}/5)"
+    assert (
+        score >= 4
+    ), f"English transcript did not yield an English summary ({score}/5)"
 
 
 @requires_claude

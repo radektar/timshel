@@ -41,4 +41,3 @@ def test_download_async_calls_callbacks():
     assert done.wait(timeout=2)
     assert downloader.download_called is True
     assert progress and progress[-1][1] == 1.0
-

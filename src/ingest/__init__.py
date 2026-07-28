@@ -11,6 +11,15 @@ emit). PDF and platform-specific JSON are deferred (see Docs/future/ingest-plan.
 """
 
 from src.ingest.adapters import ImportedDoc, SUPPORTED_SUFFIXES, parse
+from src.ingest.discovery import is_vault_path, iter_importable, list_importable
 from src.ingest.fingerprint import text_fingerprint
 
-__all__ = ["ImportedDoc", "SUPPORTED_SUFFIXES", "parse", "text_fingerprint"]
+__all__ = [
+    "ImportedDoc",
+    "SUPPORTED_SUFFIXES",
+    "is_vault_path",
+    "iter_importable",
+    "list_importable",
+    "parse",
+    "text_fingerprint",
+]

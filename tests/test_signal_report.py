@@ -12,7 +12,15 @@ from src.connections import signal_report as sr
 from src.connections.signature import connection_signature
 
 
-def _ev(target, *, sig="s1", kind=None, conn_type="shared-thread", tool="", ts="2026-06-27T10:00:00"):
+def _ev(
+    target,
+    *,
+    sig="s1",
+    kind=None,
+    conn_type="shared-thread",
+    tool="",
+    ts="2026-06-27T10:00:00",
+):
     from src.connections.validation_signal import kind_for_target
 
     return {
@@ -160,7 +168,9 @@ def test_render_no_data_is_friendly():
 
 
 def test_render_shows_rate_and_kill_signal():
-    engaged_no_action = sr.render(sr.summarize([_ev("save", sig="a"), _ev("none", sig="b")]))
+    engaged_no_action = sr.render(
+        sr.summarize([_ev("save", sig="a"), _ev("none", sig="b")])
+    )
     assert "kill-signal" in engaged_no_action
     alive = sr.render(sr.summarize([_ev("llm", sig="a")]))
     assert "Brama żyje" in alive

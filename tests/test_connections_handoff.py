@@ -46,7 +46,9 @@ def test_llm_url_none_when_too_long():
 
 
 def test_ics_text_is_a_tomorrow_morning_event():
-    txt = ho.ics_text("Rozwiń pomysł", "ciało, z; przecinkiem", now=datetime(2026, 6, 27, 10, 0, 0))
+    txt = ho.ics_text(
+        "Rozwiń pomysł", "ciało, z; przecinkiem", now=datetime(2026, 6, 27, 10, 0, 0)
+    )
     assert "BEGIN:VEVENT" in txt and "END:VEVENT" in txt
     assert "DTSTART:20260628T090000" in txt  # tomorrow 09:00
     assert "SUMMARY:Rozwiń pomysł" in txt
@@ -64,7 +66,10 @@ def test_reminders_script_splices_multiline_body():
     # inside a quoted literal, so it must be spliced via `linefeed` or the script
     # fails to compile and the Task handoff silently never works.
     s = ho.reminders_script("t", "line one\nline two")
-    assert "\n" not in s.split("make new reminder", 1)[1].split("body:", 1)[1].split("}", 1)[0]
+    assert (
+        "\n"
+        not in s.split("make new reminder", 1)[1].split("body:", 1)[1].split("}", 1)[0]
+    )
     assert '" & linefeed & "' in s
 
 
@@ -82,7 +87,9 @@ def _stub(monkeypatch):
 
 def test_dispatch_llm_claude_opens_prefill(monkeypatch):
     calls = _stub(monkeypatch)
-    r = ho.dispatch(ho.LLM, label="L", rationale="r", evidence=EV, directions=DIRS, tool="claude")
+    r = ho.dispatch(
+        ho.LLM, label="L", rationale="r", evidence=EV, directions=DIRS, tool="claude"
+    )
     assert r.ok and r.mode == "open"
     assert r.toast == "Wysłano do Claude"
     assert calls["open"].startswith("https://claude.ai/new?q=")
@@ -100,7 +107,9 @@ def test_dispatch_llm_falls_back_to_clipboard_when_payload_too_long(monkeypatch)
 
 def test_dispatch_calendar_stages_ics(monkeypatch):
     calls = _stub(monkeypatch)
-    r = ho.dispatch(ho.CALENDAR, rationale="r", directions=DIRS, now=datetime(2026, 6, 27, 10, 0, 0))
+    r = ho.dispatch(
+        ho.CALENDAR, rationale="r", directions=DIRS, now=datetime(2026, 6, 27, 10, 0, 0)
+    )
     assert r.ok and "Kalendarz" in r.toast
     assert "BEGIN:VCALENDAR" in calls["ics"]
 

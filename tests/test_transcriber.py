@@ -472,9 +472,7 @@ def test_txt_adoption_rejected_without_ownership(transcriber, tmp_path, monkeypa
         return fresh_txt
 
     transcriber._run_macwhisper = MagicMock(side_effect=fake_whisper)
-    transcriber._postprocess_transcript = MagicMock(
-        return_value=output_dir / "note.md"
-    )
+    transcriber._postprocess_transcript = MagicMock(return_value=output_dir / "note.md")
     transcriber._index_completed_transcription = MagicMock()
 
     result = transcriber.transcribe_file(audio_file)
@@ -1214,9 +1212,7 @@ def test_streaming_timeout_fires_on_partial_line_without_newline(
 
     proc = _FakePipeProc("whisper_init: load", hold_open=True)  # no \n, no EOF
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(
-        transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.5, raising=False
-    )
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.5, raising=False)
 
     started = time.time()
     with pytest.raises(subprocess.TimeoutExpired):

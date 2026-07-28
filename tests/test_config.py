@@ -21,13 +21,13 @@ def test_config_initialization():
 def test_config_paths():
     """Test that Config creates proper paths."""
     config = Config()
-    
+
     assert isinstance(config.TRANSCRIBE_DIR, Path)
     assert isinstance(config.LOG_DIR, Path)
     assert isinstance(config.LOCAL_RECORDINGS_DIR, Path)
     assert isinstance(config.STATE_FILE, Path)
     assert isinstance(config.LOG_FILE, Path)
-    
+
     # Check paths contain expected components
     assert any(
         marker in str(config.TRANSCRIBE_DIR)
@@ -43,17 +43,25 @@ def test_config_paths():
 def test_config_audio_extensions():
     """Test that audio extensions are properly set."""
     config = Config()
-    
+
     # Should include all supported audio formats (incl. Olympus DSS/DS2).
     assert config.AUDIO_EXTENSIONS == {
-        ".mp3", ".wav", ".m4a", ".wma", ".flac", ".aac", ".ogg", ".dss", ".ds2"
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".wma",
+        ".flac",
+        ".aac",
+        ".ogg",
+        ".dss",
+        ".ds2",
     }
 
 
 def test_config_whisper_cpp_paths():
     """Test that whisper.cpp paths are set."""
     config = Config()
-    
+
     assert config.WHISPER_CPP_PATH is not None
     assert isinstance(config.WHISPER_CPP_PATH, Path)
     assert config.WHISPER_CPP_MODELS_DIR is not None
@@ -73,21 +81,24 @@ def test_config_uses_timshel_runtime_paths(tmp_path, monkeypatch):
     config = Config()
 
     assert config.WHISPER_CPP_MODELS_DIR == timshel_models
-    assert str(config.FFMPEG_PATH).endswith("/ffmpeg") or config.FFMPEG_PATH.name == "ffmpeg"
+    assert (
+        str(config.FFMPEG_PATH).endswith("/ffmpeg")
+        or config.FFMPEG_PATH.name == "ffmpeg"
+    )
 
 
 def test_config_tagging_defaults(monkeypatch):
     """Tagging configuration should have sane defaults."""
     from src.config.settings import UserSettings
-    
+
     # Mock UserSettings.load() to return settings with AI enabled
     mock_settings = UserSettings()
     mock_settings.enable_ai_summaries = True
     mock_settings.ai_api_key = "dummy-key"
-    
+
     # Patch UserSettings.load() to return our mock settings
     monkeypatch.setattr(UserSettings, "load", classmethod(lambda cls: mock_settings))
-    
+
     cfg = Config()
 
     assert cfg.ENABLE_LLM_TAGGING is True
@@ -100,21 +111,22 @@ def test_config_tagging_defaults(monkeypatch):
 def test_config_disables_tagging_when_summarization_off(monkeypatch):
     """Tagging should be disabled automatically if summarization is off."""
     from src.config.settings import UserSettings
-    
+
     # Remove API key from environment
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    
+
     # Mock UserSettings.load() to return settings with AI disabled and no API key
     # Config now uses UserSettings.load() instead of perform_migration_if_needed()
     mock_settings = UserSettings()
     mock_settings.enable_ai_summaries = False
     mock_settings.ai_api_key = None
-    
+
     # Patch UserSettings.load() to return our mock settings
     monkeypatch.setattr(UserSettings, "load", classmethod(lambda cls: mock_settings))
-    
+
     from src.config import Config
+
     cfg = Config()
 
     # Even if API key exists in environment, summarization should be False
@@ -126,26 +138,21 @@ def test_config_disables_tagging_when_summarization_off(monkeypatch):
 def test_config_ensure_directories(tmp_path, monkeypatch):
     """Test that ensure_directories creates needed directories."""
     config = Config()
-    
+
     # Override paths to use temp directory
     config.TRANSCRIBE_DIR = tmp_path / "transcriptions"
     config.LOG_DIR = tmp_path / "logs"
     config.LOCAL_RECORDINGS_DIR = tmp_path / "recordings"
-    
+
     # Ensure they don't exist yet
     assert not config.TRANSCRIBE_DIR.exists()
     assert not config.LOG_DIR.exists()
     assert not config.LOCAL_RECORDINGS_DIR.exists()
-    
+
     # Call ensure_directories
     config.ensure_directories()
-    
+
     # Check they were created
     assert config.TRANSCRIBE_DIR.exists()
     assert config.LOG_DIR.exists()
     assert config.LOCAL_RECORDINGS_DIR.exists()
-
-
-
-
-

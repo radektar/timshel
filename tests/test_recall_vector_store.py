@@ -26,8 +26,13 @@ def _unit(vec):
 
 def _chunk(note_id, seq, text):
     return Chunk(
-        note_id=note_id, seq=seq, text=text, parent_text=text,
-        char_start=seq * 10, char_end=seq * 10 + len(text), version_hash="v1",
+        note_id=note_id,
+        seq=seq,
+        text=text,
+        parent_text=text,
+        char_start=seq * 10,
+        char_end=seq * 10 + len(text),
+        version_hash="v1",
     )
 
 
@@ -53,8 +58,11 @@ def test_upsert_and_knn_returns_closest_first(store):
 
 def test_upsert_replaces_not_appends(store):
     store.upsert_note("A", [_chunk("A", 0, "one")], [_unit([1, 0, 0, 0])])
-    store.upsert_note("A", [_chunk("A", 0, "two"), _chunk("A", 1, "three")],
-                      [_unit([1, 0, 0, 0]), _unit([0, 1, 0, 0])])
+    store.upsert_note(
+        "A",
+        [_chunk("A", 0, "two"), _chunk("A", 1, "three")],
+        [_unit([1, 0, 0, 0]), _unit([0, 1, 0, 0])],
+    )
     assert store.count() == 2
     assert {h.text for h in store.all_chunks()} == {"two", "three"}
 

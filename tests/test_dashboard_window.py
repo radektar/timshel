@@ -63,9 +63,13 @@ from src.connections.recall.retriever import Result  # noqa: E402
 def _fake_results(n=3):
     return [
         Result(
-            note_id=f"26-06-0{i} - Nota testowa {i}", quote=f"doslowny fragment {i}",
-            parent_text=f"fragment {i}", char_start=0, char_end=10,
-            score=0.5 - i * 0.01, channels="dense+lexical",
+            note_id=f"26-06-0{i} - Nota testowa {i}",
+            quote=f"doslowny fragment {i}",
+            parent_text=f"fragment {i}",
+            char_start=0,
+            char_end=10,
+            score=0.5 - i * 0.01,
+            channels="dense+lexical",
         )
         for i in range(1, n + 1)
     ]
@@ -83,9 +87,11 @@ def _complete_search(ctrl, query):
 
 
 def test_run_recall_shows_loading_off_main_thread():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
+        }
+    )
     ctrl._ensure_window()
     ctrl._run_recall("co z dostawa okien")
     # search is dispatched to a daemon thread: mode flips + loading is shown at once,
@@ -95,10 +101,12 @@ def test_run_recall_shows_loading_off_main_thread():
 
 
 def test_recall_mode_renders_ranked_results():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
-        "open_note": lambda name: None,
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(3), 0.82, "ok"),
+            "open_note": lambda name: None,
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "co z dostawa okien")
     assert ctrl._mode == "recall" and ctrl._recall_loading is False
@@ -110,10 +118,12 @@ def test_recall_mode_renders_ranked_results():
 
 def test_recall_open_invokes_open_note():
     opened = []
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-        "open_note": lambda name: opened.append(name),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+            "open_note": lambda name: opened.append(name),
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     _render(ctrl)
@@ -127,9 +137,11 @@ def test_recall_open_invokes_open_note():
 
 
 def test_recall_abstinence_renders():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(1), 0.20, "ok"),  # below floor
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(1), 0.20, "ok"),  # below floor
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "przepis na sernik")
     assert ctrl._recall.is_empty and ctrl._recall.nearest is not None
@@ -139,9 +151,11 @@ def test_recall_abstinence_renders():
 
 def test_recall_notready_state_renders_for_empty_index():
     # A failed/unindexed search must NOT render as a genuine "nothing found".
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: ([], 0.0, "empty"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: ([], 0.0, "empty"),
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "cokolwiek")
     assert ctrl._recall.is_empty and ctrl._recall_status == "empty"
@@ -149,30 +163,36 @@ def test_recall_notready_state_renders_for_empty_index():
 
 
 def test_recall_stale_result_is_dropped():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+        }
+    )
     ctrl._ensure_window()
     stale_epoch = ctrl._epoch
     ctrl._recall_worker_("stare pytanie", stale_epoch)  # an older worker finishes late
-    ctrl._epoch += 1                       # a newer search/navigation bumped the epoch
+    ctrl._epoch += 1  # a newer search/navigation bumped the epoch
     ctrl.applyRecall_(None)
-    assert ctrl._recall is None            # stale payload dropped by the epoch guard
+    assert ctrl._recall is None  # stale payload dropped by the epoch guard
 
 
 def test_wrong_shape_callback_is_unavailable_not_no_match():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: ["oops-not-a-tuple"],
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: ["oops-not-a-tuple"],
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     assert ctrl._recall.is_empty and ctrl._recall_status == "unavailable"
 
 
 def test_empty_query_returns_to_insight():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.8, "ok"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.8, "ok"),
+        }
+    )
     ctrl._ensure_window()
     ctrl._run_recall("q")
     assert ctrl._mode == "recall"
@@ -244,12 +264,16 @@ def test_set_transcribing_toggles_flag():
 
 # ── recall synthesis escalation (the one LLM door) — Faza 4 ────────────────
 
+
 def _fake_answer():
     return types.SimpleNamespace(
         answered=True,
         thesis="Dostawa okien opozniona, dach czeka.",
-        evidence=[types.SimpleNamespace(
-            note="26-06-05 - Okna dach", date="26-06-05", quote="dostawa niepewna")],
+        evidence=[
+            types.SimpleNamespace(
+                note="26-06-05 - Okna dach", date="26-06-05", quote="dostawa niepewna"
+            )
+        ],
         directions=["Co z alternatywnym dostawca okien?"],
     )
 
@@ -261,9 +285,11 @@ def _complete_synthesis(ctrl):
 
 
 def test_recall_keeps_raw_hits_for_synthesis():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "co z oknami")
     assert len(ctrl._recall_raw) == 2  # raw Results retained for the escalation
@@ -273,12 +299,14 @@ def test_recall_keeps_raw_hits_for_synthesis():
 def test_synthesis_renders_answer_card_and_actions():
     saved = {}
     opened = []
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-        "recall_synthesize": lambda q, r: _fake_answer(),
-        "recall_save_answer": lambda q, a: "/tmp/answer.md",
-        "open_note": lambda n: opened.append(n),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+            "recall_synthesize": lambda q, r: _fake_answer(),
+            "recall_save_answer": lambda q, a: "/tmp/answer.md",
+            "open_note": lambda n: opened.append(n),
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "co z oknami")
     _complete_synthesis(ctrl)
@@ -301,10 +329,12 @@ def test_synthesis_renders_answer_card_and_actions():
 
 
 def test_synthesis_soft_failure_flags_and_does_not_crash():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
-        "recall_synthesize": lambda q, r: None,  # soft failure (no key / disabled / error)
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+            "recall_synthesize": lambda q, r: None,  # soft failure (no key / disabled / error)
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     _complete_synthesis(ctrl)
@@ -314,10 +344,12 @@ def test_synthesis_soft_failure_flags_and_does_not_crash():
 
 
 def test_stale_synthesis_is_dropped_by_epoch_guard():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-        "recall_synthesize": lambda q, r: _fake_answer(),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+            "recall_synthesize": lambda q, r: _fake_answer(),
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "co z oknami")
     # a synthesis captures the current epoch, but a newer search bumps it before apply
@@ -326,17 +358,24 @@ def test_stale_synthesis_is_dropped_by_epoch_guard():
     ctrl._synth_worker_(ctrl._query, list(ctrl._recall_raw), stale_epoch)
     ctrl._epoch += 1  # user re-searched / navigated meanwhile
     ctrl.applyAnswer_(None)
-    assert ctrl._answer is None  # stale answer (old passages) never lands on new results
+    assert (
+        ctrl._answer is None
+    )  # stale answer (old passages) never lands on new results
 
 
 def test_answered_false_card_renders_muted():
     unanswered = types.SimpleNamespace(
-        answered=False, thesis="Notatki nie pokrywają tego pytania.",
-        evidence=[], directions=[])
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
-        "recall_synthesize": lambda q, r: unanswered,
-    })
+        answered=False,
+        thesis="Notatki nie pokrywają tego pytania.",
+        evidence=[],
+        directions=[],
+    )
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+            "recall_synthesize": lambda q, r: unanswered,
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     _complete_synthesis(ctrl)
@@ -345,9 +384,11 @@ def test_answered_false_card_renders_muted():
 
 
 def test_focus_recall_shows_window_and_can_prefill():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: ([], 0.0, "empty"),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: ([], 0.0, "empty"),
+        }
+    )
     ctrl.focusRecall()
     assert ctrl._window is not None  # window brought up, ask-bar present
     ctrl.focusRecall("co z oknami")  # prefill runs a search
@@ -365,11 +406,19 @@ def test_ask_about_insight_enters_recall_with_rationale():
 
 # ── background indexing banner (Faza 5) ────────────────────────────────────
 
+
 def test_index_banner_renders_while_indexing():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
-        "recall_index_status": lambda: {"state": "indexing", "done": 12, "total": 170, "error": ""},
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(2), 0.82, "ok"),
+            "recall_index_status": lambda: {
+                "state": "indexing",
+                "done": 12,
+                "total": 170,
+                "error": "",
+            },
+        }
+    )
     ctrl._ensure_window()
     assert ctrl._index_snapshot()["state"] == "indexing"
     _complete_search(ctrl, "co z oknami")
@@ -377,10 +426,16 @@ def test_index_banner_renders_while_indexing():
 
 
 def test_no_index_banner_when_ready():
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
-        "recall_index_status": lambda: {"state": "ready", "done": 170, "total": 170},
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": lambda q: (_fake_results(1), 0.82, "ok"),
+            "recall_index_status": lambda: {
+                "state": "ready",
+                "done": 170,
+                "total": 170,
+            },
+        }
+    )
     ctrl._ensure_window()
     _complete_search(ctrl, "q")
     _render(ctrl)  # ready → no banner, just results

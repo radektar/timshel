@@ -72,7 +72,9 @@ def test_build_user_prompt_includes_query_and_passages():
 def test_synthesize_returns_grounded_answer():
     ans = _synth(_Msg([_Block(_PAYLOAD)])).synthesize("co z oknami", _RESULTS)
     assert ans is not None and ans.answered is True
-    assert ans.evidence[0].note == "okna" and ans.evidence[0].quote == "dostawa niepewna"
+    assert (
+        ans.evidence[0].note == "okna" and ans.evidence[0].quote == "dostawa niepewna"
+    )
     assert ans.directions
 
 
@@ -83,7 +85,9 @@ def test_synthesize_empty_inputs_return_none():
 
 
 def test_synthesize_truncation_is_recoverable_none():
-    ans = _synth(_Msg([_Block(_PAYLOAD)], stop_reason="max_tokens")).synthesize("q", _RESULTS)
+    ans = _synth(_Msg([_Block(_PAYLOAD)], stop_reason="max_tokens")).synthesize(
+        "q", _RESULTS
+    )
     assert ans is None
 
 

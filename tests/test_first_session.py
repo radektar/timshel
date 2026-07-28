@@ -143,7 +143,7 @@ class TestFirstSessionSequence:
         digests = []
         monkeypatch.setattr(
             "src.connections.scheduler.run_onboarding_digest",
-            lambda transcriber: digests.append(transcriber) or None,
+            lambda transcriber: digests.append(transcriber) or (None, "empty"),
         )
         monkeypatch.setattr(
             "src.connections.scheduler.estimate_digest_potential",
@@ -232,7 +232,7 @@ class TestOfferDecline:
             digests = []
             monkeypatch.setattr(
                 "src.connections.scheduler.run_onboarding_digest",
-                lambda transcriber: digests.append(1) or None,
+                lambda transcriber: digests.append(1) or (None, "empty"),
             )
             app.transcriber.import_text_file.return_value = True
 
@@ -241,5 +241,79 @@ class TestOfferDecline:
             assert digests == []  # declined -> no paid run
             assert s.auto_digest_suspended is False  # hold released on decline
             assert s.last_digest_at is not None  # weekly clock started
+        finally:
+            reset_scheduler_for_tests()
+
+
+class TestPostImportSettle:
+    def test_error_path_leaves_no_unconsented_paid_run(
+        self, app, tmp_path, monkeypatch
+    ):
+        """The review's headline scenario: the paid onboarding run fails and
+        the next tick must NOT fire a weekly digest the user never approved."""
+        import src.menu_app as menu_mod
+        from src.connections.scheduler import (
+            get_scheduler,
+            reset_scheduler_for_tests,
+        )
+
+        monkeypatch.setattr(
+            menu_mod.config,
+            "CONNECTIONS_STATE_FILE",
+            tmp_path / "cs.json",
+            raising=False,
+        )
+        reset_scheduler_for_tests()
+        try:
+            config_file = tmp_path / "config.json"
+            monkeypatch.setattr(
+                UserSettings, "config_path", staticmethod(lambda: config_file)
+            )
+            UserSettings(pending_import_dir=str(tmp_path)).save()
+            folder = tmp_path / "notes"
+            folder.mkdir()
+            for i in range(8):  # >= pattern trigger, the escalation case
+                (folder / f"n{i}.md").write_text("body", encoding="utf-8")
+
+            monkeypatch.setattr(menu_mod.config, "LLM_API_KEY", "sk-test")
+            monkeypatch.setattr(menu_mod.config, "LLM_PROVIDER", "claude")
+            monkeypatch.setattr(
+                menu_mod.config, "ENABLE_CONNECTION_SYNTHESIS", True, raising=False
+            )
+            monkeypatch.setattr(menu_mod, "DownloadWindow", lambda *a, **kw: Mock())
+            monkeypatch.setattr(menu_mod, "send_notification", Mock())
+            monkeypatch.setattr(menu_mod, "_run_on_main_thread", lambda fn: fn())
+            monkeypatch.setattr(menu_mod.rumps, "alert", lambda *a, **kw: 1)
+            monkeypatch.setattr(
+                "src.connections.scheduler.estimate_digest_potential",
+                lambda onboarding=False: SimpleNamespace(
+                    window=8, neighbors=3, ok=True
+                ),
+            )
+            # The paid onboarding run fails (transient API error).
+            monkeypatch.setattr(
+                "src.connections.scheduler.run_onboarding_digest",
+                lambda transcriber: (None, "error"),
+            )
+            monkeypatch.setattr(
+                "threading.Thread",
+                lambda *a, **kw: SimpleNamespace(start=kw["target"]),
+            )
+            app.transcriber.import_text_file.return_value = True
+            app.transcriber.state = SimpleNamespace(digest_ready=None)
+            for i in range(8):  # the import bumps the trigger counter
+                get_scheduler().register_new_notes(1)
+
+            app._run_first_session(folder)
+
+            from datetime import datetime, timedelta
+
+            s = get_scheduler()
+            now = datetime.now()
+            assert s.last_digest_at is not None  # clock started at settle
+            assert s.new_notes < 6  # counter clamped below the pattern trigger
+            assert s.is_due(now) is False  # no paid run on the next tick
+            assert s.is_due(now + timedelta(days=3)) is False  # no 2-day escalation
+            assert s.auto_digest_on_hold(now) is False  # hold released
         finally:
             reset_scheduler_for_tests()

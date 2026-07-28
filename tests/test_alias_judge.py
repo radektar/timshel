@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 from src.transcriber import Transcriber
 from src.vocabulary import find_alias_misses, strip_quotes_section
 
-
 # --------------------------------------------------------------------------- #
 # Pure helpers.
 # --------------------------------------------------------------------------- #
@@ -81,7 +80,10 @@ def test_miss_then_clean_uses_corrected_summary():
         [],  # judge on retry -> clean
     ]
     summarizer = MagicMock()
-    summarizer.generate.return_value = {"title": "T", "summary": "Tech to the Rescue body"}
+    summarizer.generate.return_value = {
+        "title": "T",
+        "summary": "Tech to the Rescue body",
+    }
     t = _transcriber_with(summarizer, vocab)
 
     out = t._canonicalize_aliases(

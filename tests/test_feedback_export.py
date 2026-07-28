@@ -15,7 +15,9 @@ from src.feedback_export import NothingToExportError, build_feedback_zip
 def _seed_vault(vault: Path) -> None:
     sidecar = vault / config.SIDECAR_DIR_NAME
     sidecar.mkdir(parents=True, exist_ok=True)
-    (sidecar / "signal.jsonl").write_text('{"action":"action_taken"}\n', encoding="utf-8")
+    (sidecar / "signal.jsonl").write_text(
+        '{"action":"action_taken"}\n', encoding="utf-8"
+    )
     (sidecar / "metrics.jsonl").write_text('{"cost_usd":0.01}\n', encoding="utf-8")
     (sidecar / "vocabulary.json").write_text("{}", encoding="utf-8")
     digests = vault / config.DIGEST_DIR_NAME

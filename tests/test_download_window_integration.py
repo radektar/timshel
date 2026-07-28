@@ -30,4 +30,3 @@ def test_download_window_close_after_delays_then_closes():
     assert window.state.closed is False
     time.sleep(0.2)
     assert window.state.closed is True
-
