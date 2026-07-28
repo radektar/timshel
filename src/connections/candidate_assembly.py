@@ -31,7 +31,7 @@ from src.connections.dismissals import DismissalStore
 from src.connections.entities import entity_keys
 from src.logger import logger
 from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
-from src.tag_index import TagIndex
+from src.tag_index import GENERATED_TAG, TagIndex
 
 _TRANSCRIPT_MARKER = "## Transkrypcja"
 # How many notes seed the very first digest — and the seen-set window cap.
@@ -62,6 +62,9 @@ SMALL_CORPUS_NOTES = 4
 # removes the skeleton anyway and the text must stay byte-identical to keep
 # large-corpus scoring on the validated behaviour.
 _HEADING_LINE_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t].*$", re.MULTILINE)
+# Same story on the tag channel: the app's own tag, in the form the corpus
+# carries it.
+_GENERATED_TAG_KEY = TagIndex.normalize_tag(GENERATED_TAG)
 
 
 @dataclass
@@ -428,7 +431,15 @@ def _connectable_window(
         # every-note tag) in corpora large enough for them to exist. Weights:
         # curated tags strongest, entities survive vocabulary drift, rare
         # tokens (the bridge channel's band) noisiest.
-        tags = sum(1 for t in note.norm_tags if 2 <= tag_df[t] < ubiquity_cut)
+        # The app tags every note it writes with GENERATED_TAG before the LLM
+        # tags are appended — structural, exactly like the section skeleton,
+        # and with the relaxed cut it would otherwise score (at the strongest
+        # weight) in every small-corpus note.
+        tags = sum(
+            1
+            for t in note.norm_tags
+            if not (small and t == _GENERATED_TAG_KEY) and 2 <= tag_df[t] < ubiquity_cut
+        )
         ents = sum(
             1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut
         )

@@ -27,7 +27,7 @@ from src.summarizer import (
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
 from src.state_manager import get_last_sync_time, save_sync_time
-from src.tag_index import TagIndex
+from src.tag_index import GENERATED_TAG, TagIndex
 from src.tagger import BaseTagger, get_tagger
 from src.vocabulary import VocabularyIndex, find_alias_misses
 from src.fingerprint import compute_fingerprint
@@ -1589,7 +1589,7 @@ Brak podsumowania AI. Możliwe przyczyny:
 - Wyciągnąć kluczowe wnioski ze spotkania""",
             }
 
-        tags = ["transcription"]
+        tags = [GENERATED_TAG]
         if empty_transcript:
             tags.append("transcript-empty")
         if (

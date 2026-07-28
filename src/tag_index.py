@@ -8,6 +8,13 @@ import re
 from src.config import config
 from src.logger import logger
 
+# The tag THIS app writes on every note it generates (transcriber.py seeds
+# the list with it, markdown_generator falls back to it) — LLM tags are
+# appended on top. Structural, never a thread between notes: connection
+# scoring must be able to tell it apart from a tag the user's material
+# actually shares. Single source so the two writers and the reader agree.
+GENERATED_TAG = "transcription"
+
 
 @dataclass
 class TagIndex:

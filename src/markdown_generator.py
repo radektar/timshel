@@ -14,6 +14,7 @@ except ImportError:
 
 from src.config import config
 from src.logger import logger
+from src.tag_index import GENERATED_TAG
 
 
 class MarkdownGenerator:
@@ -170,7 +171,7 @@ class MarkdownGenerator:
         recording_date_str = metadata["recording_datetime"].isoformat()
         
         # Prepare tag list
-        tag_list = tags or ["transcription"]
+        tag_list = tags or [GENERATED_TAG]
         tags_str = ", ".join(tag_list)
 
         extra_frontmatter = extra_frontmatter or {}

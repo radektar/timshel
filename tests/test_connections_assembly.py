@@ -586,7 +586,12 @@ def test_small_corpus_with_no_shared_thread_is_reported_as_fallback(headings):
         ("podatek", "deklaracja", "urzad", "faktura", "ksiegowa", "termin"),
     ]
     corpus = [
-        _note(f"n{i}", f"2026-07-0{i + 1}", summary=_skeleton(headings, words))
+        _note(
+            f"n{i}",
+            f"2026-07-0{i + 1}",
+            tags=("transcription",),  # the app tags every note it writes
+            summary=_skeleton(headings, words),
+        )
         for i, words in enumerate(topics)
     ]
     window, fallback = _connectable_window(corpus, corpus, 15)
@@ -598,6 +603,7 @@ def test_small_corpus_with_no_shared_thread_is_reported_as_fallback(headings):
     joined[0] = _note(
         "n0",
         "2026-07-01",
+        tags=("transcription",),
         summary=_skeleton(headings, ("podatek", "lancuch", "opona", "x", "y", "z")),
     )
     _, fallback_with_thread = _connectable_window(joined, joined, 15)
@@ -612,3 +618,37 @@ def test_heading_stripping_keeps_content_on_the_same_line_as_no_heading():
     stripped = _strip_headings(text)
     assert "Podsumowanie" not in stripped and "Cytaty" not in stripped
     assert "#podatku" in stripped and "C#" in stripped
+
+
+def test_generated_tag_alone_is_not_a_thread_but_a_real_tag_is():
+    """Every note the app writes carries GENERATED_TAG before the LLM tags —
+    with the small-corpus cut relaxed it would score at the strongest weight
+    in every note and the fallback flag could never fire."""
+    from src.connections.candidate_assembly import _connectable_window
+    from src.tag_index import GENERATED_TAG
+
+    topics = [("rower", "opona"), ("ciasto", "maka"), ("podatek", "faktura")]
+    corpus = [
+        _note(
+            f"n{i}",
+            f"2026-07-0{i + 1}",
+            tags=(GENERATED_TAG,),
+            summary=_skeleton(_PL_HEADINGS, words),
+        )
+        for i, words in enumerate(topics)
+    ]
+    _, fallback = _connectable_window(corpus, corpus, 15)
+    assert fallback is True
+
+    # A tag the USER's material actually shares still counts.
+    shared = [
+        _note(
+            n.basename,
+            n.date,
+            tags=(GENERATED_TAG, "sauna"),
+            summary=n.summary_md,
+        )
+        for n in corpus
+    ]
+    _, fallback_shared = _connectable_window(shared, shared, 15)
+    assert fallback_shared is False
