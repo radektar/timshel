@@ -1,7 +1,15 @@
 # Onboarding — lista follow-up PR-ów (po review PR #90)
 
-Status: PROPOSED · 2026-07-28 · źródło: pełna runda /code-review na zmergowanym
-PR #90 (8 finderów → 38 kandydatów → 10 findingów CONFIRMED + drobne).
+Status: CZĘŚCIOWO WDROŻONE · 2026-07-28 · źródło: pełna runda /code-review na
+zmergowanym PR #90 (8 finderów → 38 kandydatów → 10 findingów CONFIRMED
++ drobne).
+
+**Zrobione:** A + B + C → PR #91 (merge 2026-07-27) · D + E → PR #92
+(merge 2026-07-28, 5 rund review). **Otwarte:** F, G, H.
+
+Z rundy review na #92 wypadł osobny wątek, którego nie było na tej liście —
+apka czytała własny tag jako sygnał podobieństwa w kanałach doboru:
+`Docs/future/channel-signal-hygiene.md` (PR #93).
 
 Szczęśliwa ścieżka onboardingu działa (E2E na żywo: 60 notek → 2 połączenia,
 $0.23). Poniżej ścieżki nieszczęśliwe, pogrupowane w PR-y.

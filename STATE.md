@@ -32,15 +32,40 @@ z `refresh_from_disk`). Suita **1249**, mypy/flake8/black czyste, CI zielone.
 Wzór pod spodem wszystkich czterech znalezisk: **produkt mylił to, co sam
 napisał, z tym, co powiedział użytkownik** (nagłówki, tag systemowy).
 
-**OTWARTE (osobny PR, NIE zrobione):** ten sam tag zatruwa kanały sąsiedztwa
-digestu tygodniowego — pomiar na realnym vaultcie: tag-bridge kwalifikuje
-138/168 starszych notatek zamiast 52, a kanał Stanowisk (`_anchors` =
-encje | tagi) widzi 1794 par window×older ze wspólną kotwicą zamiast 104
-(**17×**). `note_graph` jest czysty (twarde pasmo `TAG_DF_BAND=(2,15)`).
-Fix jednolinijkowy w 2 miejscach, ale zmienia dobór kandydatów KAŻDEGO
-digestu → wymaga własnego before/after na próbce, nie doklejki do PR-a
-o pomiarze. Wysoki priorytet: dotyka jakości głównego outputu produktu
-i hipotezy H1 o kontradykcjach.
+## Tag apki jako sygnał podobieństwa (PR #93, OTWARTY 2026-07-28)
+
+Wypadło z rundy review na #92. Zasada: **metadana, którą apka sama zapisuje,
+nigdy nie jest sygnałem od użytkownika.** `GENERATED_TAG` ("transcription")
+niesie każda notatka z pipeline'u, więc każdy kanał czytający wspólny tag jako
+dowód wspólnego wątku czytał własną księgowość. Jedno źródło prawdy:
+`tag_index.GENERATED_TAG` + `candidate_assembly.signal_tags()`, używane przez
+okno connectable, most tagowy i kotwice Stanowisk. Pole `tags` notatki
+nietknięte (w digeście i promptcie to uczciwe metadane). `note_graph` był
+odporny od początku — pasmo `TAG_DF_BAND=(2,15)`.
+
+Najgroźniejszy był tryb **bramkowy**, nie wagowy: kotwica kanału Stanowisk
+odpowiada „o CZYM te notatki się nie zgadzają", a tag apki czyni ją prawdziwą
+dla każdej pary. Okno 3: bramkę przechodziło 148/180 starszych notatek, po
+teście polaryzacji zostawało 46, z czego **39 kwalifikowało się wyłącznie przez
+tag apki**. **Ale efekt end-to-end jest mniejszy** (poprzednia wersja tego
+wpisu go zawyżała): gotowy zestaw kandydatów bez zmian dla okna 3 (17 notatek),
+wymiana 2 z 22 dla okna 8. Ogon mostu tagowego nie dochodził do capu, a tier
+leksykalny już ważył prawdziwe kotwice wyżej. Fix działa tam, gdzie pula
+prawdziwych kotwic jest cienka — czyli na vaultach po imporcie.
+
+Sprawdzone przy okazji, ważne dla oceny ryzyka: **„bzdury przechodzące do
+outputu" nie materializują się.** Kanały nie mówią Claude'owi, co parować —
+dają płaską listę 25 notatek. Przed wynikiem stoją dwie zapory: prompt syntezy
+(contradiction = zmiana stanowiska TEJ SAMEJ osoby + horoscope guard) i verdict
+na pełnym tekście („różne tematy → drop"). Przegląd 5 digestów z vaulta: 16
+połączeń, 4 sprzeczności, wszystkie w temacie, zero par niepowiązanych. N=5,
+jeden vault, Opus — cienki punkt to decyzja o tańszym modelu tygodniowym,
+bo horoscope guard jest promptem, nie gwarancją.
+
+**Znalezione, NIE naprawione:** tier strukturalny Stanowisk zwraca 0 z 4 slotów
+dla okna 3 i 8 (3 z 4 dopiero przy oknie 15) — w zwykłej tygodniówce cały kanał
+sprzeczności wypełnia słabszy tier leksykalny. Do zdiagnozowania osobno.
+Doc: `Docs/future/channel-signal-hygiene.md`.
 
 ## Onboarding: import notatek + pierwszy digest Sonnet 5 (PR #90, MERGE 2026-07-27)
 
