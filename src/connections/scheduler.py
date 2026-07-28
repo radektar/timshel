@@ -803,7 +803,7 @@ def _synthesize_and_write(
     return path, "written"
 
 
-def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
+def run_onboarding_digest(transcriber: object = None) -> tuple:
     """The first-session digest: the activation moment, policy separate from
     the weekly path.
 
@@ -814,8 +814,18 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
     once on the next connectable window. Afterwards the WHOLE corpus is
     marked seen with ``pending=0`` — byte-identical semantics to a fresh
     install (no paid auto-drain of the archive) and the weekly clock starts
-    now. Returns the digest path, or None when both windows came up empty
-    (or on error). Never raises.
+    now.
+
+    Returns ``(path, outcome)`` — the caller MUST distinguish these, because
+    telling a user "your notes have no strong connections" when nothing was
+    analyzed is a false verdict at the one moment that decides activation:
+      * ``"written"`` — digest on disk (``path`` set),
+      * ``"empty"`` — ran and paid, nothing survived verification,
+      * ``"error"`` — synthesis/verification failed (nothing consumed),
+      * ``"billing"`` — no credits / AI disabled (nothing attempted),
+      * ``"busy"`` — another digest run holds the lock (nothing attempted),
+      * ``"unavailable"`` — no API key / non-Claude provider.
+    Never raises.
     """
     from src.connections.dismissals import DismissalStore
     from src.connections.synthesis import ConnectionSynthesizer
@@ -823,17 +833,17 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
     from src.summarizer import detect_language
 
     if not config.LLM_API_KEY or config.LLM_PROVIDER != "claude":
-        return None
+        return None, "unavailable"
     if getattr(transcriber, "_ai_disabled_reason", None):
         # Billing already tripped (e.g. during the import's summaries) —
         # don't burn another paid call that will fail the same way.
-        return None
+        return None, "billing"
     scheduler = get_scheduler()
     now = datetime.now()
     lock_fd = _acquire_digest_lock()
     if lock_fd is None:
         logger.info("onboarding digest: another digest run holds the lock")
-        return None
+        return None, "busy"
     try:
         vault = Path(config.TRANSCRIBE_DIR)
         dismissals = DismissalStore(vault).load()
@@ -849,6 +859,7 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
         corpus_keys: Set[str] = set()
         final_path: Optional[Path] = None
         pre_run_notes = scheduler.new_notes
+        outcome = "empty"  # no material at all reads as "nothing to connect"
         for attempt in range(1, ONBOARDING_MAX_WINDOWS + 1):
             candidates = _assemble_for_digest(
                 scheduler,
@@ -888,8 +899,16 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
                 set_ready=False,
             )
             if status == "error":
-                break  # nothing consumed; leave state for the weekly path
+                # Nothing consumed. Distinguish a billing stop (the user must
+                # top up) from a transient failure (retry makes sense).
+                outcome = (
+                    "billing"
+                    if getattr(transcriber, "_ai_disabled_reason", None)
+                    else "error"
+                )
+                break
             consumed |= candidates.window_keys
+            outcome = status  # "written" | "empty"
             if status == "written":
                 final_path = path
                 break
@@ -909,7 +928,7 @@ def run_onboarding_digest(transcriber: object = None) -> Optional[Path]:
             )
             if late:
                 scheduler.register_new_notes(late)
-        return final_path
+        return final_path, outcome
     finally:
         try:
             from src.connections.candidate_assembly import clear_tokenize_cache

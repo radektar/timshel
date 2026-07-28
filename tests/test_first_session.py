@@ -143,7 +143,7 @@ class TestFirstSessionSequence:
         digests = []
         monkeypatch.setattr(
             "src.connections.scheduler.run_onboarding_digest",
-            lambda transcriber: digests.append(transcriber) or None,
+            lambda transcriber: digests.append(transcriber) or (None, "empty"),
         )
         monkeypatch.setattr(
             "src.connections.scheduler.estimate_digest_potential",
@@ -232,7 +232,7 @@ class TestOfferDecline:
             digests = []
             monkeypatch.setattr(
                 "src.connections.scheduler.run_onboarding_digest",
-                lambda transcriber: digests.append(1) or None,
+                lambda transcriber: digests.append(1) or (None, "empty"),
             )
             app.transcriber.import_text_file.return_value = True
 
@@ -293,7 +293,7 @@ class TestPostImportSettle:
             # The paid onboarding run fails (transient API error).
             monkeypatch.setattr(
                 "src.connections.scheduler.run_onboarding_digest",
-                lambda transcriber: None,
+                lambda transcriber: (None, "error"),
             )
             monkeypatch.setattr(
                 "threading.Thread",

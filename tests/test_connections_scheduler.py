@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.config import config
 from src.connections.scheduler import (
@@ -576,8 +577,9 @@ def test_onboarding_digest_injects_sonnet_marks_corpus(tmp_path, monkeypatch):
         verdict_mod, "ConnectionVerifier", lambda api_key, model: _Verifier()
     )
 
-    path = sched.run_onboarding_digest(transcriber=None)
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
     assert path is not None and path.exists()
+    assert outcome == "written"
     assert seen_models  # injected synthesizer ran; factory would have raised
 
     s = get_scheduler()
@@ -638,8 +640,8 @@ def test_onboarding_digest_retries_second_window_once(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ca, "FIRST_RUN_WINDOW", 2)
 
-    path = sched.run_onboarding_digest(transcriber=None)
-    assert path is None
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert path is None and outcome == "empty"
     assert len(windows_seen) == sched.ONBOARDING_MAX_WINDOWS  # exactly 2 paid
     assert windows_seen[0] != windows_seen[1]  # second attempt = NEXT window
     rows = [
@@ -992,3 +994,58 @@ def test_auto_digest_hold_is_persisted_and_expires(tmp_path):
 
     app.resume_auto_digest()
     assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_onboarding_outcomes_are_distinguishable(tmp_path, monkeypatch):
+    """A false 'your notes have no connections' at the activation moment is
+    the worst possible lie — every non-empty outcome must be tellable apart."""
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [
+            ("a", "2026-01-01", "t", "watek alfa"),
+            ("b", "2026-02-01", "t", "watek beta"),
+        ],
+    )
+    # No key configured -> nothing attempted.
+    monkeypatch.setattr(config, "LLM_API_KEY", "")
+    assert sched.run_onboarding_digest(transcriber=None) == (None, "unavailable")
+    monkeypatch.setattr(config, "LLM_API_KEY", "sk-test")
+
+    # Billing already tripped during the import's summaries.
+    tripped = SimpleNamespace(_ai_disabled_reason="billing")
+    assert sched.run_onboarding_digest(transcriber=tripped) == (None, "billing")
+
+    # Recoverable synthesis failure -> "error", NOT "empty".
+    class _Failing:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            return None  # recoverable
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _Failing()
+    )
+    monkeypatch.setattr(
+        verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
+    )
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert (path, outcome) == (None, "error")
+    reset_scheduler_for_tests()
+
+
+def test_onboarding_busy_when_lock_held(tmp_path, monkeypatch):
+    import src.connections.scheduler as sched
+
+    _onboarding_env(tmp_path, monkeypatch, [("a", "2026-01-01", "t", "alfa")])
+    held = sched._acquire_digest_lock()
+    try:
+        assert sched.run_onboarding_digest(transcriber=None) == (None, "busy")
+    finally:
+        sched._release_digest_lock(held)
+        reset_scheduler_for_tests()
