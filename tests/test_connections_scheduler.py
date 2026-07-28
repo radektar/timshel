@@ -1195,3 +1195,41 @@ def test_settled_clock_alone_does_not_block_a_first_session(tmp_path, monkeypatc
     path, outcome = sched.run_onboarding_digest(transcriber=None)
     assert outcome == "written" and path is not None
     reset_scheduler_for_tests()
+
+
+def test_migration_seeded_seen_set_is_not_digest_history(tmp_path):
+    """A fresh install's migration seeds a non-empty seen-set — treating that
+    as 'history' would refuse the paid run in a GENUINE first session (the
+    activation moment) and tell the user we'd already been analyzing."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.init_seen({"sha256:a", "sha256:b"})  # what _ensure_seen_migrated does
+    s.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))  # clock started
+    assert s.is_first_session() is True
+
+    s.mark_ran(datetime(2026, 7, 28, 13, 0, 0))  # a run consumed a window
+    assert s.is_first_session() is False
+    assert DigestScheduler(state_file).is_first_session() is False  # persisted
+
+
+def test_paid_but_empty_run_counts_as_history(tmp_path):
+    """last_digest_path alone misses paid runs that wrote no digest."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.mark_ran(datetime(2026, 7, 28, 12, 0, 0), None, seen_keys={"sha256:a"})
+    assert s.last_digest_path is None
+    assert s.is_first_session() is False
+
+
+def test_legacy_state_without_digest_runs_is_history(tmp_path):
+    """State written before digest_runs existed still reads as history."""
+    import json as _json
+
+    state_file = tmp_path / "cs.json"
+    state_file.write_text(
+        _json.dumps(
+            {"last_digest_at": "2026-07-01T00:00:00", "last_digest_path": "/x/d.md"}
+        ),
+        encoding="utf-8",
+    )
+    assert DigestScheduler(state_file).is_first_session() is False

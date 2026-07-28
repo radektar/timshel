@@ -46,24 +46,18 @@ _BM25_B = 0.75
 # rare tokens: far apart in topic, joined by one specific thread.
 _BRIDGE_RARE_DF = 4
 
-# Below this size a corpus has no "ubiquitous" terms to filter out — a thread
-# through every note IS the connection (see :func:`_connectable_window`).
+# A corpus of at most this many notes has no "ubiquitous" terms to filter
+# out — a thread running through every note IS the connection there (see
+# :func:`_connectable_window`).
 SMALL_CORPUS_NOTES = 4
 
-# Section headers and boilerplate every generated note carries. They are not
-# threads; on a large corpus the ubiquity cut removes them anyway, but a small
-# corpus needs them named explicitly (otherwise "Podsumowanie" alone would
-# make any two notes look connected).
-_STRUCTURAL_TOKENS = frozenset(
-    {
-        "podsumowanie",
-        "transkrypcja",
-        "summary",
-        "transcript",
-        "notatka",
-        "note",
-    }
-)
+# Section headers and boilerplate every generated note carries. Matched as
+# STEMS (Polish inflects: notatka/notatki/notatek) and applied ONLY to small
+# corpora, where the ubiquity cut is relaxed — above that the cut removes
+# them anyway, and large-corpus scoring must stay identical to the validated
+# behaviour. Without this, "Podsumowanie" alone would make any two notes
+# look connected.
+_STRUCTURAL_STEMS = ("podsumowan", "transkrypcj", "notatk")
 
 
 @dataclass
@@ -408,12 +402,13 @@ def _connectable_window(
     # there scored every note 0, so the window fell back to newest-first and
     # the run reported window_fallback=True ("no connectable material") for
     # the most connectable corpora there are, poisoning the rollout signal.
-    ubiquity_cut = n_corpus if n_corpus > SMALL_CORPUS_NOTES else n_corpus + 1
-    rare_cut = (
-        max(_BRIDGE_RARE_DF, 2)
-        if n_corpus <= SMALL_CORPUS_NOTES
-        else min(_BRIDGE_RARE_DF, n_corpus - 1)
-    )
+    # Small corpora only: relax the cuts (a thread through every note is the
+    # connection) and filter boilerplate stems explicitly. Above the
+    # threshold every value is arithmetically identical to the validated
+    # behaviour, so large-corpus windows never shift.
+    small = n_corpus <= SMALL_CORPUS_NOTES
+    ubiquity_cut = n_corpus + 1 if small else n_corpus
+    rare_cut = _BRIDGE_RARE_DF if small else min(_BRIDGE_RARE_DF, n_corpus - 1)
 
     def score(note: NoteRef) -> float:
         # df >= 2 makes a term evidence of a shared thread; the upper cut
@@ -428,7 +423,8 @@ def _connectable_window(
         rare = sum(
             1
             for w in set(_tokenize(note.summary_md))
-            if w not in _STRUCTURAL_TOKENS and 2 <= df[w] <= rare_cut
+            if not (small and w.startswith(_STRUCTURAL_STEMS))
+            and 2 <= df[w] <= rare_cut
         )
         return 2.0 * tags + 1.5 * ents + 1.0 * rare
 

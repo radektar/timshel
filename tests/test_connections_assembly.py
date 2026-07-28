@@ -510,3 +510,25 @@ def test_connectable_window_small_corpus_is_not_reported_as_fallback(vault):
     )
     assert cs.window_basenames == {"a", "b"}
     assert cs.window_fallback is False  # genuine material, not a fallback
+
+
+def test_large_corpus_scoring_unchanged_by_small_corpus_relaxation(vault):
+    """The small-corpus relaxation (and its boilerplate filter) must NOT
+    change which window a real-sized corpus produces."""
+    from src.connections.candidate_assembly import _connectable_window, load_corpus
+
+    for i in range(12):
+        _write_note(
+            vault,
+            f"n{i:02d}",
+            f"2026-06-{i + 1:02d}",
+            tags="sauna" if i % 2 else "ogrod",
+            summary=f"projekt {'sauna deski' if i % 2 else 'rosliny nawozy'} {i}",
+        )
+    corpus = load_corpus(vault)
+    window, fallback = _connectable_window(corpus, corpus, 5)
+    # Deterministic and non-degenerate: boilerplate ("Podsumowanie") is still
+    # filtered by the ubiquity cut, so the picks come from real threads.
+    assert len(window) == 5 and fallback is False
+    again, _ = _connectable_window(corpus, corpus, 5)
+    assert [n.basename for n in window] == [n.basename for n in again]

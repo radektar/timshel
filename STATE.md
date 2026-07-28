@@ -17,8 +17,9 @@ NIETKNIĘTY), verdict zawsze (metryka aktywacji), na końcu mark-all-corpus
 pending=0. Wspólny ogon `_synthesize_and_write` (tygodniówka bajt-w-bajt,
 mark-callback przed metrykami). Hold `suspend_auto_digest` z jawną
 własnością (dialog→wątek digestu); "Later" startuje tygodniowy zegar.
-Telemetria: `onboarding`/`window_fallback` w metrics.jsonl, zapisywane
-też bez tester_mode (kryterium: ≥1 połączenie po verdictcie w sesji 1).
+Telemetria: `onboarding`/`window_fallback` w metrics.jsonl, wyłącznie
+przy INSIGHT_METRICS_ENABLED (kohorta testerów) — kryterium: ≥1 połączenie
+po verdictcie w sesji 1.
 **E2E live: 60 realnych notek → digest 2 połączenia (prawdziwa
 kontradykcja biznesowa) za $0.23; 20 notek → pusto 2× (mały korpus =
 znany przypadek).** Pętla review: R1(7: 2 HIGH hold-gap + readiness,

@@ -76,6 +76,11 @@ class DigestScheduler:
         # honour it and a crash cannot freeze the cadence forever.
         self.auto_digest_suspended: bool = False
         self.auto_digest_hold_until: Optional[str] = None
+        # How many digest RUNS have consumed a window on this vault. The only
+        # honest marker of "this vault has digest history": last_digest_path
+        # misses paid-but-empty runs, and the seen-set is also seeded by
+        # migration on a fresh install (which is not history at all).
+        self.digest_runs: int = 0
         # True only for the process that set or cleared the hold. Every other
         # writer adopts the disk value before saving, so an unrelated write
         # (a CLI's unsee after a transcription) can neither wipe a live hold
@@ -128,6 +133,26 @@ class DigestScheduler:
         except ValueError:
             return False
         return now < deadline
+
+    def is_first_session(self) -> bool:
+        """True when NO digest run has ever consumed a window on this vault.
+
+        The onboarding run treats the whole corpus as new material and marks
+        it all seen afterwards; on a vault with history that would re-pay for
+        digested notes and drop the pending weekly backlog. The marker must be
+        "a run happened" — NOT the seen-set (migration seeds it on a fresh
+        install) and NOT the clock (``settle_after_import`` starts it in a
+        genuine first session, before the offer dialog).
+        """
+        self.refresh_from_disk()
+        data = self._read_disk_state() or {}
+        try:
+            disk_runs = int(data.get("digest_runs", 0) or 0)
+        except (TypeError, ValueError):
+            disk_runs = 0
+        runs = max(self.digest_runs, disk_runs)
+        # last_digest_path covers state written before digest_runs existed.
+        return runs == 0 and not (self.last_digest_path or data.get("last_digest_path"))
 
     def settle_after_import(self, now: datetime) -> None:
         """Make the post-import state CHEAP and consistent, immediately.
@@ -194,6 +219,7 @@ class DigestScheduler:
             self.unseen_tombstones = set(data.get("unseen_tombstones", []) or [])
             hold = data.get("auto_digest_hold_until")
             self.auto_digest_hold_until = hold if isinstance(hold, str) else None
+            self.digest_runs = int(data.get("digest_runs", 0) or 0)
             # Persisted pending (backfill leftover): without it, a restart
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
@@ -282,6 +308,7 @@ class DigestScheduler:
                 "seen_epoch": int(self.seen_epoch),
                 "unseen_tombstones": sorted(self.unseen_tombstones),
                 "auto_digest_hold_until": self.auto_digest_hold_until,
+                "digest_runs": int(self.digest_runs),
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -413,6 +440,9 @@ class DigestScheduler:
         # our window must be re-added on top, not lost in the swap. Consuming
         # a key also lifts its un-see tombstone: the note really is seen again.
         self._merge_disk_seen()
+        # A run consumed a window: this vault now HAS digest history (also
+        # when the run was paid but empty, hence not last_digest_path).
+        self.digest_runs = max(self.digest_runs, 0) + 1
         if seen_keys:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
@@ -864,9 +894,12 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
       * ``"not-first-session"`` — this vault already has digest history, so
         the onboarding semantics (whole corpus as new material, mark-all
         afterwards) would re-pay for digested notes and wipe the pending
-        weekly backlog. The wizard re-runs on every major.minor upgrade, so
-        an existing user CAN reach the import step; their notes go through
-        the normal weekly path (or the explicit ``make digest-archive``).
+        weekly backlog. A safety net rather than a common path (today the
+        wizard effectively only runs when setup was never completed —
+        ``bootstrap.ensure_ready`` stamps ``setup_version`` before
+        ``needs_setup`` is asked), and the caller checks
+        :meth:`DigestScheduler.is_first_session` BEFORE offering a paid run,
+        so a user is never asked to approve a run we would then refuse.
     Never raises.
     """
     from src.connections.dismissals import DismissalStore
@@ -881,17 +914,7 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
         # don't burn another paid call that will fail the same way.
         return None, "billing"
     scheduler = get_scheduler()
-    scheduler.refresh_from_disk()
-    # History = a digest was written, or notes were consumed/migrated.
-    # NOT last_digest_at alone: settle_after_import sets the clock right
-    # after the import (before the offer dialog) precisely so no unapproved
-    # run can fire, so the clock is set in a genuine first session too.
-    if scheduler.last_digest_path is not None or scheduler.seen_note_keys:
-        # An upgrade re-runs the wizard, so an existing vault CAN reach the
-        # import step. Onboarding semantics would ignore the seen-set —
-        # re-paying for already-digested notes — and then mark the whole
-        # corpus seen, silently dropping notes queued for the next weekly
-        # digest.
+    if not scheduler.is_first_session():
         logger.info("onboarding digest: vault has digest history — skipping")
         return None, "not-first-session"
     now = datetime.now()
