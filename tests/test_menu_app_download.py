@@ -44,4 +44,3 @@ def test_download_dependencies_starts_async_manager(monkeypatch):
     assert started["value"] is True
     assert "Downloading" in app.status_item.title
     assert app._download_active is True
-

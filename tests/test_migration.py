@@ -18,7 +18,9 @@ class TestMigrationWrappers:
         """Wrapper should return migrated settings from old state file."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         (tmp_path / ".olympus_transcriber_state.json").write_text(
-            json.dumps({"transcribe_dir": str(tmp_path / "old"), "recorder_names": ["LS-P1"]}),
+            json.dumps(
+                {"transcribe_dir": str(tmp_path / "old"), "recorder_names": ["LS-P1"]}
+            ),
             encoding="utf-8",
         )
 
@@ -84,4 +86,3 @@ class TestVaultIndexMigrationTrigger:
             Transcriber(config=cfg)
 
         run_mock.assert_not_called()
-

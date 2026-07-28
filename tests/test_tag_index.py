@@ -22,7 +22,7 @@ def test_tag_index_builds_from_markdown(tmp_path: Path) -> None:
     (root / "two.md").write_text(
         "---\n"
         "title: Drugi\n"
-        "tags: [praca, sauna, \"Zamówienie telefoniczne\"]\n"
+        'tags: [praca, sauna, "Zamówienie telefoniczne"]\n'
         "---\n",
         encoding="utf-8",
     )
@@ -39,4 +39,3 @@ def test_tag_index_builds_from_markdown(tmp_path: Path) -> None:
     assert "transcription" in tags
     assert "sauna" in tags
     assert "zamowienie-telefoniczne" in tags
-

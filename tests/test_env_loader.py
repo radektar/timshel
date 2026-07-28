@@ -37,4 +37,3 @@ def test_load_env_file_missing_file(monkeypatch):
 
     missing_path = Path("/nonexistent/.env")
     assert env_loader.load_env_file(env_path=missing_path) is False
-

@@ -12,9 +12,7 @@ from src.config.settings import UserSettings
 def test_tester_mode_round_trips(tmp_path, monkeypatch):
     """tester_mode persists through save/load like any other setting."""
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(
-        UserSettings, "config_path", staticmethod(lambda: config_file)
-    )
+    monkeypatch.setattr(UserSettings, "config_path", staticmethod(lambda: config_file))
 
     UserSettings(tester_mode=True).save()
     assert UserSettings.load().tester_mode is True
@@ -30,9 +28,7 @@ def test_tester_mode_defaults_off():
 
 def _patch_config_path(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(
-        UserSettings, "config_path", staticmethod(lambda: config_file)
-    )
+    monkeypatch.setattr(UserSettings, "config_path", staticmethod(lambda: config_file))
     return config_file
 
 
@@ -56,7 +52,9 @@ def test_adopt_noop_on_non_tester_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_bundle_tester_flag", lambda: False)
 
     settings = UserSettings()
-    assert bootstrap._adopt_tester_build_flag(settings, already_configured=False) is False
+    assert (
+        bootstrap._adopt_tester_build_flag(settings, already_configured=False) is False
+    )
     assert settings.tester_mode is False
 
 

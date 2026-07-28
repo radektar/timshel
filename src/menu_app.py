@@ -1961,6 +1961,15 @@ class TimshelMenuApp(rumps.App):
                 failed,
                 len(paths),
             )
+            # Make the state cheap and consistent NOW, while nothing can fail:
+            # the import bumped the trigger counter per file and a fresh
+            # install has no clock, so without this every later exit path
+            # (API error, crash, "Later", no key, low potential) would leave
+            # is_due() true and the next tick would pay for a digest the user
+            # never approved.
+            from datetime import datetime as _dt
+
+            scheduler.settle_after_import(_dt.now())
 
             # First-digest gates ($0): no material, or no AI configured —
             # the key screen was the hook; nothing more to do here.
@@ -2018,12 +2027,10 @@ class TimshelMenuApp(rumps.App):
                     scheduler.resume_auto_digest()
                     return
                 if clicked != 1:
-                    # Later: start the weekly clock WITHOUT consuming — the
-                    # notes enter the first weekly digest on the normal
-                    # rhythm instead of a paid run firing ~30s after "Later".
-                    from datetime import datetime as _dt
-
-                    scheduler.start_weekly_clock(_dt.now())
+                    # Later: the clock was already started (and the counter
+                    # clamped) by settle_after_import, so the notes enter the
+                    # first digest on the weekly rhythm — no paid run fires
+                    # seconds after declining.
                     scheduler.resume_auto_digest()
                     return
                 import threading

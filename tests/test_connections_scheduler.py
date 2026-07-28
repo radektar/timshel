@@ -946,11 +946,49 @@ def test_weekly_mark_fires_before_metrics(tmp_path, monkeypatch):
         reset_scheduler_for_tests()
 
 
-def test_start_weekly_clock_only_when_never_ran(tmp_path):
-    s = DigestScheduler(tmp_path / "cs.json")
-    now = datetime(2026, 7, 27, 12, 0, 0)
-    s.start_weekly_clock(now)
+def test_settle_after_import_starts_clock_and_clamps_counter(tmp_path):
+    """Post-import state must be cheap on EVERY exit path: clock started,
+    counter below the pattern trigger (a bulk import must not escalate to
+    the every-2-days cadence)."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.register_new_notes(100)  # a 100-note import
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    s.settle_after_import(now)
+
     assert s.last_digest_at == now.isoformat(timespec="seconds")
-    later = datetime(2026, 7, 28, 12, 0, 0)
-    s.start_weekly_clock(later)  # no-op: clock already running
+    assert s.new_notes == config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1
+    assert s.is_due(now) is False  # no paid run seconds later
+    # Not due on the pattern cadence either (that is the cost escalation).
+    assert s.is_due(now + timedelta(days=3)) is False
+    assert s.is_due(now + timedelta(days=8)) is True  # weekly rhythm holds
+
+    reloaded = DigestScheduler(state_file)  # persisted
+    assert reloaded.last_digest_at == s.last_digest_at
+
+    later = datetime(2026, 7, 29, 12, 0, 0)
+    s.settle_after_import(later)  # clock already running -> untouched
     assert s.last_digest_at == now.isoformat(timespec="seconds")
+
+
+def test_auto_digest_hold_is_persisted_and_expires(tmp_path):
+    """A hold must reach OTHER processes (daemon) and never freeze the
+    cadence forever after a crash."""
+    from src.connections.scheduler import AUTO_DIGEST_HOLD_MINUTES
+
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+
+    daemon = DigestScheduler(state_file)  # separate process
+    assert daemon.auto_digest_on_hold(now) is True
+    assert (
+        daemon.auto_digest_on_hold(
+            now + timedelta(minutes=AUTO_DIGEST_HOLD_MINUTES + 1)
+        )
+        is False
+    )  # self-expires: a crash mid-dialog can't freeze digests
+
+    app.resume_auto_digest()
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False

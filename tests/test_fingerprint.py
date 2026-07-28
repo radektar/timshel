@@ -22,4 +22,3 @@ def test_compute_fingerprint_differs_for_different_files(tmp_path: Path) -> None
     audio1.write_bytes(b"a" * 2048)
     audio2.write_bytes(b"b" * 2048)
     assert compute_fingerprint(audio1) != compute_fingerprint(audio2)
-

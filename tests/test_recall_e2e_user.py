@@ -21,8 +21,12 @@ from src.ui import dashboard_window as dw  # noqa: E402
 
 if not dw._APPKIT_AVAILABLE:  # pragma: no cover - non-mac
     pytest.skip("AppKit unavailable", allow_module_level=True)
-if not (importlib.util.find_spec("fastembed") and importlib.util.find_spec("sqlite_vec")):
-    pytest.skip("recall deps (fastembed/sqlite-vec) unavailable", allow_module_level=True)
+if not (
+    importlib.util.find_spec("fastembed") and importlib.util.find_spec("sqlite_vec")
+):
+    pytest.skip(
+        "recall deps (fastembed/sqlite-vec) unavailable", allow_module_level=True
+    )
 
 from AppKit import NSImage  # noqa: E402
 from Foundation import NSMakeSize  # noqa: E402
@@ -35,16 +39,21 @@ from src.connections.recall.synthesis import AnswerEvidence, RecallAnswer  # noq
 FIXTURE = {
     "26-06-05 - Planowanie budowy domu - okna i dach": (
         "Dostepnosc okien przed sierpniem niepewna, producenci okien nie odpowiadaja "
-        "na zapytania. Dach czeka, bez okien nie ruszymy z wykonczeniem."),
+        "na zapytania. Dach czeka, bez okien nie ruszymy z wykonczeniem."
+    ),
     "26-06-17 - Haetta - rozmowa z konstruktorem": (
         "Rozmowa z konstruktorem projektu Haetta o nosnosci belek i harmonogramie prac "
-        "na dachu tiny house."),
+        "na dachu tiny house."
+    ),
     "26-06-24 - BOS demo generowania assetow AI": (
-        "Przygotowanie dema generowania grafik AI dla banku BOS, porownanie silnikow."),
+        "Przygotowanie dema generowania grafik AI dla banku BOS, porownanie silnikow."
+    ),
     "26-05-13 - Platforma personalizowanego serwisu rowerowego": (
-        "Pomysl na platforme do personalizowanego serwisowania rowerow z dokumentacja."),
+        "Pomysl na platforme do personalizowanego serwisowania rowerow z dokumentacja."
+    ),
     "26-04-30 - Cyfryzacja dokumentacji medycznej NFZ": (
-        "Automatyzacja bledow NFZ i cyfryzacja dokumentacji medycznej w placowkach."),
+        "Automatyzacja bledow NFZ i cyfryzacja dokumentacji medycznej w placowkach."
+    ),
 }
 
 
@@ -66,6 +75,7 @@ def vault_engine(tmp_path):
 
 def _search_cb(engine):
     """Exactly the seam.search_detailed contract, backed by the fixture engine."""
+
     def cb(q):
         try:
             if engine.count() == 0:
@@ -74,12 +84,16 @@ def _search_cb(engine):
             return res, conf, "ok"
         except Exception:  # pragma: no cover - defensive
             return [], 0.0, "unavailable"
+
     return cb
 
 
 def _stub_synth(query, results):
     """Deterministic stand-in for the LLM: a grounded card built from the real hits."""
-    ev = [AnswerEvidence(note=r.note_id, date="", quote=(r.quote or "")[:80]) for r in results[:2]]
+    ev = [
+        AnswerEvidence(note=r.note_id, date="", quote=(r.quote or "")[:80])
+        for r in results[:2]
+    ]
     return RecallAnswer(
         answered=True,
         thesis=f"Podsumowanie dla: {query}",
@@ -125,17 +139,22 @@ def test_full_user_journey_record_ask_open_synthesize_save(vault_engine):
         saved["path"] = p
         return p
 
-    ctrl = dw.build_dashboard_window(callbacks={
-        "recall_search": _search_cb(engine),
-        "recall_synthesize": _stub_synth,
-        "recall_save_answer": _save_cb,
-        "open_note": lambda name: opened.append(name),
-    })
+    ctrl = dw.build_dashboard_window(
+        callbacks={
+            "recall_search": _search_cb(engine),
+            "recall_synthesize": _stub_synth,
+            "recall_save_answer": _save_cb,
+            "open_note": lambda name: opened.append(name),
+        }
+    )
     ctrl._ensure_window()
 
     # 1. The user records a NEW note mid-session → it must become searchable at once.
-    new = _write_note(vault, "26-06-25 - Case EEG mozgu na landing page",
-                      "Pomysl by badanie EEG mozgu pokazac jako historie na stronie.")
+    new = _write_note(
+        vault,
+        "26-06-25 - Case EEG mozgu na landing page",
+        "Pomysl by badanie EEG mozgu pokazac jako historie na stronie.",
+    )
     engine.index_path(new)
 
     # 2. User asks a paraphrased question → the right note surfaces, cited.

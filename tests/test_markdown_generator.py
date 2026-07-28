@@ -42,7 +42,7 @@ Dyskusja na temat implementacji nowych funkcji w systemie. Omówiono kluczowe as
 ## Lista działań (To-do)
 
 - Przygotować dokumentację techniczną
-- Skontaktować się z zespołem deweloperskim"""
+- Skontaktować się z zespołem deweloperskim""",
     }
 
 
@@ -54,26 +54,24 @@ def sample_metadata():
         "extension": ".mp3",
         "recording_datetime": datetime(2025, 11, 19, 14, 30, 0),
         "duration_seconds": 900,
-        "duration_formatted": "00:15:00"
+        "duration_formatted": "00:15:00",
     }
 
 
 class TestExtractAudioMetadata:
     """Test audio metadata extraction."""
-    
-    def test_extract_metadata_fallback_to_mtime(
-        self, generator, sample_audio_file
-    ):
+
+    def test_extract_metadata_fallback_to_mtime(self, generator, sample_audio_file):
         """Test metadata extraction falls back to file mtime."""
         metadata = generator.extract_audio_metadata(sample_audio_file)
-        
+
         assert metadata["source_file"] == "test_recording.mp3"
         assert metadata["extension"] == ".mp3"
         assert metadata["recording_datetime"] is not None
         assert isinstance(metadata["recording_datetime"], datetime)
-    
-    @patch('src.markdown_generator.MUTAGEN_AVAILABLE', True)
-    @patch('src.markdown_generator.MutagenFile')
+
+    @patch("src.markdown_generator.MUTAGEN_AVAILABLE", True)
+    @patch("src.markdown_generator.MutagenFile")
     def test_extract_metadata_with_mutagen(
         self, mock_mutagen_file, generator, sample_audio_file
     ):
@@ -83,12 +81,12 @@ class TestExtractAudioMetadata:
         mock_audio.info.length = 1200  # 20 minutes
         mock_audio.tags = {}
         mock_mutagen_file.return_value = mock_audio
-        
+
         metadata = generator.extract_audio_metadata(sample_audio_file)
-        
+
         assert metadata["duration_seconds"] == 1200
         assert metadata["duration_formatted"] == "00:20:00"
-    
+
     def test_format_duration(self, generator):
         """Test duration formatting."""
         assert generator._format_duration(0) == "00:00:00"
@@ -99,19 +97,19 @@ class TestExtractAudioMetadata:
 
 class TestSanitizeFilename:
     """Test filename sanitization."""
-    
+
     def test_sanitize_basic(self, generator):
         """Test basic filename sanitization."""
         result = generator._sanitize_filename("Test Title")
         assert result == "Test Title"
-    
+
     def test_sanitize_polish_chars(self, generator):
         """Test Polish character normalization."""
         result = generator._sanitize_filename("Rozmowa o projekcie")
         assert "ą" not in result
         assert "ć" not in result
         assert "_" not in result
-    
+
     def test_sanitize_special_chars(self, generator):
         """Test removal of special characters."""
         result = generator._sanitize_filename("Test@#$%^&*()Title")
@@ -119,13 +117,13 @@ class TestSanitizeFilename:
         assert "#" not in result
         assert "Test" in result
         assert "Title" in result
-    
+
     def test_sanitize_multiple_spaces(self, generator):
         """Test handling of multiple spaces."""
         result = generator._sanitize_filename("Test    Title")
         assert "  " not in result
         assert result == "Test Title"
-    
+
     def test_sanitize_leading_trailing_underscores(self, generator):
         """Test removal of leading/trailing underscores."""
         result = generator._sanitize_filename("_Test_Title_")
@@ -134,58 +132,57 @@ class TestSanitizeFilename:
 
 class TestGenerateFilename:
     """Test filename generation."""
-    
+
     def test_generate_filename_basic(self, generator):
         """Test basic filename generation."""
         title = "Test Title"
         date = datetime(2025, 11, 19, 14, 30, 0)
-        
+
         filename = generator._generate_filename(title, date)
-        
+
         assert filename == "25-11-19 - Test Title.md"
-    
+
     def test_generate_filename_long_title(self, generator):
         """Test filename generation with long title."""
         long_title = "A" * 200
         date = datetime(2025, 11, 19)
-        
+
         filename = generator._generate_filename(long_title, date)
-        
+
         # Should be truncated
         assert len(filename) < 300  # Reasonable limit
         assert filename.endswith(".md")
-    
+
     def test_generate_filename_empty_title(self, generator):
         """Test filename generation with empty title."""
         date = datetime(2025, 11, 19)
-        
+
         filename = generator._generate_filename("", date)
-        
+
         assert filename == "25-11-19 - Nagranie.md"
 
 
 class TestCreateMarkdownDocument:
     """Test markdown document creation."""
-    
+
     def test_create_document_success(
-        self, generator, sample_transcript, sample_summary,
-        sample_metadata, tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """Test successful markdown document creation."""
         output_dir = tmp_path / "output"
-        
+
         md_path = generator.create_markdown_document(
             transcript=sample_transcript,
             summary=sample_summary,
             metadata=sample_metadata,
-            output_dir=output_dir
+            output_dir=output_dir,
         )
-        
+
         assert md_path.exists()
         assert md_path.suffix == ".md"
-        
+
         # Read and verify content
-        content = md_path.read_text(encoding='utf-8')
+        content = md_path.read_text(encoding="utf-8")
         assert "---" in content  # YAML frontmatter
         assert "title:" in content
         assert sample_summary["title"] in content
@@ -194,10 +191,9 @@ class TestCreateMarkdownDocument:
         assert sample_summary["summary"] in content
         assert "## Transkrypcja" in content
         assert sample_transcript in content
-    
+
     def test_create_document_collision_appends_numbered_suffix(
-        self, generator, sample_transcript, sample_summary,
-        sample_metadata, tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """Two same-day recordings with colliding titles must NOT overwrite:
         the second gets a ' (2)' suffix and both contents survive."""
@@ -222,8 +218,7 @@ class TestCreateMarkdownDocument:
         assert "drugie nagranie" in second.read_text(encoding="utf-8")
 
     def test_create_document_collision_third_copy(
-        self, generator, sample_transcript, sample_summary,
-        sample_metadata, tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """A third collision gets ' (3)'."""
         output_dir = tmp_path / "output"
@@ -240,8 +235,7 @@ class TestCreateMarkdownDocument:
         assert len({p.name for p in paths}) == 3
 
     def test_create_document_explicit_filename_deduped(
-        self, generator, sample_transcript, sample_summary,
-        sample_metadata, tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """An explicit output_filename (.vN path) colliding with an existing
         file is suffixed too; the original is untouched."""
@@ -292,25 +286,20 @@ class TestCreateMarkdownDocument:
         """Test document creation with missing summary."""
         output_dir = tmp_path / "output"
         incomplete_summary = {"title": "Test"}
-        
+
         md_path = generator.create_markdown_document(
             transcript=sample_transcript,
             summary=incomplete_summary,
             metadata=sample_metadata,
-            output_dir=output_dir
+            output_dir=output_dir,
         )
-        
+
         assert md_path.exists()
-        content = md_path.read_text(encoding='utf-8')
+        content = md_path.read_text(encoding="utf-8")
         assert "Brak podsumowania" in content
 
     def test_create_document_with_custom_tags(
-        self,
-        generator,
-        sample_transcript,
-        sample_summary,
-        sample_metadata,
-        tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """Document should render provided tags in YAML frontmatter."""
         output_dir = tmp_path / "output"
@@ -320,31 +309,29 @@ class TestCreateMarkdownDocument:
             summary=sample_summary,
             metadata=sample_metadata,
             output_dir=output_dir,
-            tags=["transcription", "sauna", "zdrowie"]
+            tags=["transcription", "sauna", "zdrowie"],
         )
 
-        content = md_path.read_text(encoding='utf-8')
+        content = md_path.read_text(encoding="utf-8")
         assert "tags: [transcription, sauna, zdrowie]" in content
-    
+
     def test_create_document_io_error(
-        self, generator, sample_transcript, sample_summary,
-        sample_metadata, tmp_path
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):
         """Test handling of IO errors."""
         # Create read-only directory
         output_dir = tmp_path / "readonly"
         output_dir.mkdir()
         output_dir.chmod(0o444)  # Read-only
-        
+
         try:
             with pytest.raises(IOError):
                 generator.create_markdown_document(
                     transcript=sample_transcript,
                     summary=sample_summary,
                     metadata=sample_metadata,
-                    output_dir=output_dir
+                    output_dir=output_dir,
                 )
         finally:
             # Restore permissions for cleanup
             output_dir.chmod(0o755)
-

@@ -50,6 +50,7 @@ def test_ensure_importable_installs_then_imports(monkeypatch):
 
 def test_ensure_importable_returns_false_when_pip_fails(monkeypatch):
     """Should return False when installation fails."""
+
     def fake_import(name, *args, **kwargs):
         if name == "anthropic":
             raise ImportError("missing anthropic")

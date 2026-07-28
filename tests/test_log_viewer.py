@@ -11,12 +11,11 @@ from src.ui.log_viewer import (
     read_recent,
 )
 
-
 SAMPLE_LINES = [
     "2026-05-05 08:29:12 - malinche - INFO - Checking for recorder",
     "2026-05-05 08:29:13 - malinche - WARNING - SD card not detected",
     "2026-05-05 08:29:14 - malinche - ERROR - Traceback (most recent call last):",
-    "  File \"x.py\", line 10, in foo",
+    '  File "x.py", line 10, in foo',
     "    raise RuntimeError('boom')",
     "RuntimeError: boom",
     "2026-05-05 08:29:15 - malinche - INFO - Recovered",
@@ -40,7 +39,7 @@ def test_parse_lines_collapses_traceback_into_previous_entry():
     assert err.level == "ERROR"
     # Multi-line continuation merged
     assert "RuntimeError: boom" in err.message
-    assert "File \"x.py\"" in err.message
+    assert 'File "x.py"' in err.message
     assert entries[3].message == "Recovered"
 
 

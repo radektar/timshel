@@ -50,15 +50,15 @@ def _patch_client(monkeypatch, payload=None, raise_exc=None, stop_reason=None):
         def create(self, *_a, **_k):
             if raise_exc:
                 raise raise_exc
-            return type(
-                "Msg", (), {"content": [block], "stop_reason": stop_reason}
-            )()
+            return type("Msg", (), {"content": [block], "stop_reason": stop_reason})()
 
     class FakeClient:
         def __init__(self, *_a, **_k):
             self.messages = FakeMessages()
 
-    monkeypatch.setattr(synth_module, "build_anthropic_client", lambda api_key: FakeClient(api_key))
+    monkeypatch.setattr(
+        synth_module, "build_anthropic_client", lambda api_key: FakeClient(api_key)
+    )
 
 
 def test_connection_normalizes_wikilink_notes():

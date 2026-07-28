@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from src.connections.recall.indexing import (
-    ERROR, INDEXING, READY, STANDBY, IndexingState, run_backfill,
+    ERROR,
+    INDEXING,
+    READY,
+    STANDBY,
+    IndexingState,
+    run_backfill,
 )
 
 

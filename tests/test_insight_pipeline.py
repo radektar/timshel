@@ -59,10 +59,24 @@ def test_connection_dict_carries_evidence_and_signature():
 
 def test_deck_from_dicts_builds_and_skips_malformed():
     dicts = [
-        {"type": "shared-thread", "notes": ["A", "B"], "rationale": "r", "directions": ["x", "y"]},
-        {"type": "emergent-idea", "notes": ["C"], "rationale": "too few notes"},  # skipped
+        {
+            "type": "shared-thread",
+            "notes": ["A", "B"],
+            "rationale": "r",
+            "directions": ["x", "y"],
+        },
+        {
+            "type": "emergent-idea",
+            "notes": ["C"],
+            "rationale": "too few notes",
+        },  # skipped
         "not-a-dict",  # skipped
-        {"type": "contradiction-over-time", "notes": ["D", "E"], "rationale": "r2", "directions": ["q"]},
+        {
+            "type": "contradiction-over-time",
+            "notes": ["D", "E"],
+            "rationale": "r2",
+            "directions": ["q"],
+        },
     ]
     deck = ip.deck_from_dicts(dicts)
     assert len(deck) == 2

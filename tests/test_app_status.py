@@ -62,7 +62,11 @@ class TestAppState:
             thread.join()
 
         # State should be one of the values set
-        assert state.status in [AppStatus.IDLE, AppStatus.SCANNING, AppStatus.TRANSCRIBING]
+        assert state.status in [
+            AppStatus.IDLE,
+            AppStatus.SCANNING,
+            AppStatus.TRANSCRIBING,
+        ]
 
     def test_get_status_string_idle(self):
         """Test status string for IDLE."""
@@ -95,4 +99,3 @@ class TestAppState:
         status_str = state.get_status_string()
         assert "Error" in status_str
         assert "Test error message" in status_str
-

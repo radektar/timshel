@@ -58,6 +58,6 @@ def test_rendered_icon_is_rgba_template(status):
     rep = NSBitmapImageRep.imageRepWithData_(data)
     assert rep is not None, f"{status} icon failed to decode"
     assert rep.hasAlpha(), f"{status} icon has no alpha channel"
-    assert rep.samplesPerPixel() == 4, (
-        f"{status} icon is not RGBA (samples/pixel={rep.samplesPerPixel()})"
-    )
+    assert (
+        rep.samplesPerPixel() == 4
+    ), f"{status} icon is not RGBA (samples/pixel={rep.samplesPerPixel()})"

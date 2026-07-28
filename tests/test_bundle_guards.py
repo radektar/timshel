@@ -33,7 +33,9 @@ class TestBundledPipGuard:
         )
         calls = []
         monkeypatch.setattr(
-            runtime_deps, "_pip_install", lambda spec, target: calls.append(spec) or False
+            runtime_deps,
+            "_pip_install",
+            lambda spec, target: calls.append(spec) or False,
         )
         assert runtime_deps.ensure_importable("surely_missing_mod") is False
         assert calls == ["surely-missing"]
@@ -45,26 +47,22 @@ class TestBundledPipGuard:
 
 def _hdiutil_plist(mount_points):
     return plistlib.dumps(
-        {
-            "images": [
-                {
-                    "system-entities": [
-                        {"mount-point": mp} for mp in mount_points
-                    ]
-                }
-            ]
-        }
+        {"images": [{"system-entities": [{"mount-point": mp} for mp in mount_points]}]}
     )
 
 
 class TestDiskImageVolume:
     def test_mounted_dmg_is_detected(self):
-        fake = MagicMock(returncode=0, stdout=_hdiutil_plist(["/Volumes/Timshel Installer"]))
+        fake = MagicMock(
+            returncode=0, stdout=_hdiutil_plist(["/Volumes/Timshel Installer"])
+        )
         with patch("subprocess.run", return_value=fake):
             assert is_disk_image_volume(Path("/Volumes/Timshel Installer")) is True
 
     def test_real_disk_is_not_a_disk_image(self):
-        fake = MagicMock(returncode=0, stdout=_hdiutil_plist(["/Volumes/Timshel Installer"]))
+        fake = MagicMock(
+            returncode=0, stdout=_hdiutil_plist(["/Volumes/Timshel Installer"])
+        )
         with patch("subprocess.run", return_value=fake):
             assert is_disk_image_volume(Path("/Volumes/LS-P1")) is False
 

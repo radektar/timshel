@@ -62,7 +62,9 @@ def test_sidecar_carries_evidence_and_canonical_sig(tmp_path, monkeypatch):
         (tmp_path / ".timshel" / "insights-latest.json").read_text(encoding="utf-8")
     )
     c0 = sidecar["connections"][0]
-    assert c0["sig"] == connection_signature(["Note A", "Note B"], "contradiction-over-time")
+    assert c0["sig"] == connection_signature(
+        ["Note A", "Note B"], "contradiction-over-time"
+    )
     assert [e["date"] for e in c0["evidence"]] == ["17.06", "18.06"]
     assert c0["evidence"][0]["quote"] == "quality first"
 

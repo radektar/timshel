@@ -15,7 +15,9 @@ from src.volume_identity import (
 )
 
 
-def _make_completed(returncode: int, stdout_bytes: bytes = b"") -> subprocess.CompletedProcess:
+def _make_completed(
+    returncode: int, stdout_bytes: bytes = b""
+) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
         args=["diskutil"], returncode=returncode, stdout=stdout_bytes, stderr=b""
     )
@@ -66,7 +68,10 @@ def test_get_volume_uuid_falls_back_when_uuid_field_missing():
 def test_get_volume_uuid_uses_diskuuid_when_volumeuuid_missing():
     """FAT/exFAT cards lack VolumeUUID — fall back to the stable DiskUUID."""
     payload = _plist_payload(
-        None, DiskUUID="GPT-PART-GUID-1", TotalSize=64_000_000, FilesystemName="MS-DOS FAT32"
+        None,
+        DiskUUID="GPT-PART-GUID-1",
+        TotalSize=64_000_000,
+        FilesystemName="MS-DOS FAT32",
     )
     with patch(
         "src.volume_identity.subprocess.run",

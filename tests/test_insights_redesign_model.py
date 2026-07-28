@@ -19,7 +19,6 @@ from src.connections.validation_signal import (
 )
 from src.ui import insight_model as im
 
-
 # --------------------------------------------------------------------------- #
 # ask_history (U8)
 # --------------------------------------------------------------------------- #
@@ -122,7 +121,10 @@ def test_reset_clears_triage(tmp_path):
     record_action(TARGET_SAVE, sig="s1", conn_type="t", path=log, now=t0)
     assert triage_state_by_sig(log) == {"s1": "kept"}
     record_action(
-        TARGET_RESET, sig="s1", conn_type="t", path=log,
+        TARGET_RESET,
+        sig="s1",
+        conn_type="t",
+        path=log,
         now=t0.replace(minute=1),
     )
     assert triage_state_by_sig(log) == {}
@@ -132,6 +134,10 @@ def test_reset_then_new_decision_wins(tmp_path):
     log = _log(tmp_path)
     t0 = datetime(2026, 7, 18, 10, 0, 0)
     record_action(TARGET_NONE, sig="s2", conn_type="t", path=log, now=t0)
-    record_action(TARGET_RESET, sig="s2", conn_type="t", path=log, now=t0.replace(minute=1))
-    record_action(TARGET_SAVE, sig="s2", conn_type="t", path=log, now=t0.replace(minute=2))
+    record_action(
+        TARGET_RESET, sig="s2", conn_type="t", path=log, now=t0.replace(minute=1)
+    )
+    record_action(
+        TARGET_SAVE, sig="s2", conn_type="t", path=log, now=t0.replace(minute=2)
+    )
     assert triage_state_by_sig(log) == {"s2": "kept"}

@@ -109,9 +109,7 @@ def test_embed_threads_user_override(monkeypatch, tmp_path):
     from src.config.settings import UserSettings
 
     config_file = tmp_path / "config.json"
-    monkeypatch.setattr(
-        UserSettings, "config_path", staticmethod(lambda: config_file)
-    )
+    monkeypatch.setattr(UserSettings, "config_path", staticmethod(lambda: config_file))
     UserSettings.mutate(lambda s: setattr(s, "embed_threads", 2))
 
     assert Config().EMBED_THREADS == 2
