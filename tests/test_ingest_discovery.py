@@ -98,3 +98,29 @@ def test_bound_stops_the_walk_not_just_the_result(vault, tmp_path, monkeypatch):
     monkeypatch.setattr(discovery, "MAX_SCANNED_ENTRIES", 5)
     list_importable(src)
     assert len(visited) <= 6  # walk stopped, tree never fully materialised
+
+
+def test_importing_ingest_has_no_filesystem_side_effects(tmp_path):
+    """src/ingest must stay dependency-light: importing it may not create the
+    vault/app dirs or freeze the Config singleton (a module-scope
+    `from src.logger import logger` silently did exactly that)."""
+    import subprocess
+    import sys
+
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import src.ingest, sys; print('src.logger' in sys.modules)",
+        ],
+        cwd=repo,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False"  # src.logger not pulled in
+    assert list(home.rglob("*")) == []  # nothing written under HOME
