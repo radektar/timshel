@@ -493,3 +493,186 @@ def test_clear_tokenize_cache_releases_retained_texts():
     assert _tokenize.cache_info().currsize >= 2
     clear_tokenize_cache()
     assert _tokenize.cache_info().currsize == 0
+
+
+def test_connectable_window_small_corpus_is_not_reported_as_fallback(vault):
+    """Two tightly related notes are the MOST connectable corpus there is —
+    reporting window_fallback=True there poisoned the rollout signal."""
+    _write_note(vault, "a", "2026-01-01", tags="sauna", summary="projekt sauna deski")
+    _write_note(vault, "b", "2026-02-01", tags="sauna", summary="sauna deski montaz")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert cs.window_basenames == {"a", "b"}
+    assert cs.window_fallback is False  # genuine material, not a fallback
+
+
+def test_large_corpus_scoring_unchanged_by_small_corpus_relaxation(vault):
+    """The small-corpus relaxation (and its boilerplate filter) must NOT
+    change which window a real-sized corpus produces."""
+    from src.connections.candidate_assembly import _connectable_window, load_corpus
+
+    for i in range(12):
+        _write_note(
+            vault,
+            f"n{i:02d}",
+            f"2026-06-{i + 1:02d}",
+            tags="sauna" if i % 2 else "ogrod",
+            summary=f"projekt {'sauna deski' if i % 2 else 'rosliny nawozy'} {i}",
+        )
+    corpus = load_corpus(vault)
+    window, fallback = _connectable_window(corpus, corpus, 5)
+    # Deterministic and non-degenerate: boilerplate ("Podsumowanie") is still
+    # filtered by the ubiquity cut, so the picks come from real threads.
+    assert len(window) == 5 and fallback is False
+    again, _ = _connectable_window(corpus, corpus, 5)
+    assert [n.basename for n in window] == [n.basename for n in again]
+
+
+def test_content_words_about_notes_are_not_filtered_as_boilerplate(vault):
+    """ "notatki"/"transkrypcja" are content in a product about note-taking —
+    filtering them reported "no connectable material" for a real import."""
+    _write_note(vault, "a", "2026-01-01", summary="moje notatki i ich porzadek")
+    _write_note(vault, "b", "2026-02-01", summary="notatki wymagaja porzadku")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert cs.window_fallback is False  # the shared thread was seen
+
+
+_PL_HEADINGS = (
+    "Podsumowanie",
+    "Kluczowe punkty",
+    "Stanowiska",
+    "Wątki otwarte",
+    "Cytaty",
+    "Lista działań (To-do)",
+)
+_EN_HEADINGS = (
+    "Summary",
+    "Key points",
+    "Stances",
+    "Open threads",
+    "Quotes",
+    "Action items",
+)
+
+
+def _skeleton(headings, words):
+    """A generated note: the shared section skeleton + unique content only."""
+    return "\n\n".join(f"## {h}\n\n{w}" for h, w in zip(headings, words))
+
+
+@pytest.mark.parametrize("headings", [_PL_HEADINGS, _EN_HEADINGS])
+def test_small_corpus_with_no_shared_thread_is_reported_as_fallback(headings):
+    """The section skeleton is shared by construction, so with the ubiquity
+    cut relaxed it scored every small-corpus note non-zero — "no connectable
+    material" could then never be reported, whatever the notes said."""
+    from src.connections.candidate_assembly import _connectable_window
+
+    topics = [
+        ("rower", "lancuch", "przerzutka", "opona", "hamulec", "siodelko"),
+        ("ciasto", "drozdze", "piekarnik", "maka", "cukier", "jajka"),
+        ("podatek", "deklaracja", "urzad", "faktura", "ksiegowa", "termin"),
+    ]
+    corpus = [
+        _note(
+            f"n{i}",
+            f"2026-07-0{i + 1}",
+            tags=("transcription",),  # the app tags every note it writes
+            summary=_skeleton(headings, words),
+        )
+        for i, words in enumerate(topics)
+    ]
+    window, fallback = _connectable_window(corpus, corpus, 15)
+    assert fallback is True  # nothing but the skeleton is shared
+    assert [n.basename for n in window] == ["n2", "n1", "n0"]  # newest-first
+
+    # ...and the flag still fires the other way: one genuine shared thread.
+    joined = list(corpus)
+    joined[0] = _note(
+        "n0",
+        "2026-07-01",
+        tags=("transcription",),
+        summary=_skeleton(headings, ("podatek", "lancuch", "opona", "x", "y", "z")),
+    )
+    _, fallback_with_thread = _connectable_window(joined, joined, 15)
+    assert fallback_with_thread is False
+
+
+def test_heading_stripping_keeps_content_on_the_same_line_as_no_heading():
+    """Only LINES that are headings go — a '#' inside prose is content."""
+    from src.connections.candidate_assembly import _strip_headings
+
+    text = "## Podsumowanie\n\nsprawa dotyczy #podatku i kanalu C#\n### Cytaty\nx"
+    stripped = _strip_headings(text)
+    assert "Podsumowanie" not in stripped and "Cytaty" not in stripped
+    assert "#podatku" in stripped and "C#" in stripped
+
+
+def test_generated_tag_alone_is_not_a_thread_but_a_real_tag_is():
+    """Every note the app writes carries GENERATED_TAG before the LLM tags —
+    with the small-corpus cut relaxed it would score at the strongest weight
+    in every note and the fallback flag could never fire."""
+    from src.connections.candidate_assembly import _connectable_window
+    from src.tag_index import GENERATED_TAG
+
+    topics = [("rower", "opona"), ("ciasto", "maka"), ("podatek", "faktura")]
+    corpus = [
+        _note(
+            f"n{i}",
+            f"2026-07-0{i + 1}",
+            tags=(GENERATED_TAG,),
+            summary=_skeleton(_PL_HEADINGS, words),
+        )
+        for i, words in enumerate(topics)
+    ]
+    _, fallback = _connectable_window(corpus, corpus, 15)
+    assert fallback is True
+
+    # A tag the USER's material actually shares still counts.
+    shared = [
+        _note(
+            n.basename,
+            n.date,
+            tags=(GENERATED_TAG, "sauna"),
+            summary=n.summary_md,
+        )
+        for n in corpus
+    ]
+    _, fallback_shared = _connectable_window(shared, shared, 15)
+    assert fallback_shared is False
+
+
+def test_generated_tag_never_scores_in_a_large_corpus_either(vault):
+    """The ubiquity cut only drops a tag carried by ALL notes, so one note
+    that arrived without GENERATED_TAG used to leave it scoring +2.0 for
+    every transcribed note against every imported one."""
+    from src.connections.candidate_assembly import _connectable_window, load_corpus
+    from src.tag_index import GENERATED_TAG
+
+    # 9 transcribed notes (app tag, unrelated content) + 1 import without it.
+    for i in range(9):
+        _write_note(
+            vault,
+            f"t{i}",
+            f"2026-06-{i + 1:02d}",
+            tags=GENERATED_TAG,
+            summary=f"temat{i}",
+        )
+    _write_note(vault, "imported", "2026-06-20", tags="", summary="zupelnie osobno")
+    corpus = load_corpus(vault)
+    window, fallback = _connectable_window(corpus, corpus, 3)
+    # Nothing but the app's own tag is shared -> no connectable material.
+    assert fallback is True
+    assert [n.basename for n in window] == ["imported", "t8", "t7"]  # newest-first

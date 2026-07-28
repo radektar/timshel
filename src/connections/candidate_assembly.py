@@ -31,7 +31,7 @@ from src.connections.dismissals import DismissalStore
 from src.connections.entities import entity_keys
 from src.logger import logger
 from src.summarizer import _EN_STOPWORDS, _PL_STOPWORDS
-from src.tag_index import TagIndex
+from src.tag_index import GENERATED_TAG, TagIndex
 
 _TRANSCRIPT_MARKER = "## Transkrypcja"
 # How many notes seed the very first digest — and the seen-set window cap.
@@ -45,6 +45,26 @@ _BM25_B = 0.75
 # occurs in at most this many notes corpus-wide. Bridges are built on shared
 # rare tokens: far apart in topic, joined by one specific thread.
 _BRIDGE_RARE_DF = 4
+
+# A corpus of at most this many notes has no "ubiquitous" terms to filter
+# out — a thread running through every note IS the connection there (see
+# :func:`_connectable_window`).
+SMALL_CORPUS_NOTES = 4
+
+# Markdown heading lines. EVERY generated note carries the same section
+# skeleton (src/summarizer.py pins the PL and EN forms), so those tokens are
+# shared by construction and never a thread. Cut STRUCTURALLY, not with a
+# word blocklist: a blocklist has to guess Polish inflections, silently rots
+# when the summarizer prompt changes, and inevitably lists words that are
+# real content in this product ("notatki" for users who record about
+# note-taking; "key"/"open"/"action" in the English skeleton). Applied ONLY
+# to small corpora, where the ubiquity cut is relaxed — above that the cut
+# removes the skeleton anyway and the text must stay byte-identical to keep
+# large-corpus scoring on the validated behaviour.
+_HEADING_LINE_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t].*$", re.MULTILINE)
+# Same story on the tag channel: the app's own tag, in the form the corpus
+# carries it.
+_GENERATED_TAG_KEY = TagIndex.normalize_tag(GENERATED_TAG)
 
 
 @dataclass
@@ -174,6 +194,11 @@ def _tokenize(text: str) -> List[str]:
             continue
         tokens.append(tok)
     return tokens
+
+
+def _strip_headings(text: str) -> str:
+    """Drop markdown heading LINES — the note skeleton, not its content."""
+    return _HEADING_LINE_RE.sub("", text)
 
 
 def clear_tokenize_cache() -> None:
@@ -383,21 +408,51 @@ def _connectable_window(
     df = _corpus_doc_freq(corpus)
 
     n_corpus = len(corpus)
+    # "Shared by SOME, not all" needs a corpus big enough for "all" to mean
+    # something. In a 2-3 note import a thread running through EVERY note is
+    # the genuine connection, not an artifact — applying the ubiquity cut
+    # there scored every note 0, so the window fell back to newest-first and
+    # the run reported window_fallback=True ("no connectable material") for
+    # the most connectable corpora there are, poisoning the rollout signal.
+    # Small corpora only: relax the cuts (a thread through every note is the
+    # connection) and drop the section skeleton structurally, because with
+    # the cut relaxed those shared heading tokens score in EVERY note — no
+    # note can reach 0, and the "no connectable material" flag could then
+    # never fire at all (the same lie, in the other direction). Above the
+    # threshold the token cuts are arithmetically identical to the validated
+    # behaviour; only the app's own tag is excluded at every size (see the
+    # tag channel below).
+    small = n_corpus <= SMALL_CORPUS_NOTES
+    ubiquity_cut = n_corpus + 1 if small else n_corpus
+    rare_cut = _BRIDGE_RARE_DF if small else min(_BRIDGE_RARE_DF, n_corpus - 1)
 
     def score(note: NoteRef) -> float:
-        # A thread is shared by SOME notes, not all: df >= 2 makes a term
-        # evidence of a connection, df < corpus size drops ubiquitous
-        # artifacts (the "## Podsumowanie" header token, an every-note tag)
-        # that would otherwise score uniformly in small corpora. Weights:
+        # df >= 2 makes a term evidence of a shared thread; the upper cut
+        # drops ubiquitous artifacts (the "## Podsumowanie" header token, an
+        # every-note tag) in corpora large enough for them to exist. Weights:
         # curated tags strongest, entities survive vocabulary drift, rare
         # tokens (the bridge channel's band) noisiest.
-        tags = sum(1 for t in note.norm_tags if 2 <= tag_df[t] < n_corpus)
-        ents = sum(1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < n_corpus)
-        rare = sum(
+        # GENERATED_TAG is excluded at EVERY corpus size, not just below the
+        # threshold: the ubiquity cut only drops a tag carried by ALL notes,
+        # and this one is carried by every note the app WRITES — so a single
+        # note that arrived another way (an import whose summariser returned
+        # tags, a hand-written note) left it under the cut, scoring +2.0 for
+        # every transcribed note against every imported one. That is the
+        # app's own bookkeeping ranking the user's material. Measured on the
+        # 183-note dogfood vault (tag on 151): the selected window is the
+        # same 15 notes, only their internal order moves.
+        tags = sum(
             1
-            for w in set(_tokenize(note.summary_md))
-            if 2 <= df[w] <= min(_BRIDGE_RARE_DF, n_corpus - 1)
+            for t in note.norm_tags
+            if t != _GENERATED_TAG_KEY and 2 <= tag_df[t] < ubiquity_cut
         )
+        ents = sum(
+            1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut
+        )
+        # Same text above the threshold (cached tokenisation, identical
+        # scoring); skeleton-free below it.
+        text = _strip_headings(note.summary_md) if small else note.summary_md
+        rare = sum(1 for w in set(_tokenize(text)) if 2 <= df[w] <= rare_cut)
         return 2.0 * tags + 1.5 * ents + 1.0 * rare
 
     scored = [(score(n), n) for n in unseen]

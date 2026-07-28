@@ -76,6 +76,11 @@ class DigestScheduler:
         # honour it and a crash cannot freeze the cadence forever.
         self.auto_digest_suspended: bool = False
         self.auto_digest_hold_until: Optional[str] = None
+        # How many digest RUNS have consumed a window on this vault. The only
+        # honest marker of "this vault has digest history": last_digest_path
+        # misses paid-but-empty runs, and the seen-set is also seeded by
+        # migration on a fresh install (which is not history at all).
+        self.digest_runs: int = 0
         # True only for the process that set or cleared the hold. Every other
         # writer adopts the disk value before saving, so an unrelated write
         # (a CLI's unsee after a transcription) can neither wipe a live hold
@@ -128,6 +133,26 @@ class DigestScheduler:
         except ValueError:
             return False
         return now < deadline
+
+    def is_first_session(self) -> bool:
+        """True when NO digest run has ever consumed a window on this vault.
+
+        The onboarding run treats the whole corpus as new material and marks
+        it all seen afterwards; on a vault with history that would re-pay for
+        digested notes and drop the pending weekly backlog. The marker must be
+        "a run happened" — NOT the seen-set (migration seeds it on a fresh
+        install) and NOT the clock (``settle_after_import`` starts it in a
+        genuine first session, before the offer dialog).
+        """
+        self.refresh_from_disk()
+        data = self._read_disk_state() or {}
+        try:
+            disk_runs = int(data.get("digest_runs", 0) or 0)
+        except (TypeError, ValueError):
+            disk_runs = 0
+        runs = max(self.digest_runs, disk_runs)
+        # last_digest_path covers state written before digest_runs existed.
+        return runs == 0 and not (self.last_digest_path or data.get("last_digest_path"))
 
     def settle_after_import(self, now: datetime) -> None:
         """Make the post-import state CHEAP and consistent, immediately.
@@ -197,6 +222,7 @@ class DigestScheduler:
             # Persisted pending (backfill leftover): without it, a restart
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
+            self.digest_runs = int(data.get("digest_runs", 0) or 0)
         except (TypeError, ValueError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
 
@@ -243,6 +269,16 @@ class DigestScheduler:
             # process pay for a weekly digest mid-onboarding — nor write a
             # released one back and freeze the cadence for the whole TTL.
             self._adopt_disk_hold(data)
+            # digest_runs is monotonic like the seen-set: adopt the disk
+            # value so an unrelated write (a CLI's unsee, clear_pending,
+            # reset_seen) cannot reset the ONE marker that decides whether a
+            # vault still qualifies for the first-session (paid, mark-all) run.
+            try:
+                self.digest_runs = max(
+                    self.digest_runs, int(data.get("digest_runs", 0) or 0)
+                )
+            except (TypeError, ValueError):
+                pass
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
             # Runs even with no seen-set on disk (pre-migration): the
@@ -264,7 +300,16 @@ class DigestScheduler:
         the disk seen-set (epoch-aware) and a newer ``last_digest_at``.
         """
         self._merge_disk_seen()
-        data = self._read_disk_state()
+        self._adopt_disk_clock(self._read_disk_state())
+
+    def _adopt_disk_clock(self, data: Optional[dict]) -> None:
+        """Take a NEWER weekly clock from disk. Never roll it back.
+
+        ``_save`` writes ``last_digest_at`` from memory, so every writer that
+        does not sync first would push the cadence back to before another
+        process's run — and with it ``last_digest_path``, the legacy input to
+        :meth:`is_first_session`.
+        """
         if data is None:
             return
         disk_at = data.get("last_digest_at")
@@ -282,6 +327,7 @@ class DigestScheduler:
                 "seen_epoch": int(self.seen_epoch),
                 "unseen_tombstones": sorted(self.unseen_tombstones),
                 "auto_digest_hold_until": self.auto_digest_hold_until,
+                "digest_runs": int(self.digest_runs),
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -349,9 +395,21 @@ class DigestScheduler:
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
         self.unseen_tombstones = set()  # everything is unseen now anyway
-        # Forget the SEEN-SET, not someone else's first-session hold: this is
-        # the one writer that deliberately skips _merge_disk_seen.
+        # Forget the SEEN-SET — and nothing else. This is the one writer that
+        # deliberately skips _merge_disk_seen, so everything the merge would
+        # have carried has to be adopted by hand: another process's
+        # first-session hold, the digest-history marker (an archive reset
+        # from a process that loaded before the vault's first run would
+        # otherwise write digest_runs back to 0 and re-open the paid,
+        # mark-everything-seen path) and the weekly clock.
         self._adopt_disk_hold(data)
+        self._adopt_disk_clock(data)
+        try:
+            self.digest_runs = max(
+                self.digest_runs, int(data.get("digest_runs", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            pass
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
@@ -413,6 +471,9 @@ class DigestScheduler:
         # our window must be re-added on top, not lost in the swap. Consuming
         # a key also lifts its un-see tombstone: the note really is seen again.
         self._merge_disk_seen()
+        # A run consumed a window: this vault now HAS digest history (also
+        # when the run was paid but empty, hence not last_digest_path).
+        self.digest_runs = max(self.digest_runs, 0) + 1
         if seen_keys:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
@@ -717,9 +778,10 @@ def _synthesize_and_write(
     opens the Insights window itself and must not double-notify via the
     status tick.
     ``verifier_override`` — an explicitly injected verifier runs REGARDLESS
-    of ``VERDICT_ENABLED`` (deliberate: the onboarding success metric is
-    "verdict-surviving connections", also for non-tester users); ``None``
-    keeps the config-gated factory behaviour.
+    of ``VERDICT_ENABLED``. Deliberate, and for product reasons rather than
+    measurement: the first digest is the activation moment, and an
+    ungrounded connection there costs more trust than a missing one.
+    ``None`` keeps the config-gated factory behaviour.
     """
     from src.connections.digest_writer import write_digest_note
     from src.summarizer import APIBillingError
@@ -859,7 +921,16 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
       * ``"error"`` — synthesis/verification failed (nothing consumed),
       * ``"billing"`` — no credits / AI disabled (nothing attempted),
       * ``"busy"`` — another digest run holds the lock (nothing attempted),
-      * ``"unavailable"`` — no API key / non-Claude provider.
+      * ``"unavailable"`` — no API key / non-Claude provider,
+      * ``"not-first-session"`` — this vault already has digest history, so
+        the onboarding semantics (whole corpus as new material, mark-all
+        afterwards) would re-pay for digested notes and wipe the pending
+        weekly backlog. A safety net rather than a common path (today the
+        wizard effectively only runs when setup was never completed —
+        ``bootstrap.ensure_ready`` stamps ``setup_version`` before
+        ``needs_setup`` is asked), and the caller checks
+        :meth:`DigestScheduler.is_first_session` BEFORE offering a paid run,
+        so a user is never asked to approve a run we would then refuse.
     Never raises.
     """
     from src.connections.dismissals import DismissalStore
@@ -874,6 +945,9 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
         # don't burn another paid call that will fail the same way.
         return None, "billing"
     scheduler = get_scheduler()
+    if not scheduler.is_first_session():
+        logger.info("onboarding digest: vault has digest history — skipping")
+        return None, "not-first-session"
     now = datetime.now()
     lock_fd = _acquire_digest_lock()
     if lock_fd is None:

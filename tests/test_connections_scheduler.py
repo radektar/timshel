@@ -825,10 +825,10 @@ def test_gate_skips_unforced_low_potential_run(tmp_path, monkeypatch):
         reset_scheduler_for_tests()
 
 
-def test_onboarding_metrics_recorded_even_without_tester_mode(tmp_path, monkeypatch):
-    """The activation instrument must not vanish for non-tester users."""
-    import json as _json
-
+def test_onboarding_metrics_respect_the_off_switch(tmp_path, monkeypatch):
+    """INSIGHT_METRICS_ENABLED is the user's off-switch — no measurement need
+    (not even the activation instrument) may write into a vault that opted
+    out; feedback_export bundles this file."""
     import src.connections.scheduler as sched
     import src.connections.synthesis as synth_mod
     import src.connections.verdict as verdict_mod
@@ -858,13 +858,16 @@ def test_onboarding_metrics_recorded_even_without_tester_mode(tmp_path, monkeypa
         verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
     )
     sched.run_onboarding_digest(transcriber=None)
-    rows = [
-        _json.loads(line)
-        for line in (vault / ".timshel" / "metrics.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    assert rows and all(r["onboarding"] for r in rows)
+    assert not (vault / ".timshel" / "metrics.jsonl").exists()
+
+    # With the flag ON (tester cohort) the activation row IS written. Fresh
+    # state file: the first run consumed this vault's first session.
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", tmp_path / "cs2.json")
+    reset_scheduler_for_tests()
+    sched.run_onboarding_digest(transcriber=None)
+    rows = (vault / ".timshel" / "metrics.jsonl").read_text(encoding="utf-8")
+    assert '"onboarding": true' in rows
     reset_scheduler_for_tests()
 
 
@@ -1113,3 +1116,188 @@ def test_reset_seen_preserves_another_process_hold(tmp_path):
     app.resume_auto_digest()
     cli.reset_seen()  # ...and does not resurrect a released one
     assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_onboarding_refuses_a_vault_with_digest_history(tmp_path, monkeypatch):
+    """The wizard re-runs on a major.minor upgrade, so an EXISTING vault can
+    reach the import step — onboarding semantics there would re-pay for
+    digested notes and wipe the pending weekly backlog."""
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [("a", "2026-01-01", "t", "alfa"), ("b", "2026-02-01", "t", "beta")],
+    )
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("must not pay on a vault with history")
+
+    monkeypatch.setattr(synth_mod, "ConnectionSynthesizer", _must_not_run)
+    s = get_scheduler()
+    s.mark_ran(datetime(2026, 7, 20, 12, 0, 0), Path("/x/digest.md"))
+    s.register_new_notes(3)  # a genuine pending backlog
+
+    assert sched.run_onboarding_digest(transcriber=None) == (
+        None,
+        "not-first-session",
+    )
+    assert s.new_notes == 3  # backlog intact, not wiped by mark-all
+    reset_scheduler_for_tests()
+
+
+def test_settled_clock_alone_does_not_block_a_first_session(tmp_path, monkeypatch):
+    """settle_after_import sets the clock BEFORE the offer dialog, so the
+    history check must not read it as 'already digested'."""
+    import src.connections.scheduler as sched
+    from src.connections.synthesis import Connection, ConnectionList
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [("a", "2026-01-01", "t", "wspolny watek"), ("b", "2026-02-01", "t", "watek")],
+    )
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    class _Synth:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            return ConnectionList(
+                connections=[
+                    Connection(
+                        type="shared-thread",
+                        notes=["a", "b"],
+                        rationale="why",
+                        evidence=[],
+                        directions=["q1?", "q2?"],
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _Synth()
+    )
+    monkeypatch.setattr(
+        verdict_mod,
+        "ConnectionVerifier",
+        lambda api_key, model: SimpleNamespace(
+            model=model, last_usage=None, verify=lambda *a, **kw: None
+        ),
+    )
+    s = get_scheduler()
+    s.register_new_notes(2)
+    s.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))  # clock now set
+
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert outcome == "written" and path is not None
+    reset_scheduler_for_tests()
+
+
+def test_migration_seeded_seen_set_is_not_digest_history(tmp_path):
+    """A fresh install's migration seeds a non-empty seen-set — treating that
+    as 'history' would refuse the paid run in a GENUINE first session (the
+    activation moment) and tell the user we'd already been analyzing."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.init_seen({"sha256:a", "sha256:b"})  # what _ensure_seen_migrated does
+    s.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))  # clock started
+    assert s.is_first_session() is True
+
+    s.mark_ran(datetime(2026, 7, 28, 13, 0, 0))  # a run consumed a window
+    assert s.is_first_session() is False
+    assert DigestScheduler(state_file).is_first_session() is False  # persisted
+
+
+def test_paid_but_empty_run_counts_as_history(tmp_path):
+    """last_digest_path alone misses paid runs that wrote no digest."""
+    state_file = tmp_path / "cs.json"
+    s = DigestScheduler(state_file)
+    s.mark_ran(datetime(2026, 7, 28, 12, 0, 0), None, seen_keys={"sha256:a"})
+    assert s.last_digest_path is None
+    assert s.is_first_session() is False
+
+
+def test_legacy_state_without_digest_runs_is_history(tmp_path):
+    """State written before digest_runs existed still reads as history."""
+    import json as _json
+
+    state_file = tmp_path / "cs.json"
+    state_file.write_text(
+        _json.dumps(
+            {"last_digest_at": "2026-07-01T00:00:00", "last_digest_path": "/x/d.md"}
+        ),
+        encoding="utf-8",
+    )
+    assert DigestScheduler(state_file).is_first_session() is False
+
+
+def test_digest_runs_survives_unrelated_cross_process_writes(tmp_path):
+    """digest_runs gates a paid, mark-everything-seen run — an unrelated save
+    from another process (a CLI's unsee after a transcription, clear_pending,
+    reset_seen) must not reset it and re-open the first-session path."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)
+    app = DigestScheduler(state_file)  # loaded before the CLI ran
+
+    cli.mark_ran(now, Path("/x/d.md"), seen_keys={"sha256:a"})
+    app.unsee("sha256:fresh")  # routine write by the stale process
+    assert DigestScheduler(state_file).is_first_session() is False
+
+    app.clear_pending()
+    app.reset_seen()  # digest-archive --reset forgets notes, not history
+    assert DigestScheduler(state_file).is_first_session() is False
+
+
+def test_first_session_flow_writes_do_not_erase_history(tmp_path):
+    """The flow's own early writes (hold + settle) must not clobber the
+    marker the flow then checks."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    DigestScheduler(state_file).mark_ran(now, Path("/x/d.md"))
+
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+    app.settle_after_import(now)
+    assert app.is_first_session() is False
+
+
+def test_reset_seen_alone_does_not_erase_digest_history(tmp_path):
+    """reset_seen is the one writer that skips _merge_disk_seen, so it must
+    adopt digest_runs by hand: an archive reset from a process that loaded
+    before the vault's first run would otherwise re-open the paid,
+    mark-everything-seen first-session path."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)
+    app = DigestScheduler(state_file)  # loaded before any digest ran
+
+    # Paid-but-empty run: no digest file, so only the marker records it.
+    cli.mark_ran(now, None, seen_keys={"sha256:a"})
+    assert DigestScheduler(state_file).is_first_session() is False
+
+    app.reset_seen()  # `make digest-archive RESET=1` from the stale process
+    assert DigestScheduler(state_file).is_first_session() is False
+    assert app.is_first_session() is False
+
+
+def test_reset_seen_does_not_roll_back_the_weekly_clock(tmp_path):
+    """_save writes the clock from memory, so the archive reset must adopt a
+    newer one from disk — otherwise it re-opens the cadence over notes
+    another process already digested."""
+    state_file = tmp_path / "cs.json"
+    first = datetime(2026, 7, 20, 12, 0, 0)
+    later = datetime(2026, 7, 28, 12, 0, 0)
+    DigestScheduler(state_file).mark_ran(first, Path("/x/first.md"))
+
+    app = DigestScheduler(state_file)  # loaded with the OLD clock
+    DigestScheduler(state_file).mark_ran(later, Path("/x/later.md"))
+
+    app.reset_seen()
+    fresh = DigestScheduler(state_file)
+    assert fresh.last_digest_at == later.isoformat(timespec="seconds")
+    assert fresh.last_digest_path == "/x/later.md"

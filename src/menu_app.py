@@ -1998,6 +1998,17 @@ class TimshelMenuApp(rumps.App):
                 )
                 return
 
+            if not scheduler.is_first_session():
+                # Never offer a paid run we would then refuse: this vault has
+                # digest history, so the imported notes join the normal
+                # weekly path instead of a first-session analysis.
+                send_notification(
+                    "Timshel",
+                    "Notes imported",
+                    "They'll join the next regular digest.",
+                )
+                return
+
             from src.connections.scheduler import estimate_digest_potential
 
             try:
@@ -2109,6 +2120,11 @@ class TimshelMenuApp(rumps.App):
             "unavailable": (
                 "No Claude API key is configured, so the analysis didn't "
                 "run. Add one in Settings, then use 'Generate digest now'."
+            ),
+            "not-first-session": (
+                "Your notes were imported. Timshel has already been "
+                "analyzing this vault, so they'll join the next regular "
+                "digest instead of a separate first-run analysis."
             ),
         }
         message = messages.get(
