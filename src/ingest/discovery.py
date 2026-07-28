@@ -18,11 +18,17 @@ Rules encoded here once:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Iterator, List, Optional
 
 from src.ingest.adapters import SUPPORTED_SUFFIXES
-from src.logger import logger
+
+# Plain stdlib handle on the app logger: importing src.logger at module scope
+# would run setup_logger() — creating the vault + app dirs and freezing the
+# Config singleton — merely because someone imported src.ingest, which this
+# package's docstring explicitly promises not to do.
+logger = logging.getLogger("timshel")
 
 #: Traversal cap — a user may point at ``~``; we must not walk forever.
 MAX_SCANNED_ENTRIES = 50_000

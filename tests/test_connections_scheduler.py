@@ -1082,3 +1082,34 @@ def test_settle_never_rolls_the_clock_back(tmp_path):
 
     stale.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))
     assert DigestScheduler(state_file).last_digest_at.startswith("2026-07-20")
+
+
+def test_hold_ownership_ends_with_the_release(tmp_path):
+    """After releasing, a hold set by ANOTHER process must be adopted again
+    — the released owner must not overwrite it with its stale None."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+    app.resume_auto_digest()
+
+    other = DigestScheduler(state_file)
+    other.suspend_auto_digest(now)  # a second flow holds it now
+    app.unsee("sha256:transcript")  # unrelated write by the ex-owner
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+
+
+def test_reset_seen_preserves_another_process_hold(tmp_path):
+    """`digest_archive --reset` forgets the seen-set, not a live hold."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)  # loaded before the hold exists
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+
+    cli.reset_seen()
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is True
+
+    app.resume_auto_digest()
+    cli.reset_seen()  # ...and does not resurrect a released one
+    assert DigestScheduler(state_file).auto_digest_on_hold(now) is False

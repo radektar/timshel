@@ -107,6 +107,9 @@ class DigestScheduler:
         self.auto_digest_hold_until = None
         self._hold_owned = True  # releasing is authoritative too
         self._save()
+        # Ownership ends with the release: a later hold set by ANOTHER
+        # process must be adopted again, not overwritten by our stale None.
+        self._hold_owned = False
 
     def auto_digest_on_hold(self, now: datetime) -> bool:
         """True while a first-session hold is active (this process or another).
@@ -149,6 +152,23 @@ class DigestScheduler:
             self.last_digest_at = now.isoformat(timespec="seconds")
         self.new_notes = min(self.new_notes, config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
         self._save()
+
+    def _adopt_disk_hold(self, data: Optional[dict] = None) -> None:
+        """Take the on-disk hold unless THIS process owns it.
+
+        The first-session hold belongs to whoever set it: a writer that
+        doesn't own it must carry the disk value through its own save, or an
+        unrelated write (a CLI's unsee after a transcription, an archive
+        reset) would either clear a live hold — letting that process pay for
+        a weekly digest mid-onboarding — or write a released one back and
+        freeze the cadence for the rest of the TTL.
+        """
+        if self._hold_owned:
+            return
+        if data is None:
+            data = self._read_disk_state() or {}
+        hold = data.get("auto_digest_hold_until")
+        self.auto_digest_hold_until = hold if isinstance(hold, str) else None
 
     def _read_disk_state(self) -> Optional[dict]:
         """Parse the state file, or None. The ONE place the schema is read."""
@@ -222,9 +242,7 @@ class DigestScheduler:
             # CLI's unsee) can neither clear a live hold — letting that
             # process pay for a weekly digest mid-onboarding — nor write a
             # released one back and freeze the cadence for the whole TTL.
-            if not self._hold_owned:
-                hold = data.get("auto_digest_hold_until")
-                self.auto_digest_hold_until = hold if isinstance(hold, str) else None
+            self._adopt_disk_hold(data)
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
             # Runs even with no seen-set on disk (pre-migration): the
@@ -331,6 +349,9 @@ class DigestScheduler:
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
         self.unseen_tombstones = set()  # everything is unseen now anyway
+        # Forget the SEEN-SET, not someone else's first-session hold: this is
+        # the one writer that deliberately skips _merge_disk_seen.
+        self._adopt_disk_hold(data)
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
