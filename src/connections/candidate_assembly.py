@@ -67,6 +67,20 @@ _HEADING_LINE_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t].*$", re.MULTILINE)
 _GENERATED_TAG_KEY = TagIndex.normalize_tag(GENERATED_TAG)
 
 
+def signal_tags(note: "NoteRef") -> Set[str]:
+    """The note's tags MINUS the app's own bookkeeping tag.
+
+    Every channel that treats a shared tag as evidence of a shared thread must
+    read tags through here. GENERATED_TAG says "this file came out of our
+    transcriber" — it is true of every note the app writes, so as a ranking
+    signal it means nothing, and as a GATE (the stance channel's anchor) it
+    means every pair of notes is about the same thing. The note's own ``tags``
+    field is untouched: it is displayed to the user and sent to synthesis as
+    context, where it is honest metadata rather than a similarity signal.
+    """
+    return note.norm_tags - {_GENERATED_TAG_KEY}
+
+
 @dataclass
 class NoteRef:
     """A single transcript note, reduced to what synthesis needs."""
@@ -441,11 +455,7 @@ def _connectable_window(
         # app's own bookkeeping ranking the user's material. Measured on the
         # 183-note dogfood vault (tag on 151): the selected window is the
         # same 15 notes, only their internal order moves.
-        tags = sum(
-            1
-            for t in note.norm_tags
-            if t != _GENERATED_TAG_KEY and 2 <= tag_df[t] < ubiquity_cut
-        )
+        tags = sum(1 for t in signal_tags(note) if 2 <= tag_df[t] < ubiquity_cut)
         ents = sum(
             1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut
         )
@@ -744,12 +754,15 @@ def assemble_candidates(
     window_basenames = {n.basename for n in window}
     older = [n for n in corpus if n.basename not in window_basenames]
 
+    # signal_tags, not norm_tags: with the app's own tag in the set every
+    # transcribed note in the archive "shares a tag" with the window, so the
+    # channel's own filter stops filtering and its tail ranks by date.
     window_tags: Set[str] = set()
     for note in window:
-        window_tags |= note.norm_tags
+        window_tags |= signal_tags(note)
 
     def shared(note: NoteRef) -> int:
-        return len(note.norm_tags & window_tags)
+        return len(signal_tags(note) & window_tags)
 
     tag_neighbors = sorted(
         [n for n in older if shared(n) > 0],

@@ -29,7 +29,7 @@ import re
 from dataclasses import dataclass
 from typing import FrozenSet, List, Optional, Set
 
-from src.connections.candidate_assembly import NoteRef
+from src.connections.candidate_assembly import NoteRef, signal_tags
 from src.connections.entities import entity_keys
 
 _WORD_RE = re.compile(r"[a-ząćęłńóśźż]+", re.IGNORECASE)
@@ -268,8 +268,18 @@ def polarity_score(text: str) -> float:
 
 
 def _anchors(note: NoteRef) -> Set[str]:
-    """Drift-surviving anchors: named entities + normalized tags."""
-    return entity_keys(note.summary_md) | set(note.norm_tags)
+    """Drift-surviving anchors: named entities + normalized SIGNAL tags.
+
+    The anchor is what makes a polarity flip a contradiction rather than two
+    unrelated opinions — it answers "about WHAT do these notes disagree". The
+    app's own tag answers "both files came out of our transcriber", which is
+    true of every pair in the vault: including it turned this gate into a
+    pass-through and left the channel picking by polarity alone. Measured on
+    the 183-note dogfood vault, 3-note window: 148 of 180 older notes cleared
+    the gate, 46 survived the polarity test, and 39 of those 46 qualified on
+    nothing but the app's tag.
+    """
+    return entity_keys(note.summary_md) | signal_tags(note)
 
 
 def stance_flip_neighbors(
