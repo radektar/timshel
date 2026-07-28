@@ -51,30 +51,17 @@ _BRIDGE_RARE_DF = 4
 # :func:`_connectable_window`).
 SMALL_CORPUS_NOTES = 4
 
-# The section headings EVERY generated note carries (src/summarizer.py: the
-# PL/EN forms the prompt pins). They are shared by construction, never a
-# thread. Matched as STEMS because Polish inflects, and applied ONLY to small
-# corpora, where the ubiquity cut is relaxed — above that the cut removes
-# them anyway and large-corpus scoring must stay identical to the validated
-# behaviour. Deliberately NOT here: "notatka"/"transkrypcja" are content
-# words in a product whose users record about note-taking (and the
-# transcript marker never reaches summary_md anyway) — filtering them
-# produced a false "no connectable material" flag on real imports.
-_STRUCTURAL_STEMS = (
-    "podsumowan",
-    "kluczow",
-    "stanowisk",
-    "wątk",
-    "watk",
-    "cytat",
-    "dzialan",
-    "działan",
-    "summary",
-    "keypoint",
-    "stance",
-    "quote",
-    "todo",
-)
+# Markdown heading lines. EVERY generated note carries the same section
+# skeleton (src/summarizer.py pins the PL and EN forms), so those tokens are
+# shared by construction and never a thread. Cut STRUCTURALLY, not with a
+# word blocklist: a blocklist has to guess Polish inflections, silently rots
+# when the summarizer prompt changes, and inevitably lists words that are
+# real content in this product ("notatki" for users who record about
+# note-taking; "key"/"open"/"action" in the English skeleton). Applied ONLY
+# to small corpora, where the ubiquity cut is relaxed — above that the cut
+# removes the skeleton anyway and the text must stay byte-identical to keep
+# large-corpus scoring on the validated behaviour.
+_HEADING_LINE_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t].*$", re.MULTILINE)
 
 
 @dataclass
@@ -204,6 +191,11 @@ def _tokenize(text: str) -> List[str]:
             continue
         tokens.append(tok)
     return tokens
+
+
+def _strip_headings(text: str) -> str:
+    """Drop markdown heading LINES — the note skeleton, not its content."""
+    return _HEADING_LINE_RE.sub("", text)
 
 
 def clear_tokenize_cache() -> None:
@@ -420,7 +412,10 @@ def _connectable_window(
     # the run reported window_fallback=True ("no connectable material") for
     # the most connectable corpora there are, poisoning the rollout signal.
     # Small corpora only: relax the cuts (a thread through every note is the
-    # connection) and filter boilerplate stems explicitly. Above the
+    # connection) and drop the section skeleton structurally, because with
+    # the cut relaxed those shared heading tokens score in EVERY note — no
+    # note can reach 0, and the "no connectable material" flag could then
+    # never fire at all (the same lie, in the other direction). Above the
     # threshold every value is arithmetically identical to the validated
     # behaviour, so large-corpus windows never shift.
     small = n_corpus <= SMALL_CORPUS_NOTES
@@ -437,12 +432,10 @@ def _connectable_window(
         ents = sum(
             1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut
         )
-        rare = sum(
-            1
-            for w in set(_tokenize(note.summary_md))
-            if not (small and w.startswith(_STRUCTURAL_STEMS))
-            and 2 <= df[w] <= rare_cut
-        )
+        # Same text above the threshold (cached tokenisation, identical
+        # scoring); skeleton-free below it.
+        text = _strip_headings(note.summary_md) if small else note.summary_md
+        rare = sum(1 for w in set(_tokenize(text)) if 2 <= df[w] <= rare_cut)
         return 2.0 * tags + 1.5 * ents + 1.0 * rare
 
     scored = [(score(n), n) for n in unseen]

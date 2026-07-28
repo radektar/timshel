@@ -1264,3 +1264,22 @@ def test_first_session_flow_writes_do_not_erase_history(tmp_path):
     app.suspend_auto_digest(now)
     app.settle_after_import(now)
     assert app.is_first_session() is False
+
+
+def test_reset_seen_alone_does_not_erase_digest_history(tmp_path):
+    """reset_seen is the one writer that skips _merge_disk_seen, so it must
+    adopt digest_runs by hand: an archive reset from a process that loaded
+    before the vault's first run would otherwise re-open the paid,
+    mark-everything-seen first-session path."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)
+    app = DigestScheduler(state_file)  # loaded before any digest ran
+
+    # Paid-but-empty run: no digest file, so only the marker records it.
+    cli.mark_ran(now, None, seen_keys={"sha256:a"})
+    assert DigestScheduler(state_file).is_first_session() is False
+
+    app.reset_seen()  # `make digest-archive RESET=1` from the stale process
+    assert DigestScheduler(state_file).is_first_session() is False
+    assert app.is_first_session() is False

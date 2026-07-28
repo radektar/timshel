@@ -548,3 +548,67 @@ def test_content_words_about_notes_are_not_filtered_as_boilerplate(vault):
         window_mode="connectable",
     )
     assert cs.window_fallback is False  # the shared thread was seen
+
+
+_PL_HEADINGS = (
+    "Podsumowanie",
+    "Kluczowe punkty",
+    "Stanowiska",
+    "Wątki otwarte",
+    "Cytaty",
+    "Lista działań (To-do)",
+)
+_EN_HEADINGS = (
+    "Summary",
+    "Key points",
+    "Stances",
+    "Open threads",
+    "Quotes",
+    "Action items",
+)
+
+
+def _skeleton(headings, words):
+    """A generated note: the shared section skeleton + unique content only."""
+    return "\n\n".join(f"## {h}\n\n{w}" for h, w in zip(headings, words))
+
+
+@pytest.mark.parametrize("headings", [_PL_HEADINGS, _EN_HEADINGS])
+def test_small_corpus_with_no_shared_thread_is_reported_as_fallback(headings):
+    """The section skeleton is shared by construction, so with the ubiquity
+    cut relaxed it scored every small-corpus note non-zero — "no connectable
+    material" could then never be reported, whatever the notes said."""
+    from src.connections.candidate_assembly import _connectable_window
+
+    topics = [
+        ("rower", "lancuch", "przerzutka", "opona", "hamulec", "siodelko"),
+        ("ciasto", "drozdze", "piekarnik", "maka", "cukier", "jajka"),
+        ("podatek", "deklaracja", "urzad", "faktura", "ksiegowa", "termin"),
+    ]
+    corpus = [
+        _note(f"n{i}", f"2026-07-0{i + 1}", summary=_skeleton(headings, words))
+        for i, words in enumerate(topics)
+    ]
+    window, fallback = _connectable_window(corpus, corpus, 15)
+    assert fallback is True  # nothing but the skeleton is shared
+    assert [n.basename for n in window] == ["n2", "n1", "n0"]  # newest-first
+
+    # ...and the flag still fires the other way: one genuine shared thread.
+    joined = list(corpus)
+    joined[0] = _note(
+        "n0",
+        "2026-07-01",
+        summary=_skeleton(headings, ("podatek", "lancuch", "opona", "x", "y", "z")),
+    )
+    _, fallback_with_thread = _connectable_window(joined, joined, 15)
+    assert fallback_with_thread is False
+
+
+def test_heading_stripping_keeps_content_on_the_same_line_as_no_heading():
+    """Only LINES that are headings go — a '#' inside prose is content."""
+    from src.connections.candidate_assembly import _strip_headings
+
+    text = "## Podsumowanie\n\nsprawa dotyczy #podatku i kanalu C#\n### Cytaty\nx"
+    stripped = _strip_headings(text)
+    assert "Podsumowanie" not in stripped and "Cytaty" not in stripped
+    assert "#podatku" in stripped and "C#" in stripped

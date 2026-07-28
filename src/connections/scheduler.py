@@ -386,9 +386,19 @@ class DigestScheduler:
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
         self.unseen_tombstones = set()  # everything is unseen now anyway
-        # Forget the SEEN-SET, not someone else's first-session hold: this is
-        # the one writer that deliberately skips _merge_disk_seen.
+        # Forget the SEEN-SET, not someone else's first-session hold — and
+        # not the digest-history marker: this is the one writer that
+        # deliberately skips _merge_disk_seen, so it must adopt both by hand.
+        # An archive reset from a process that loaded before the vault's
+        # first run would otherwise write digest_runs back to 0 and re-open
+        # the paid, mark-everything-seen first-session path.
         self._adopt_disk_hold(data)
+        try:
+            self.digest_runs = max(
+                self.digest_runs, int(data.get("digest_runs", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            pass
         self._save()
 
     def note_gate_skip(self, now: datetime) -> None:
