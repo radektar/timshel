@@ -219,10 +219,10 @@ class DigestScheduler:
             self.unseen_tombstones = set(data.get("unseen_tombstones", []) or [])
             hold = data.get("auto_digest_hold_until")
             self.auto_digest_hold_until = hold if isinstance(hold, str) else None
-            self.digest_runs = int(data.get("digest_runs", 0) or 0)
             # Persisted pending (backfill leftover): without it, a restart
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
+            self.digest_runs = int(data.get("digest_runs", 0) or 0)
         except (TypeError, ValueError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
 
@@ -269,6 +269,16 @@ class DigestScheduler:
             # process pay for a weekly digest mid-onboarding — nor write a
             # released one back and freeze the cadence for the whole TTL.
             self._adopt_disk_hold(data)
+            # digest_runs is monotonic like the seen-set: adopt the disk
+            # value so an unrelated write (a CLI's unsee, clear_pending,
+            # reset_seen) cannot reset the ONE marker that decides whether a
+            # vault still qualifies for the first-session (paid, mark-all) run.
+            try:
+                self.digest_runs = max(
+                    self.digest_runs, int(data.get("digest_runs", 0) or 0)
+                )
+            except (TypeError, ValueError):
+                pass
             # A tombstoned key stays un-seen no matter which side's union
             # re-added it — until mark_ran lifts the tombstone on consumption.
             # Runs even with no seen-set on disk (pre-migration): the

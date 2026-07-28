@@ -51,13 +51,30 @@ _BRIDGE_RARE_DF = 4
 # :func:`_connectable_window`).
 SMALL_CORPUS_NOTES = 4
 
-# Section headers and boilerplate every generated note carries. Matched as
-# STEMS (Polish inflects: notatka/notatki/notatek) and applied ONLY to small
+# The section headings EVERY generated note carries (src/summarizer.py: the
+# PL/EN forms the prompt pins). They are shared by construction, never a
+# thread. Matched as STEMS because Polish inflects, and applied ONLY to small
 # corpora, where the ubiquity cut is relaxed — above that the cut removes
-# them anyway, and large-corpus scoring must stay identical to the validated
-# behaviour. Without this, "Podsumowanie" alone would make any two notes
-# look connected.
-_STRUCTURAL_STEMS = ("podsumowan", "transkrypcj", "notatk")
+# them anyway and large-corpus scoring must stay identical to the validated
+# behaviour. Deliberately NOT here: "notatka"/"transkrypcja" are content
+# words in a product whose users record about note-taking (and the
+# transcript marker never reaches summary_md anyway) — filtering them
+# produced a false "no connectable material" flag on real imports.
+_STRUCTURAL_STEMS = (
+    "podsumowan",
+    "kluczow",
+    "stanowisk",
+    "wątk",
+    "watk",
+    "cytat",
+    "dzialan",
+    "działan",
+    "summary",
+    "keypoint",
+    "stance",
+    "quote",
+    "todo",
+)
 
 
 @dataclass

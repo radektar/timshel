@@ -1233,3 +1233,34 @@ def test_legacy_state_without_digest_runs_is_history(tmp_path):
         encoding="utf-8",
     )
     assert DigestScheduler(state_file).is_first_session() is False
+
+
+def test_digest_runs_survives_unrelated_cross_process_writes(tmp_path):
+    """digest_runs gates a paid, mark-everything-seen run — an unrelated save
+    from another process (a CLI's unsee after a transcription, clear_pending,
+    reset_seen) must not reset it and re-open the first-session path."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    cli = DigestScheduler(state_file)
+    app = DigestScheduler(state_file)  # loaded before the CLI ran
+
+    cli.mark_ran(now, Path("/x/d.md"), seen_keys={"sha256:a"})
+    app.unsee("sha256:fresh")  # routine write by the stale process
+    assert DigestScheduler(state_file).is_first_session() is False
+
+    app.clear_pending()
+    app.reset_seen()  # digest-archive --reset forgets notes, not history
+    assert DigestScheduler(state_file).is_first_session() is False
+
+
+def test_first_session_flow_writes_do_not_erase_history(tmp_path):
+    """The flow's own early writes (hold + settle) must not clobber the
+    marker the flow then checks."""
+    state_file = tmp_path / "cs.json"
+    now = datetime(2026, 7, 28, 12, 0, 0)
+    DigestScheduler(state_file).mark_ran(now, Path("/x/d.md"))
+
+    app = DigestScheduler(state_file)
+    app.suspend_auto_digest(now)
+    app.settle_after_import(now)
+    assert app.is_first_session() is False

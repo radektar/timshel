@@ -532,3 +532,19 @@ def test_large_corpus_scoring_unchanged_by_small_corpus_relaxation(vault):
     assert len(window) == 5 and fallback is False
     again, _ = _connectable_window(corpus, corpus, 5)
     assert [n.basename for n in window] == [n.basename for n in again]
+
+
+def test_content_words_about_notes_are_not_filtered_as_boilerplate(vault):
+    """ "notatki"/"transkrypcja" are content in a product about note-taking —
+    filtering them reported "no connectable material" for a real import."""
+    _write_note(vault, "a", "2026-01-01", summary="moje notatki i ich porzadek")
+    _write_note(vault, "b", "2026-02-01", summary="notatki wymagaja porzadku")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert cs.window_fallback is False  # the shared thread was seen
