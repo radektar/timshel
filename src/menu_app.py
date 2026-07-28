@@ -2110,6 +2110,11 @@ class TimshelMenuApp(rumps.App):
                 "No Claude API key is configured, so the analysis didn't "
                 "run. Add one in Settings, then use 'Generate digest now'."
             ),
+            "not-first-session": (
+                "Your notes were imported. Timshel has already been "
+                "analyzing this vault, so they'll join the next regular "
+                "digest instead of a separate first-run analysis."
+            ),
         }
         message = messages.get(
             outcome,

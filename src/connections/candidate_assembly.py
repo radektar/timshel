@@ -46,6 +46,25 @@ _BM25_B = 0.75
 # rare tokens: far apart in topic, joined by one specific thread.
 _BRIDGE_RARE_DF = 4
 
+# Below this size a corpus has no "ubiquitous" terms to filter out — a thread
+# through every note IS the connection (see :func:`_connectable_window`).
+SMALL_CORPUS_NOTES = 4
+
+# Section headers and boilerplate every generated note carries. They are not
+# threads; on a large corpus the ubiquity cut removes them anyway, but a small
+# corpus needs them named explicitly (otherwise "Podsumowanie" alone would
+# make any two notes look connected).
+_STRUCTURAL_TOKENS = frozenset(
+    {
+        "podsumowanie",
+        "transkrypcja",
+        "summary",
+        "transcript",
+        "notatka",
+        "note",
+    }
+)
+
 
 @dataclass
 class NoteRef:
@@ -383,20 +402,33 @@ def _connectable_window(
     df = _corpus_doc_freq(corpus)
 
     n_corpus = len(corpus)
+    # "Shared by SOME, not all" needs a corpus big enough for "all" to mean
+    # something. In a 2-3 note import a thread running through EVERY note is
+    # the genuine connection, not an artifact — applying the ubiquity cut
+    # there scored every note 0, so the window fell back to newest-first and
+    # the run reported window_fallback=True ("no connectable material") for
+    # the most connectable corpora there are, poisoning the rollout signal.
+    ubiquity_cut = n_corpus if n_corpus > SMALL_CORPUS_NOTES else n_corpus + 1
+    rare_cut = (
+        max(_BRIDGE_RARE_DF, 2)
+        if n_corpus <= SMALL_CORPUS_NOTES
+        else min(_BRIDGE_RARE_DF, n_corpus - 1)
+    )
 
     def score(note: NoteRef) -> float:
-        # A thread is shared by SOME notes, not all: df >= 2 makes a term
-        # evidence of a connection, df < corpus size drops ubiquitous
-        # artifacts (the "## Podsumowanie" header token, an every-note tag)
-        # that would otherwise score uniformly in small corpora. Weights:
+        # df >= 2 makes a term evidence of a shared thread; the upper cut
+        # drops ubiquitous artifacts (the "## Podsumowanie" header token, an
+        # every-note tag) in corpora large enough for them to exist. Weights:
         # curated tags strongest, entities survive vocabulary drift, rare
         # tokens (the bridge channel's band) noisiest.
-        tags = sum(1 for t in note.norm_tags if 2 <= tag_df[t] < n_corpus)
-        ents = sum(1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < n_corpus)
+        tags = sum(1 for t in note.norm_tags if 2 <= tag_df[t] < ubiquity_cut)
+        ents = sum(
+            1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut
+        )
         rare = sum(
             1
             for w in set(_tokenize(note.summary_md))
-            if 2 <= df[w] <= min(_BRIDGE_RARE_DF, n_corpus - 1)
+            if w not in _STRUCTURAL_TOKENS and 2 <= df[w] <= rare_cut
         )
         return 2.0 * tags + 1.5 * ents + 1.0 * rare
 

@@ -493,3 +493,20 @@ def test_clear_tokenize_cache_releases_retained_texts():
     assert _tokenize.cache_info().currsize >= 2
     clear_tokenize_cache()
     assert _tokenize.cache_info().currsize == 0
+
+
+def test_connectable_window_small_corpus_is_not_reported_as_fallback(vault):
+    """Two tightly related notes are the MOST connectable corpus there is —
+    reporting window_fallback=True there poisoned the rollout signal."""
+    _write_note(vault, "a", "2026-01-01", tags="sauna", summary="projekt sauna deski")
+    _write_note(vault, "b", "2026-02-01", tags="sauna", summary="sauna deski montaz")
+    cs = assemble_candidates(
+        vault,
+        None,
+        DismissalStore(vault),
+        first_run_window=2,
+        seen_keys=set(),
+        window_mode="connectable",
+    )
+    assert cs.window_basenames == {"a", "b"}
+    assert cs.window_fallback is False  # genuine material, not a fallback

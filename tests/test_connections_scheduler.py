@@ -825,10 +825,10 @@ def test_gate_skips_unforced_low_potential_run(tmp_path, monkeypatch):
         reset_scheduler_for_tests()
 
 
-def test_onboarding_metrics_recorded_even_without_tester_mode(tmp_path, monkeypatch):
-    """The activation instrument must not vanish for non-tester users."""
-    import json as _json
-
+def test_onboarding_metrics_respect_the_off_switch(tmp_path, monkeypatch):
+    """INSIGHT_METRICS_ENABLED is the user's off-switch — no measurement need
+    (not even the activation instrument) may write into a vault that opted
+    out; feedback_export bundles this file."""
     import src.connections.scheduler as sched
     import src.connections.synthesis as synth_mod
     import src.connections.verdict as verdict_mod
@@ -858,13 +858,16 @@ def test_onboarding_metrics_recorded_even_without_tester_mode(tmp_path, monkeypa
         verdict_mod, "ConnectionVerifier", lambda api_key, model: object()
     )
     sched.run_onboarding_digest(transcriber=None)
-    rows = [
-        _json.loads(line)
-        for line in (vault / ".timshel" / "metrics.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    assert rows and all(r["onboarding"] for r in rows)
+    assert not (vault / ".timshel" / "metrics.jsonl").exists()
+
+    # With the flag ON (tester cohort) the activation row IS written. Fresh
+    # state file: the first run consumed this vault's first session.
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    monkeypatch.setattr(config, "CONNECTIONS_STATE_FILE", tmp_path / "cs2.json")
+    reset_scheduler_for_tests()
+    sched.run_onboarding_digest(transcriber=None)
+    rows = (vault / ".timshel" / "metrics.jsonl").read_text(encoding="utf-8")
+    assert '"onboarding": true' in rows
     reset_scheduler_for_tests()
 
 
@@ -1113,3 +1116,82 @@ def test_reset_seen_preserves_another_process_hold(tmp_path):
     app.resume_auto_digest()
     cli.reset_seen()  # ...and does not resurrect a released one
     assert DigestScheduler(state_file).auto_digest_on_hold(now) is False
+
+
+def test_onboarding_refuses_a_vault_with_digest_history(tmp_path, monkeypatch):
+    """The wizard re-runs on a major.minor upgrade, so an EXISTING vault can
+    reach the import step — onboarding semantics there would re-pay for
+    digested notes and wipe the pending weekly backlog."""
+    import src.connections.scheduler as sched
+    import src.connections.synthesis as synth_mod
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [("a", "2026-01-01", "t", "alfa"), ("b", "2026-02-01", "t", "beta")],
+    )
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("must not pay on a vault with history")
+
+    monkeypatch.setattr(synth_mod, "ConnectionSynthesizer", _must_not_run)
+    s = get_scheduler()
+    s.mark_ran(datetime(2026, 7, 20, 12, 0, 0), Path("/x/digest.md"))
+    s.register_new_notes(3)  # a genuine pending backlog
+
+    assert sched.run_onboarding_digest(transcriber=None) == (
+        None,
+        "not-first-session",
+    )
+    assert s.new_notes == 3  # backlog intact, not wiped by mark-all
+    reset_scheduler_for_tests()
+
+
+def test_settled_clock_alone_does_not_block_a_first_session(tmp_path, monkeypatch):
+    """settle_after_import sets the clock BEFORE the offer dialog, so the
+    history check must not read it as 'already digested'."""
+    import src.connections.scheduler as sched
+    from src.connections.synthesis import Connection, ConnectionList
+
+    _onboarding_env(
+        tmp_path,
+        monkeypatch,
+        [("a", "2026-01-01", "t", "wspolny watek"), ("b", "2026-02-01", "t", "watek")],
+    )
+    import src.connections.synthesis as synth_mod
+    import src.connections.verdict as verdict_mod
+
+    class _Synth:
+        model = sched.ONBOARDING_DIGEST_MODEL
+        last_usage = None
+
+        def synthesize(self, *a, **kw):
+            return ConnectionList(
+                connections=[
+                    Connection(
+                        type="shared-thread",
+                        notes=["a", "b"],
+                        rationale="why",
+                        evidence=[],
+                        directions=["q1?", "q2?"],
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        synth_mod, "ConnectionSynthesizer", lambda api_key, model: _Synth()
+    )
+    monkeypatch.setattr(
+        verdict_mod,
+        "ConnectionVerifier",
+        lambda api_key, model: SimpleNamespace(
+            model=model, last_usage=None, verify=lambda *a, **kw: None
+        ),
+    )
+    s = get_scheduler()
+    s.register_new_notes(2)
+    s.settle_after_import(datetime(2026, 7, 28, 12, 0, 0))  # clock now set
+
+    path, outcome = sched.run_onboarding_digest(transcriber=None)
+    assert outcome == "written" and path is not None
+    reset_scheduler_for_tests()

@@ -150,7 +150,8 @@ def build_record(
     ``cost_usd`` is the run TOTAL; ``synthesis_cost_usd`` preserves the v1
     meaning. Verdict fields are zero/empty when the pass did not run.
     ``onboarding`` marks the first-session run (the activation instrument:
-    "≥1 verdict-surviving connection in session one" is measured off it);
+    "≥1 verdict-surviving connection in session one", read off the tester
+    cohort where metrics are enabled);
     ``window_fallback`` flags an onboarding retry window that degraded to
     newest-first (no connectable material left) — additive fields, schema
     stays v2.
@@ -221,16 +222,16 @@ def record_digest_metrics(
 ) -> bool:
     """Append one digest metrics record to ``metrics.jsonl``. Never raises.
 
-    Gated by ``config.INSIGHT_METRICS_ENABLED`` — EXCEPT onboarding rows,
-    which are always recorded: they are the activation instrument ("≥1
-    verdict-surviving connection in session one") and the whole reason the
-    onboarding run pays for its verdict pass even for non-tester users. The
-    row carries counts and the digest filename, no note content.
+    Gated by ``config.INSIGHT_METRICS_ENABLED`` — NO exceptions, including
+    onboarding rows. The flag is the user's off-switch ("disabled means
+    nothing lands in my vault", and ``feedback_export`` bundles this file),
+    so a measurement need never overrides it: the activation instrument is
+    read off the tester cohort, where the flag is on by design.
 
     Returns True on a successful append, False if disabled, misconfigured,
     or the write failed (all logged).
     """
-    if not onboarding and not getattr(config, "INSIGHT_METRICS_ENABLED", True):
+    if not getattr(config, "INSIGHT_METRICS_ENABLED", True):
         return False
     try:
         out = Path(path) if path is not None else metrics_log_path()

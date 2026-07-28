@@ -717,9 +717,10 @@ def _synthesize_and_write(
     opens the Insights window itself and must not double-notify via the
     status tick.
     ``verifier_override`` — an explicitly injected verifier runs REGARDLESS
-    of ``VERDICT_ENABLED`` (deliberate: the onboarding success metric is
-    "verdict-surviving connections", also for non-tester users); ``None``
-    keeps the config-gated factory behaviour.
+    of ``VERDICT_ENABLED``. Deliberate, and for product reasons rather than
+    measurement: the first digest is the activation moment, and an
+    ungrounded connection there costs more trust than a missing one.
+    ``None`` keeps the config-gated factory behaviour.
     """
     from src.connections.digest_writer import write_digest_note
     from src.summarizer import APIBillingError
@@ -859,7 +860,13 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
       * ``"error"`` — synthesis/verification failed (nothing consumed),
       * ``"billing"`` — no credits / AI disabled (nothing attempted),
       * ``"busy"`` — another digest run holds the lock (nothing attempted),
-      * ``"unavailable"`` — no API key / non-Claude provider.
+      * ``"unavailable"`` — no API key / non-Claude provider,
+      * ``"not-first-session"`` — this vault already has digest history, so
+        the onboarding semantics (whole corpus as new material, mark-all
+        afterwards) would re-pay for digested notes and wipe the pending
+        weekly backlog. The wizard re-runs on every major.minor upgrade, so
+        an existing user CAN reach the import step; their notes go through
+        the normal weekly path (or the explicit ``make digest-archive``).
     Never raises.
     """
     from src.connections.dismissals import DismissalStore
@@ -874,6 +881,19 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
         # don't burn another paid call that will fail the same way.
         return None, "billing"
     scheduler = get_scheduler()
+    scheduler.refresh_from_disk()
+    # History = a digest was written, or notes were consumed/migrated.
+    # NOT last_digest_at alone: settle_after_import sets the clock right
+    # after the import (before the offer dialog) precisely so no unapproved
+    # run can fire, so the clock is set in a genuine first session too.
+    if scheduler.last_digest_path is not None or scheduler.seen_note_keys:
+        # An upgrade re-runs the wizard, so an existing vault CAN reach the
+        # import step. Onboarding semantics would ignore the seen-set —
+        # re-paying for already-digested notes — and then mark the whole
+        # corpus seen, silently dropping notes queued for the next weekly
+        # digest.
+        logger.info("onboarding digest: vault has digest history — skipping")
+        return None, "not-first-session"
     now = datetime.now()
     lock_fd = _acquire_digest_lock()
     if lock_fd is None:
