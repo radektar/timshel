@@ -936,21 +936,12 @@ class SetupWizard:
 
     @staticmethod
     def _count_importable(folder: Path) -> int:
-        """Importable files under ``folder`` (same filter as import_text).
+        """Importable files under ``folder`` — the SAME walk the import uses
+        (:func:`src.ingest.list_importable`), so the number the user confirms
+        is exactly the number that gets imported and paid for."""
+        from src.ingest import list_importable
 
-        Bounded walk: the count runs synchronously on the wizard path, and a
-        user picking their home directory must not hang the wizard — after
-        50k entries the count is "enough to know it's a lot".
-        """
-        from src.ingest import SUPPORTED_SUFFIXES
-
-        count = 0
-        for i, p in enumerate(Path(folder).rglob("*")):
-            if i > 50_000:
-                break
-            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES:
-                count += 1
-        return count
+        return len(list_importable(Path(folder)))
 
     def _persist_import_dir(self, folder: Optional[str]) -> None:
         """Persist immediately (not only at FINISH) — same rationale as
@@ -1008,6 +999,22 @@ class SetupWizard:
             )
             if not folder:
                 continue  # picker cancelled — back to the offer screen
+            from src.ingest import is_vault_path
+
+            if is_vault_path(Path(folder)):
+                # Importing Timshel's own folder would re-ingest its notes and
+                # digests as new notes (different fingerprint -> dedupe misses),
+                # doubling the vault and paying a summary per copy.
+                rumps.alert(
+                    title="Timshel",
+                    message=(
+                        "That's the folder Timshel writes its notes to — "
+                        "importing it would duplicate them. Choose the folder "
+                        "with your OTHER notes."
+                    ),
+                    ok="OK",
+                )
+                continue
             count = self._count_importable(Path(folder))
             if count == 0:
                 rumps.alert(
@@ -1055,8 +1062,14 @@ class SetupWizard:
             return "next"
         from src.ui.dialogs import choose_folder_dialog
 
+        from src.ingest import is_vault_path
+
         folder = choose_folder_dialog(title="Choose the folder with your notes")
-        if folder and self._count_importable(Path(folder)) > 0:
+        if (
+            folder
+            and not is_vault_path(Path(folder))
+            and self._count_importable(Path(folder)) > 0
+        ):
             self._persist_import_dir(folder)
         else:
             # Cancelled picker / empty folder: the user's FINAL action chose

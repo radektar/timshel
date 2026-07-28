@@ -1903,13 +1903,20 @@ class TimshelMenuApp(rumps.App):
                 )
                 return
 
-            from src.ingest import SUPPORTED_SUFFIXES
+            from src.ingest import is_vault_path, list_importable
 
-            paths = sorted(
-                p
-                for p in folder.rglob("*")
-                if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
-            )
+            if is_vault_path(folder):
+                # Belt and braces: the wizard blocks this, but a stale
+                # pending_import_dir (vault moved in Settings after the pick)
+                # must never re-ingest Timshel's own notes and digests.
+                logger.warning("first session: refusing to import the vault itself")
+                send_notification(
+                    "Timshel",
+                    "Import skipped",
+                    "That folder is where Timshel stores its own notes.",
+                )
+                return
+            paths = list_importable(folder)
             if not paths:
                 send_notification(
                     "Timshel", "Nothing to import", "No txt/md/vtt files found."
