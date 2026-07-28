@@ -1,7 +1,46 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-27 · Faza: kod → test
+Data: 2026-07-28 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Pomiar onboardingu: telemetria, upgrade, uczciwa flaga (PR #92, MERGE 2026-07-28)
+
+Fala 2 follow-upów po review #90 — nie feature, tylko przyrząd pomiarowy pod
+decyzję GO/kill H1. **D:** wiersze onboardingu wróciły pod
+`INSIGHT_METRICS_ENABLED` (wcześniej pisały telemetrię do vaulta każdego
+użytkownika, a `feedback_export` to pakuje) — instrument czytany z kohorty
+testerów; zawsze-włączony verdict zostaje, ale z uzasadnieniem produktowym
+(nieugruntowany pierwszy insight kosztuje więcej zaufania niż brak).
+**E:** `run_onboarding_digest` zwraca `not-first-session`, gdy vault ma
+historię — definicja to „run skonsumował okno" (`digest_runs`, monotoniczny
+jak seen-set), NIE zegar i NIE seen-set (migracja zasiewa go na świeżej
+instalacji); menu sprawdza to PRZED płatną ofertą.
+**Pętla review: 5 rund, 4 ze znaleziskiem, w tym dwa na własnych fixach.**
+R1: guard historii odpalał się w prawdziwej pierwszej sesji. R2: `digest_runs`
+zerowany przez zapisy z innego procesu → `max()` w `_merge_disk_seen`.
+R3: blocklista boilerplate'u była zgadywanką słownikową (nie łapała `punkty`/
+`otwarte`/`lista` ani całego szkieletu EN, `keypoint` nie matchował nic,
+`wątk`/`działan` martwe po zdjęciu diakrytyków) → cięcie **strukturalne**
+linii nagłówków. R4: mimo to flaga nadal nie mogła zapalić się nigdy — apka
+tagująe KAŻDĄ notatkę tagiem `transcription` (151/183 w vaultcie Radka),
+punktującym z najwyższą wagą; jedno źródło prawdy `tag_index.GENERATED_TAG`.
+R5: czysta dla tego PR-a. Na koniec dwa follow-upy zamknięte: tag apki
+wykluczony przy KAŻDYM rozmiarze korpusu (zmierzone przed zmianą: okno na
+realnym vaultcie to te same 15 notatek, zmienia się tylko kolejność) i
+`reset_seen` nie cofa już zegara tygodniowego (`_adopt_disk_clock` wspólny
+z `refresh_from_disk`). Suita **1249**, mypy/flake8/black czyste, CI zielone.
+Wzór pod spodem wszystkich czterech znalezisk: **produkt mylił to, co sam
+napisał, z tym, co powiedział użytkownik** (nagłówki, tag systemowy).
+
+**OTWARTE (osobny PR, NIE zrobione):** ten sam tag zatruwa kanały sąsiedztwa
+digestu tygodniowego — pomiar na realnym vaultcie: tag-bridge kwalifikuje
+138/168 starszych notatek zamiast 52, a kanał Stanowisk (`_anchors` =
+encje | tagi) widzi 1794 par window×older ze wspólną kotwicą zamiast 104
+(**17×**). `note_graph` jest czysty (twarde pasmo `TAG_DF_BAND=(2,15)`).
+Fix jednolinijkowy w 2 miejscach, ale zmienia dobór kandydatów KAŻDEGO
+digestu → wymaga własnego before/after na próbce, nie doklejki do PR-a
+o pomiarze. Wysoki priorytet: dotyka jakości głównego outputu produktu
+i hipotezy H1 o kontradykcjach.
 
 ## Onboarding: import notatek + pierwszy digest Sonnet 5 (PR #90, MERGE 2026-07-27)
 
