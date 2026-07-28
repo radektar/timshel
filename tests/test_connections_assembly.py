@@ -652,3 +652,27 @@ def test_generated_tag_alone_is_not_a_thread_but_a_real_tag_is():
     ]
     _, fallback_shared = _connectable_window(shared, shared, 15)
     assert fallback_shared is False
+
+
+def test_generated_tag_never_scores_in_a_large_corpus_either(vault):
+    """The ubiquity cut only drops a tag carried by ALL notes, so one note
+    that arrived without GENERATED_TAG used to leave it scoring +2.0 for
+    every transcribed note against every imported one."""
+    from src.connections.candidate_assembly import _connectable_window, load_corpus
+    from src.tag_index import GENERATED_TAG
+
+    # 9 transcribed notes (app tag, unrelated content) + 1 import without it.
+    for i in range(9):
+        _write_note(
+            vault,
+            f"t{i}",
+            f"2026-06-{i + 1:02d}",
+            tags=GENERATED_TAG,
+            summary=f"temat{i}",
+        )
+    _write_note(vault, "imported", "2026-06-20", tags="", summary="zupelnie osobno")
+    corpus = load_corpus(vault)
+    window, fallback = _connectable_window(corpus, corpus, 3)
+    # Nothing but the app's own tag is shared -> no connectable material.
+    assert fallback is True
+    assert [n.basename for n in window] == ["imported", "t8", "t7"]  # newest-first

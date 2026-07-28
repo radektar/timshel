@@ -300,7 +300,16 @@ class DigestScheduler:
         the disk seen-set (epoch-aware) and a newer ``last_digest_at``.
         """
         self._merge_disk_seen()
-        data = self._read_disk_state()
+        self._adopt_disk_clock(self._read_disk_state())
+
+    def _adopt_disk_clock(self, data: Optional[dict]) -> None:
+        """Take a NEWER weekly clock from disk. Never roll it back.
+
+        ``_save`` writes ``last_digest_at`` from memory, so every writer that
+        does not sync first would push the cadence back to before another
+        process's run — and with it ``last_digest_path``, the legacy input to
+        :meth:`is_first_session`.
+        """
         if data is None:
             return
         disk_at = data.get("last_digest_at")
@@ -386,13 +395,15 @@ class DigestScheduler:
         self.seen_epoch = max(self.seen_epoch, disk_epoch) + 1
         self.seen_note_keys = set(keys or set())
         self.unseen_tombstones = set()  # everything is unseen now anyway
-        # Forget the SEEN-SET, not someone else's first-session hold — and
-        # not the digest-history marker: this is the one writer that
-        # deliberately skips _merge_disk_seen, so it must adopt both by hand.
-        # An archive reset from a process that loaded before the vault's
-        # first run would otherwise write digest_runs back to 0 and re-open
-        # the paid, mark-everything-seen first-session path.
+        # Forget the SEEN-SET — and nothing else. This is the one writer that
+        # deliberately skips _merge_disk_seen, so everything the merge would
+        # have carried has to be adopted by hand: another process's
+        # first-session hold, the digest-history marker (an archive reset
+        # from a process that loaded before the vault's first run would
+        # otherwise write digest_runs back to 0 and re-open the paid,
+        # mark-everything-seen path) and the weekly clock.
         self._adopt_disk_hold(data)
+        self._adopt_disk_clock(data)
         try:
             self.digest_runs = max(
                 self.digest_runs, int(data.get("digest_runs", 0) or 0)

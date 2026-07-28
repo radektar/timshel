@@ -419,8 +419,9 @@ def _connectable_window(
     # the cut relaxed those shared heading tokens score in EVERY note — no
     # note can reach 0, and the "no connectable material" flag could then
     # never fire at all (the same lie, in the other direction). Above the
-    # threshold every value is arithmetically identical to the validated
-    # behaviour, so large-corpus windows never shift.
+    # threshold the token cuts are arithmetically identical to the validated
+    # behaviour; only the app's own tag is excluded at every size (see the
+    # tag channel below).
     small = n_corpus <= SMALL_CORPUS_NOTES
     ubiquity_cut = n_corpus + 1 if small else n_corpus
     rare_cut = _BRIDGE_RARE_DF if small else min(_BRIDGE_RARE_DF, n_corpus - 1)
@@ -431,14 +432,19 @@ def _connectable_window(
         # every-note tag) in corpora large enough for them to exist. Weights:
         # curated tags strongest, entities survive vocabulary drift, rare
         # tokens (the bridge channel's band) noisiest.
-        # The app tags every note it writes with GENERATED_TAG before the LLM
-        # tags are appended — structural, exactly like the section skeleton,
-        # and with the relaxed cut it would otherwise score (at the strongest
-        # weight) in every small-corpus note.
+        # GENERATED_TAG is excluded at EVERY corpus size, not just below the
+        # threshold: the ubiquity cut only drops a tag carried by ALL notes,
+        # and this one is carried by every note the app WRITES — so a single
+        # note that arrived another way (an import whose summariser returned
+        # tags, a hand-written note) left it under the cut, scoring +2.0 for
+        # every transcribed note against every imported one. That is the
+        # app's own bookkeeping ranking the user's material. Measured on the
+        # 183-note dogfood vault (tag on 151): the selected window is the
+        # same 15 notes, only their internal order moves.
         tags = sum(
             1
             for t in note.norm_tags
-            if not (small and t == _GENERATED_TAG_KEY) and 2 <= tag_df[t] < ubiquity_cut
+            if t != _GENERATED_TAG_KEY and 2 <= tag_df[t] < ubiquity_cut
         )
         ents = sum(
             1 for e in entity_keys(note.summary_md) if 2 <= ent_df[e] < ubiquity_cut

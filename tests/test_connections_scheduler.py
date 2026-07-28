@@ -1283,3 +1283,21 @@ def test_reset_seen_alone_does_not_erase_digest_history(tmp_path):
     app.reset_seen()  # `make digest-archive RESET=1` from the stale process
     assert DigestScheduler(state_file).is_first_session() is False
     assert app.is_first_session() is False
+
+
+def test_reset_seen_does_not_roll_back_the_weekly_clock(tmp_path):
+    """_save writes the clock from memory, so the archive reset must adopt a
+    newer one from disk — otherwise it re-opens the cadence over notes
+    another process already digested."""
+    state_file = tmp_path / "cs.json"
+    first = datetime(2026, 7, 20, 12, 0, 0)
+    later = datetime(2026, 7, 28, 12, 0, 0)
+    DigestScheduler(state_file).mark_ran(first, Path("/x/first.md"))
+
+    app = DigestScheduler(state_file)  # loaded with the OLD clock
+    DigestScheduler(state_file).mark_ran(later, Path("/x/later.md"))
+
+    app.reset_seen()
+    fresh = DigestScheduler(state_file)
+    assert fresh.last_digest_at == later.isoformat(timespec="seconds")
+    assert fresh.last_digest_path == "/x/later.md"
