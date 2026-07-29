@@ -52,6 +52,12 @@ Plus a 3-question reply email:
   ≥1 self-reported non-obvious.
 - **Kill:** imports produce noise instead of action-worthy connections → import
   stays a FREE onboarding feature, not a PRO feeder.
+- **A contradiction is NOT required** (decision 2026-07-29). A weekly quota of
+  "≥1 non-obvious contradiction" was an artificial expectation — a stance flip
+  exists when the material carries one, not on a calendar. Track the
+  contradiction share of kept connections as an **observation**: zero across
+  three weeks feeds the structured-tier diagnosis (0/4 slots) and the PRO
+  positioning question, but it does not close the hypothesis.
 
 Track per-tester weekly in a simple sheet; decide after week 3.
 
