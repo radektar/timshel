@@ -1,7 +1,20 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-28 · Faza: kod → test
+Data: 2026-07-29 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Checklista wysyłki do testerów (2026-07-29) — kod GOTOWY, zostały manuale
+
+Sesja 2026-07-29: #93 zmergowany, runda review na nim znalazła i naprawiła
+czwarty kanał (#94, patrz sekcja niżej), R2 czysta. **Świeży tester DMG
+`1bbee1af…` (stamp `9588589`) na iCloud `Timshel/`** — zastępuje `d2d3ecf1…`
+(21.07, bez onboardingu #89–94). SMOKE PASS pod świeżym $HOME. URL-e release
+w `checksums.py` zweryfikowane po rename repo (oba 200 przez redirect —
+kod bez zmian). Zostały WYŁĄCZNIE manuale:
+1. **Gatekeeper realnym kanałem** (mail/link → drugi Mac) — jedyny twardy
+   warunek przed wysyłką; przy okazji kliknąć toast „Cofnij" na żywo.
+2. Klucze Anthropic per-tester + spend limit (konsola).
+3. Lista 3–5 testerów P1 z gęstym vaultem.
 
 ## Pomiar onboardingu: telemetria, upgrade, uczciwa flaga (PR #92, MERGE 2026-07-28)
 
@@ -41,11 +54,12 @@ dowód wspólnego wątku czytał własną księgowość. Jedno źródło prawdy:
 `tag_index.GENERATED_TAG` + `candidate_assembly.signal_tags()`, używane przez
 okno connectable, most tagowy i kotwice Stanowisk. Pole `tags` notatki
 nietknięte (w digeście i promptcie to uczciwe metadane). Runda review po
-merge'u dołożyła czwarty kanał: `note_graph` wyglądał na odporny (pasmo
-`TAG_DF_BAND=(2,15)` wyklucza df=151), ale na vaultcie z 2–15 transkrypcjami
-— dokładnie tester po imporcie — tag apki wpada DO pasma i bramka $0 liczyła
-sąsiadów „graph" po samym tagu jako silnych; `build_note_terms` też czyta
-przez `signal_tags`.
+merge'u dołożyła czwarty kanał (**PR #94, MERGE 2026-07-29**): `note_graph`
+wyglądał na odporny (pasmo `TAG_DF_BAND=(2,15)` wyklucza df=151), ale na
+vaultcie z 2–15 transkrypcjami — dokładnie tester po imporcie — tag apki
+wpada DO pasma i bramka $0 liczyła sąsiadów „graph" po samym tagu jako
+silnych; `build_note_terms` też czyta przez `signal_tags`. Suita **1253**,
+R2 czysta.
 
 Najgroźniejszy był tryb **bramkowy**, nie wagowy: kotwica kanału Stanowisk
 odpowiada „o CZYM te notatki się nie zgadzają", a tag apki czyni ją prawdziwą
