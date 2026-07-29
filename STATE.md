@@ -32,7 +32,7 @@ z `refresh_from_disk`). Suita **1249**, mypy/flake8/black czyste, CI zielone.
 Wzór pod spodem wszystkich czterech znalezisk: **produkt mylił to, co sam
 napisał, z tym, co powiedział użytkownik** (nagłówki, tag systemowy).
 
-## Tag apki jako sygnał podobieństwa (PR #93, OTWARTY 2026-07-28)
+## Tag apki jako sygnał podobieństwa (PR #93, MERGE 2026-07-29)
 
 Wypadło z rundy review na #92. Zasada: **metadana, którą apka sama zapisuje,
 nigdy nie jest sygnałem od użytkownika.** `GENERATED_TAG` ("transcription")
@@ -328,9 +328,10 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
    ODŁOŻONE świadomie: **Gatekeeper realnym kanałem** (mail/link, nie iCloud)
    — jedyny warunek przed wysyłką DMG do pierwszego testera. Drobiazg: toast
    „Cofnij" (event `reset`) jeszcze nie kliknięty na żywo.
-3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit; potwierdzić
-   że `checksums.py` release URL-e (`radektar/malinche`) rozwiązują się przez
-   redirect po rename repo; lista 3–5 testerów P1 z gęstym vaultem.
+3. **Manualne poza kodem:** klucze Anthropic per-tester + spend limit;
+   ~~potwierdzić że `checksums.py` release URL-e rozwiązują się po rename repo~~
+   — ZWERYFIKOWANE 2026-07-29 (oba URL-e 200 przez redirect, kod bez zmian);
+   lista 3–5 testerów P1 z gęstym vaultem.
 4. **Meeting-ingest v2 na bramce** (2026-07-09): plan `Docs/future/meeting-ingest-plan.md`
    (konektory Zoom/Teams/drop-folder, transcript-first, reguła Stanowisk zamiast
    diaryzacji; Meet OAuth po popycie). Strategia rozszerzeń: vault →
