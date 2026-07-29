@@ -40,8 +40,12 @@ niesie każda notatka z pipeline'u, więc każdy kanał czytający wspólny tag 
 dowód wspólnego wątku czytał własną księgowość. Jedno źródło prawdy:
 `tag_index.GENERATED_TAG` + `candidate_assembly.signal_tags()`, używane przez
 okno connectable, most tagowy i kotwice Stanowisk. Pole `tags` notatki
-nietknięte (w digeście i promptcie to uczciwe metadane). `note_graph` był
-odporny od początku — pasmo `TAG_DF_BAND=(2,15)`.
+nietknięte (w digeście i promptcie to uczciwe metadane). Runda review po
+merge'u dołożyła czwarty kanał: `note_graph` wyglądał na odporny (pasmo
+`TAG_DF_BAND=(2,15)` wyklucza df=151), ale na vaultcie z 2–15 transkrypcjami
+— dokładnie tester po imporcie — tag apki wpada DO pasma i bramka $0 liczyła
+sąsiadów „graph" po samym tagu jako silnych; `build_note_terms` też czyta
+przez `signal_tags`.
 
 Najgroźniejszy był tryb **bramkowy**, nie wagowy: kotwica kanału Stanowisk
 odpowiada „o CZYM te notatki się nie zgadzają", a tag apki czyni ją prawdziwą

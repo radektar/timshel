@@ -37,9 +37,14 @@ Jedno źródło prawdy zamiast literału w kilku plikach:
 Pole `tags` samej notatki zostaje nietknięte: w notatce digestu i w promptcie
 syntezy to uczciwe metadane, nie sygnał podobieństwa.
 
-`note_graph.py` był odporny od początku — ma twarde pasmo
-`TAG_DF_BAND = (2, 15)`, poza które tag o df=151 nie wchodzi. To wzorzec do
-naśladowania: pasmo df zamiast listy wyjątków.
+`note_graph.py` wyglądał na odporny — pasmo `TAG_DF_BAND = (2, 15)` wyklucza
+tag o df=151 na vaultcie dogfood. Ale pasmo chroni tylko duże vaulty: przy
+2–15 transkrypcjach (dokładnie vault testera po imporcie) df taga apki wpada
+DO pasma i staje się krawędzią W_TAG=1.5 między każdą parą notatek, a bramka
+$0 liczy takich sąsiadów „graph" jako silnych. Naprawione w rundzie review na
+#93: `build_note_terms` też czyta tagi przez `signal_tags`. Wniosek: pasmo df
+to dobra higiena statystyczna, ale NIE zastępuje zasady — sygnał, który apka
+sama pisze, wycina się jawnie, na każdym rozmiarze korpusu.
 
 ## Pomiar (vault dogfood, 183 notatki, tag na 151, $0 offline)
 
