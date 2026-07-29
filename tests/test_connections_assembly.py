@@ -676,3 +676,34 @@ def test_generated_tag_never_scores_in_a_large_corpus_either(vault):
     # Nothing but the app's own tag is shared -> no connectable material.
     assert fallback is True
     assert [n.basename for n in window] == ["imported", "t8", "t7"]  # newest-first
+
+
+def test_signal_tags_drops_only_the_app_tag():
+    from src.connections.candidate_assembly import signal_tags
+    from src.tag_index import GENERATED_TAG
+
+    note = _note("a", "2026-01-01", tags=(GENERATED_TAG, "sauna", "ogrod"))
+    assert signal_tags(note) == {"sauna", "ogrod"}
+    assert note.norm_tags == {GENERATED_TAG, "sauna", "ogrod"}  # source untouched
+
+
+def test_tag_bridge_ignores_notes_sharing_only_the_app_tag(vault):
+    """With the app's tag in the set every transcribed note in the archive
+    "shares a tag" with the window, so the channel stopped filtering."""
+    from src.tag_index import GENERATED_TAG
+
+    _write_note(
+        vault, "new", "2026-06-20", tags=f"{GENERATED_TAG}, sauna", summary="cokolwiek"
+    )
+    _write_note(
+        vault, "real", "2026-05-01", tags=f"{GENERATED_TAG}, sauna", summary="stare ale"
+    )
+    _write_note(
+        vault, "app_only", "2026-05-02", tags=GENERATED_TAG, summary="rosliny tutaj"
+    )
+    cs = assemble_candidates(vault, "2026-06-10T00:00:00", DismissalStore(vault))
+    # Channel attribution, not membership: a tiny corpus fits under the cap, so
+    # bm25 surfaces everything anyway — the question is what the TAG channel
+    # claims to have bridged.
+    assert "tag" in cs.channel_map["real"]  # a genuinely shared tag still bridges
+    assert "tag" not in cs.channel_map.get("app_only", set())

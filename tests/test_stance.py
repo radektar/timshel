@@ -213,3 +213,19 @@ def test_cue_does_not_pair_neutral_older_note():
     )
     res = stance_flip_neighbors(window, [neutral, opinion], set(), 3)
     assert [n.basename for n in res] == ["opinion"]  # neutral dropped
+
+
+def test_app_tag_is_not_an_anchor():
+    """The anchor answers "about WHAT do these notes disagree". Every note the
+    app writes carries GENERATED_TAG, so admitting it as an anchor turned the
+    gate into a pass-through: any older note with opposite polarity paired."""
+    from src.tag_index import GENERATED_TAG
+
+    window = [_note("w", "2026-06-20", "zły pomysł, same problemy", (GENERATED_TAG,))]
+    older = [_note("o", "2026-02-01", "świetny pomysł, warto", (GENERATED_TAG,))]
+    assert stance_flip_neighbors(window, older, set(), 3) == []
+
+    # A tag the user's material really shares still anchors the pair.
+    window[0].norm_tags.add("sauna")
+    older[0].norm_tags.add("sauna")
+    assert [n.basename for n in stance_flip_neighbors(window, older, set(), 3)] == ["o"]
