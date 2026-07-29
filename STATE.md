@@ -401,12 +401,14 @@ pozycjonowania PRO), nie bramką.
 
 ## Kontekst dla nowej sesji
 
-Branch: **`main`** (PR #67 zmergowany 2026-07-09 — tester build + port UI scalone
-do `main`, branch roboczy usunięty; pracuj od czystego `main`) ·
-testy: **1038 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
-mypy zielony (`./venv312/bin/python -m mypy src/`, 93 pliki).
-Pakiety: PR #62 (P1+P2) + PR #64 (P3) + PR #65 (ingest) + PR #66 (tester build) +
-**PR #67 (merge do main + port UI)**, sesja "[Timshel - APP]" 2026-07-08/09.
+Branch: **`main`** — repo ma od 2026-07-29 **wyłącznie `main`** (skasowane 8
+wchłoniętych/porzuconych branchy; praca landingu żyje w osobnym repo
+`~/CODE/timshel-web`, tam jest rozwinięta dalej). Pracuj od czystego `main` ·
+testy: **1253 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
+mypy zielony (`./venv312/bin/python -m mypy src/`, 99 plików).
+Ostatnie pakiety: PR #89 (seen-window + gate $0) → #90 (onboarding first-digest)
+→ #91/#92 (zgody + pomiar) → #93/#94 (higiena sygnału) → #95 (instrukcja testera)
+→ #96 (kryterium H1 ujednolicone). Starsze: #62/#64/#65/#66/#67.
 UWAGA: nazwy zmienione — app-support `Timshel`, sidecar `.timshel`, log `timshel.log`,
 env `TIMSHEL_TRANSCRIBE_DIR`, klasy `TimshelTranscriber/TimshelMenuApp`.
 Nowe pliki: `src/feedback_export.py`; testy `test_rename_guard`, `test_tester_mode`,
