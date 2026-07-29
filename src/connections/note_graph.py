@@ -132,22 +132,30 @@ def build_note_terms(corpus) -> Dict[str, Dict[str, float]]:
     """
     from collections import Counter
 
-    from src.connections.candidate_assembly import _tokenize
+    from src.connections.candidate_assembly import _tokenize, signal_tags
     from src.connections.entities import entity_keys
 
     per_note_tokens: Dict[str, Set[str]] = {}
     per_note_entities: Dict[str, Set[str]] = {}
+    per_note_tags: Dict[str, Set[str]] = {}
     tok_df: Counter = Counter()
     ent_df: Counter = Counter()
     tag_df: Counter = Counter()
     for note in corpus:
         toks = set(_tokenize(note.summary_md))
         ents = entity_keys(note.summary_md)
+        # signal_tags, not norm_tags: the df band only excludes the app's own
+        # tag when the vault is big enough (df > 15). On a 2-15 transcript
+        # vault — the import-onboarding case — it lands INSIDE the band and
+        # becomes a 1.5-weight edge between every pair of transcribed notes,
+        # and the $0 gate counts the resulting "graph" neighbours as strong.
+        tags = signal_tags(note)
         per_note_tokens[note.basename] = toks
         per_note_entities[note.basename] = ents
+        per_note_tags[note.basename] = tags
         tok_df.update(toks)
         ent_df.update(ents)
-        tag_df.update(note.norm_tags)
+        tag_df.update(tags)
 
     note_terms: Dict[str, Dict[str, float]] = {}
     for note in corpus:
@@ -158,7 +166,7 @@ def build_note_terms(corpus) -> Dict[str, Dict[str, float]]:
         for e in per_note_entities[note.basename]:
             if _in_band(ent_df[e], ENTITY_DF_BAND):
                 terms["e:" + e] = W_ENTITY
-        for g in note.norm_tags:
+        for g in per_note_tags[note.basename]:
             if _in_band(tag_df[g], TAG_DF_BAND):
                 terms["g:" + g] = W_TAG
         if terms:

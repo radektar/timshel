@@ -74,3 +74,26 @@ def test_build_note_terms_band_filters(tmp_path):
     assert any(t.startswith("t:wspolny") for t in all_terms)  # df=3, in band
     assert any(t.startswith("g:wspolnytag") for t in all_terms)  # tag df=3
     assert not any("unikalne" in t for t in all_terms)  # df=1, out of band
+
+
+def test_build_note_terms_never_bridges_on_the_app_tag(tmp_path):
+    """On a small vault (df inside TAG_DF_BAND) the app's own tag would become
+    a 1.5-weight edge between every pair of transcribed notes — and the $0
+    gate counts the resulting "graph" neighbours as strong. The df band only
+    protects vaults with >15 transcripts; signal_tags must protect the rest."""
+    from src.connections.candidate_assembly import load_corpus
+    from src.connections.note_graph import build_note_terms
+    from src.tag_index import GENERATED_TAG
+
+    for i in range(3):
+        (tmp_path / f"n{i}.md").write_text(
+            f"---\ntitle: n{i}\ndate: 2026-06-0{i+1}\n"
+            f"tags: [{GENERATED_TAG}, sauna]\n---\n\n"
+            f"## Podsumowanie\nzupelnie rozne tresci numer{i}\n\n"
+            f"## Transkrypcja\nx\n",
+            encoding="utf-8",
+        )
+    nt = build_note_terms(load_corpus(tmp_path))
+    all_terms = set().union(*nt.values()) if nt else set()
+    assert not any(GENERATED_TAG in t for t in all_terms)  # df=3, IN band — still out
+    assert any(t.startswith("g:sauna") for t in all_terms)  # real shared tag bridges
