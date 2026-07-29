@@ -65,7 +65,7 @@ zanim zaczniesz.
 
 ## 2. Kreator pierwszego uruchomienia
 
-Kreator przeprowadzi Cię przez wszystko:
+Kreator przeprowadzi Cię przez wszystko, po kolei:
 
 1. Wybierz folder docelowy — **wskaż swój vault Obsidiana** (albo dowolny
    folder na notatki).
@@ -73,17 +73,34 @@ Kreator przeprowadzi Cię przez wszystko:
 3. **Full Disk Access (Pełny dostęp do dysku)** — kreator otworzy Ustawienia
    systemowe. Włącz przełącznik przy Timshelu i **zrestartuj apkę**. To
    konieczne: bez tego Timshel widzi pustą kartę SD i nigdy nic nie
-   transkrybuje.
-4. Wklej **klucz Claude API**, który dostałeś od Radka: menu przy ikonce →
-   **Settings…** → zakładka **Transcription** → pole **Claude API key**.
+   transkrybuje. Po restarcie kreator wraca tam, gdzie skończyłeś.
+4. Wklej **klucz Claude API**, który dostałeś od Radka — kreator ma na to
+   osobny ekran.
+5. **„Bring your existing notes (optional)"** — tu zaczyna się test. Kliknij
+   **Choose folder…** i wskaż folder ze swoimi istniejącymi transkryptami
+   albo notatkami (txt / md / vtt — np. eksporty notatek ze spotkań;
+   podfoldery też się liczą). Celuj w **30+ notatek** — im gęstszy materiał,
+   tym więcej połączeń jest do znalezienia. Import uruchomi Twoje
+   podsumowania AI (~$0.01–0.05 za notatkę — idzie z klucza od Radka).
 
-## 3. Zasiej vault
+## 3. Pierwsza analiza (zaraz po kreatorze)
 
-Insights potrzebują materiału do łączenia. Pierwszego dnia:
+Po zamknięciu kreatora Timshel zaimportuje wskazane notatki (zobaczysz
+postęp), a potem zapyta: **„Analyze them now to find the first connections
+between them?"** — jedna analiza Claude, ~$0.15–0.25, około minuty.
 
-- Menu przy ikonce → **Import transcripts…** → zaznacz swoje istniejące
-  transkrypty (txt / md / vtt — np. eksporty notatek ze spotkań). Celuj w
-  **30+ notatek**.
+- **Analyze now** → po chwili otworzy się okno **Insights** z pierwszymi
+  połączeniami między Twoimi notatkami. Oceń je od razu (patrz punkt 5) —
+  to najcenniejszy moment testu.
+- **Later** → nic nie przepada; notatki wejdą do pierwszego cotygodniowego
+  digestu.
+
+Jeśli zamiast pytania zobaczysz tylko powiadomienie „Connections will
+surface as your corpus grows" — masz na razie za mało powiązanego materiału
+i to jest normalne; dorzuć notatki albo po prostu nagrywaj dalej.
+
+Notatki możesz doimportować w każdej chwili później: menu przy ikonce →
+**Import transcripts…**.
 
 ## 4. Codzienne używanie
 

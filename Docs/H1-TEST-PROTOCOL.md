@@ -9,8 +9,11 @@ results. Tester-facing steps live in `TESTER-ONBOARDING.md`.
 - 3–5 testers, Apple Silicon, macOS 12+.
 - Hand-picked for a **dense, first-person vault** — the real lever for whether
   insights fire (a cold vault produces nothing regardless of the engine).
-- Day 1: install + wizard + paste a per-tester Claude key + seed ≥30 notes via
-  **Import transcripts…**.
+- Day 1: install + wizard (key screen, then the **import step** — seed ≥30
+  notes) + the first-session offer (**Analyze now**, ~$0.15–0.25 on Sonnet 5).
+  The activation metric: ≥1 post-verdict connection in session 1
+  (`onboarding:true` rows in metrics.jsonl). Menu **Import transcripts…**
+  remains the top-up path.
 
 ## Cadence
 
