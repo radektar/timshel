@@ -357,10 +357,19 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 5. Zebranie sygnału H1 (N=3–5): rytuał tygodniowy rate→export ×3 tyg → `signal-report`.
 GO: ≥3 warte akcji **połączenia dowolnego typu**/tydz., w tym ≥1 nieoczywiste.
 Kill: import daje szum zamiast wartych akcji połączeń → import = onboarding FREE, nie feeder PRO.
+**Kontradykcja NIE jest wymagana** (decyzja 2026-07-29, zsynchronizowana ze
+Strategią w vaultcie): oczekiwanie „≥1 nieoczywista kontradykcja/tydz." było
+sztywne i sztuczne — sprzeczność pojawia się, kiedy materiał ją niesie, a nie
+na zamówienie kalendarza. Udział sprzeczności w zachowanych połączeniach
+zostaje **obserwacją** (wejście do diagnozy toru strukturalnego i do
+pozycjonowania PRO), nie bramką.
 
 ## Otwarte ryzyka
 
-- Stanowiska mogą nie dowieźć kontradykcji w H1 (kill-trigger zdefiniowany).
+- Stanowiska mogą nie dowieźć kontradykcji w H1 — od 2026-07-29 **nie jest to
+  już kill-trigger** (patrz kryterium wyżej), tylko sygnał diagnostyczny:
+  zero sprzeczności przez 3 tyg. uruchamia diagnozę toru strukturalnego
+  (0/4 slotów) i rozmowę o pozycjonowaniu PRO, nie zamknięcie hipotezy.
 - Haiku bywa za hojny w Stanowiskach (procesy/koncepty jako encje) — szum,
   nie bloker; docelowe lekarstwo to structured-output (B2).
 - Słownik uczy się tylko z wikilinków/encji — aliasy przekrętów wymagają
