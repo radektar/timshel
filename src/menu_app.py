@@ -878,29 +878,48 @@ class TimshelMenuApp(rumps.App):
         except Exception:  # noqa: BLE001
             pass
 
+    # How many times the offer may find the daemon not ready before giving up
+    # on this session (~5 min at the timer's 20 s interval).
+    _VOICE_MEMOS_OFFER_ATTEMPTS = 15
+
     def _maybe_offer_voice_memos(self, _timer=None) -> None:
         """One-shot offer: we can see memos, the connector is off — connect?
 
-        Fires once ever. Held back until setup is done and the onboarding
+        Shown once ever. Held back until setup is done and the onboarding
         first-session flow is not running, so it never lands on top of the
         wizard's own dialogs.
+
+        The timer keeps ticking while the answer is merely "not yet" (the daemon
+        is still starting, so there is no connector to ask): stopping on the
+        first fire would lose the offer for the whole session on exactly the
+        slowest machines. It stops as soon as a real decision is made — or after
+        a bounded number of tries, so a user with no memos is not polled forever.
         """
-        if _timer is not None:
-            try:
-                _timer.stop()  # one-shot: never nag on a repeating tick
-            except Exception:  # noqa: BLE001
-                pass
+
+        def _done() -> None:
+            if _timer is not None:
+                try:
+                    _timer.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._voice_memos_offer_tries = getattr(self, "_voice_memos_offer_tries", 0) + 1
+        if self._voice_memos_offer_tries >= self._VOICE_MEMOS_OFFER_ATTEMPTS:
+            _done()
 
         try:
             settings = UserSettings.load()
             if settings.voice_memos_enabled or settings.voice_memos_proposal_shown:
+                _done()
                 return
             if not settings.setup_completed or settings.pending_import_dir:
-                return
+                return  # onboarding owns the screen — ask again on a later tick
 
             connector = self._voice_memos_connector()
             if connector is None or not connector.has_any_recordings():
-                return
+                return  # daemon still starting, or nothing to offer yet
+
+            _done()
 
             def _on_main() -> None:
                 clicked = rumps.alert(
@@ -926,7 +945,7 @@ class TimshelMenuApp(rumps.App):
 
                     # Watermark first: if the settings write failed afterwards,
                     # a later enable must still not treat the archive as new.
-                    connector.enable()
+                    connector.enable(consented=True)
                     UserSettings.mutate(_accept)
                     reload_config()
                 else:

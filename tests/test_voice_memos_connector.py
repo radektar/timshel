@@ -96,14 +96,41 @@ class TestParseMemoFilename:
 
 
 class TestState:
-    def test_enable_sets_watermark_once(self, connector: VoiceMemosConnector):
+    def test_self_healing_enable_never_moves_an_existing_watermark(
+        self, connector: VoiceMemosConnector
+    ):
         first = datetime(2026, 7, 30, 10, 0, 0)
         connector.enable(first)
         connector.enable(datetime(2026, 8, 1, 10, 0, 0))
 
-        # Re-enabling must not rewind: otherwise the whole archive would look
-        # new and silently queue hours of whisper.
+        # The per-tick repair call must not rewind: otherwise the whole archive
+        # would look new and silently queue hours of whisper.
         assert connector.enabled_at == first
+
+    def test_consent_moves_the_watermark_to_now(self, connector: VoiceMemosConnector):
+        connector.enable(datetime(2026, 5, 1, 10, 0, 0))
+        again = datetime(2026, 7, 30, 10, 0, 0)
+
+        connector.enable(again, consented=True)
+
+        # "From here on" means from THIS switch-on. Anything recorded while the
+        # connector was off is back catalogue, offered explicitly — not swept in.
+        assert connector.enabled_at == again
+
+    def test_recordings_from_an_off_period_are_not_auto_imported(
+        self, connector: VoiceMemosConnector, recordings_dir: Path
+    ):
+        connector.enable(datetime(2026, 5, 1))
+        # User switched the connector off and kept recording for two months.
+        make_memo(recordings_dir, "20260601 120000-AAAAAAAA.m4a")
+        make_memo(recordings_dir, "20260615 120000-BBBBBBBB.m4a")
+
+        connector.enable(datetime(2026, 7, 30), consented=True)
+        connector.scan()
+        settle(connector)
+
+        assert connector.scan() == []
+        assert len(connector.archive_candidates()) == 2
 
     def test_state_round_trips_through_disk(
         self, connector: VoiceMemosConnector, recordings_dir: Path, tmp_path: Path

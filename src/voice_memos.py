@@ -217,14 +217,24 @@ class VoiceMemosConnector:
         except (TypeError, ValueError):
             return None
 
-    def enable(self, now: Optional[datetime] = None) -> None:
-        """Set the "from here on" watermark — once.
+    def enable(
+        self, now: Optional[datetime] = None, *, consented: bool = False
+    ) -> None:
+        """Set the "from here on" watermark.
 
-        Re-enabling after a pause must not rewind it, or the whole archive would
-        turn into new material and quietly bill hours of whisper.
+        ``consented=True`` marks a deliberate user act (the settings toggle, or
+        accepting the offer) and always moves the mark to that moment — which is
+        what "from here on" means. Anything recorded while the connector was off
+        then counts as back catalogue and needs the explicit backfill dialog,
+        rather than being swept in as new the instant it is switched back on.
+
+        Without it the call only fills a missing mark, never moves one: that is
+        the self-healing path (settings saved before the connector existed, or a
+        lost state file), where rewinding would turn the whole archive into
+        "new" material and quietly bill hours of whisper.
         """
         with self._lock:
-            if self._state.get("enabled_at"):
+            if self._state.get("enabled_at") and not consented:
                 return
             self._state["enabled_at"] = (now or datetime.now()).isoformat()
             self._save()

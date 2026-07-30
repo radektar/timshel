@@ -974,7 +974,7 @@ def _show_native_settings_window(
             # leaves it — and the imported set — alone.
             connector = state.get("voice_memos_connector")
             if connector is not None:
-                connector.enable()
+                connector.enable(consented=True)
             settings.voice_memos_proposal_shown = True
 
     return (
