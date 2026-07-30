@@ -564,11 +564,16 @@ class SetupWizard:
         )
 
     def _prompt_specific_disks(self) -> str:
-        """Collect explicit disk names for the legacy 'specific' watch mode."""
+        """Collect explicit disk names for the legacy 'specific' watch mode.
+
+        Pre-filled with what the user already configured. The example that used
+        to sit here looked like a real answer, so confirming the screen on a
+        re-run replaced their actual disks with a recorder they may not own.
+        """
         window = rumps.Window(
             title="Disk names",
             message="Enter disk names separated by commas\n(e.g. LS-P1, ZOOM-H6):",
-            default_text="LS-P1",
+            default_text=", ".join(self.settings.watched_volumes or []),
             ok="OK",
             cancel="Back",
             dimensions=(300, 24),

@@ -686,3 +686,53 @@ class TestRerunPreservesConfiguration:
 
         assert wizard._show_source_config() == "next"
         assert wizard.settings.watched_volumes == []
+
+    def test_disk_name_prompt_is_prefilled_with_the_real_list(
+        self, tmp_path, monkeypatch
+    ):
+        # The old hardcoded "LS-P1" looked like a valid answer, so confirming
+        # the screen swapped the user's disks for one they may not own.
+        wizard = self._wizard(
+            tmp_path,
+            monkeypatch,
+            watch_mode="specific",
+            watched_volumes=["ZOOM-H6", "DR-05"],
+        )
+        captured: dict = {}
+
+        class _Result:
+            clicked = 1
+            text = "ZOOM-H6, DR-05"
+
+        class _Window:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def run(self):
+                return _Result()
+
+        monkeypatch.setattr("rumps.Window", _Window)
+
+        assert wizard._prompt_specific_disks() == "next"
+        assert captured["default_text"] == "ZOOM-H6, DR-05"
+        assert wizard.settings.watched_volumes == ["ZOOM-H6", "DR-05"]
+
+    def test_disk_name_prompt_is_empty_on_a_fresh_install(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        captured: dict = {}
+
+        class _Result:
+            clicked = 0
+            text = ""
+
+        class _Window:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def run(self):
+                return _Result()
+
+        monkeypatch.setattr("rumps.Window", _Window)
+
+        wizard._prompt_specific_disks()
+        assert captured["default_text"] == ""
