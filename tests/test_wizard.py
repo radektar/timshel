@@ -62,14 +62,17 @@ class TestSetupWizard:
     def test_wizard_step_order(self):
         """Kroki są w poprawnej kolejności."""
         assert SetupWizard.STEPS_ORDER[0] == WizardStep.WELCOME
+        # The two continuous sources are adjacent: someone without a recorder
+        # must still be told their iPhone is enough.
         assert SetupWizard.STEPS_ORDER[1] == WizardStep.SOURCE_CONFIG
-        assert SetupWizard.STEPS_ORDER[2] == WizardStep.BASIC_CONFIG
-        assert SetupWizard.STEPS_ORDER[3] == WizardStep.DOWNLOAD
+        assert SetupWizard.STEPS_ORDER[2] == WizardStep.VOICE_MEMOS
+        assert SetupWizard.STEPS_ORDER[3] == WizardStep.BASIC_CONFIG
+        assert SetupWizard.STEPS_ORDER[4] == WizardStep.DOWNLOAD
         # Import step sits AFTER the key screen (the hook) and before FINISH.
         assert SetupWizard.STEPS_ORDER[-3] == WizardStep.AI_CONFIG
         assert SetupWizard.STEPS_ORDER[-2] == WizardStep.IMPORT_NOTES
         assert SetupWizard.STEPS_ORDER[-1] == WizardStep.FINISH
-        assert len(SetupWizard.STEPS_ORDER) == 8
+        assert len(SetupWizard.STEPS_ORDER) == 9
 
     def test_welcome_step_ok(self, monkeypatch):
         """Kliknięcie OK przechodzi dalej."""
@@ -239,7 +242,11 @@ class TestSetupWizard:
         monkeypatch.setattr("rumps.alert", lambda **kwargs: 1)
 
         wizard = SetupWizard()
-        wizard.current_step_index = 2  # BASIC_CONFIG
+        # Derived, not hardcoded: this asserts persistence, so inserting a step
+        # should not break it.
+        wizard.current_step_index = SetupWizard.STEPS_ORDER.index(
+            WizardStep.BASIC_CONFIG
+        )
         wizard._persist_stage()
 
         loaded = UserSettings.load()
@@ -376,3 +383,145 @@ class TestImportNotesStep:
         wizard = SetupWizard()
         assert wizard._show_import_notes() == "next"
         assert UserSettings.load().pending_import_dir is None
+
+
+class TestVoiceMemosStep:
+    """Krok VOICE_MEMOS — offer the iPhone source, once, without nagging later."""
+
+    def _wizard(self, tmp_path, monkeypatch, **settings_fields):
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        if settings_fields:
+            UserSettings(**settings_fields).save()
+        monkeypatch.setattr(
+            "src.setup.onboarding_window._APPKIT_AVAILABLE", True, raising=False
+        )
+        return SetupWizard()
+
+    def _answer(self, monkeypatch, response, captured=None):
+        def _screen(**kwargs):
+            if captured is not None:
+                captured.update(kwargs)
+            return response
+
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", _screen
+        )
+
+    def test_turn_on_enables_and_stamps_consent(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        self._answer(monkeypatch, 1)
+        stamped = []
+        monkeypatch.setattr(
+            SetupWizard,
+            "_stamp_voice_memos_consent",
+            staticmethod(lambda: stamped.append(True)),
+        )
+
+        assert wizard._show_voice_memos() == "next"
+
+        saved = UserSettings.load()
+        assert saved.voice_memos_enabled is True
+        # Answering here IS answering the offer — the menu prompt must not
+        # ask again 20 seconds after setup.
+        assert saved.voice_memos_proposal_shown is True
+        # Consent moves the start marker, so the archive stays opt-in.
+        assert stamped == [True]
+
+    def test_skip_records_the_answer_without_enabling(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        self._answer(monkeypatch, 0)
+
+        assert wizard._show_voice_memos() == "next"
+
+        saved = UserSettings.load()
+        assert saved.voice_memos_enabled is False
+        assert saved.voice_memos_proposal_shown is True
+
+    def test_cancel_aborts_the_wizard(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        self._answer(monkeypatch, -1)
+
+        assert wizard._show_voice_memos() == "cancel"
+        assert UserSettings.load().voice_memos_proposal_shown is False
+
+    def test_already_enabled_skips_the_screen(self, tmp_path, monkeypatch):
+        # Wizard re-runs on a major upgrade; do not re-ask a settled question.
+        wizard = self._wizard(tmp_path, monkeypatch, voice_memos_enabled=True)
+        shown = []
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen",
+            lambda **kw: shown.append(kw) or 1,
+        )
+
+        assert wizard._show_voice_memos() == "next"
+        assert shown == []
+
+    def test_body_reports_how_many_memos_are_waiting(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(SetupWizard, "_count_voice_memos", staticmethod(lambda: 7))
+        captured: dict = {}
+        self._answer(monkeypatch, 0, captured)
+
+        wizard._show_voice_memos()
+
+        assert "7" in captured["body"]
+
+    def test_body_explains_icloud_setup_when_nothing_is_visible(
+        self, tmp_path, monkeypatch
+    ):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(SetupWizard, "_count_voice_memos", staticmethod(lambda: 0))
+        captured: dict = {}
+        self._answer(monkeypatch, 0, captured)
+
+        wizard._show_voice_memos()
+
+        # An empty folder means iCloud is not set up — say how to fix it
+        # instead of implying the feature is broken.
+        assert "iCloud" in captured["body"]
+
+    def test_alert_fallback_can_turn_it_on(self, tmp_path, monkeypatch):
+        """No AppKit: the source must still be offered, not silently dropped."""
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", lambda **kw: None
+        )
+        monkeypatch.setattr("rumps.alert", lambda *a, **kw: 1)
+        monkeypatch.setattr(
+            SetupWizard, "_stamp_voice_memos_consent", staticmethod(lambda: None)
+        )
+
+        assert wizard._show_voice_memos() == "next"
+        assert UserSettings.load().voice_memos_enabled is True
+
+    def test_counting_survives_a_denied_folder(self, tmp_path, monkeypatch):
+        # macOS can gate another app's container: report "unknown", not a crash.
+        from src.config import config
+
+        monkeypatch.setattr(
+            type(config),
+            "VOICE_MEMOS_RECORDINGS_DIR",
+            tmp_path / "nope",
+            raising=False,
+        )
+        assert SetupWizard._count_voice_memos() in (0, None)
+
+    def test_resume_stage_maps_voice_memos(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        UserSettings(setup_stage="voice_memos").save()
+
+        assert SetupWizard().current_step == WizardStep.VOICE_MEMOS
+
+    def test_stamping_consent_never_breaks_setup(self, monkeypatch):
+        """A failed marker must not abort the wizard — the daemon repairs it."""
+        monkeypatch.setattr(
+            "src.voice_memos.VoiceMemosConnector",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")),
+        )
+        SetupWizard._stamp_voice_memos_consent()  # must not raise

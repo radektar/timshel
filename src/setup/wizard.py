@@ -24,6 +24,7 @@ class WizardStep(Enum):
     DOWNLOAD = auto()
     PERMISSIONS = auto()
     SOURCE_CONFIG = auto()
+    VOICE_MEMOS = auto()
     BASIC_CONFIG = auto()
     AI_CONFIG = auto()
     IMPORT_NOTES = auto()
@@ -36,6 +37,10 @@ class SetupWizard:
     STEPS_ORDER = [
         WizardStep.WELCOME,
         WizardStep.SOURCE_CONFIG,
+        # Straight after the recorder: the two continuous sources belong
+        # together, so someone without a recorder learns their iPhone is
+        # enough instead of finishing the wizard with nothing feeding it.
+        WizardStep.VOICE_MEMOS,
         WizardStep.BASIC_CONFIG,
         WizardStep.DOWNLOAD,
         WizardStep.PERMISSIONS,
@@ -66,6 +71,7 @@ class SetupWizard:
         stage_map = {
             "welcome": WizardStep.WELCOME,
             "source_config": WizardStep.SOURCE_CONFIG,
+            "voice_memos": WizardStep.VOICE_MEMOS,
             "basic_config": WizardStep.BASIC_CONFIG,
             "download": WizardStep.DOWNLOAD,
             "permissions": WizardStep.PERMISSIONS,
@@ -150,6 +156,7 @@ class SetupWizard:
             WizardStep.DOWNLOAD: self._show_download,
             WizardStep.PERMISSIONS: self._show_permissions,
             WizardStep.SOURCE_CONFIG: self._show_source_config,
+            WizardStep.VOICE_MEMOS: self._show_voice_memos,
             WizardStep.BASIC_CONFIG: self._show_basic_config,
             WizardStep.AI_CONFIG: self._show_ai_config,
             WizardStep.IMPORT_NOTES: self._show_import_notes,
@@ -187,8 +194,8 @@ class SetupWizard:
             title="Welcome to Timshel",
             body=(
                 "Timshel automatically transcribes recordings from your voice "
-                "recorder or SD card.\n\nWe'll walk you through a quick setup — "
-                "about 3–5 minutes."
+                "recorder, SD card, or iPhone Voice Memos.\n\nWe'll walk you "
+                "through a quick setup — about 3–5 minutes."
             ),
             primary="Get started",
             secondary="Cancel",
@@ -366,6 +373,127 @@ class SetupWizard:
             return "next"
         # response == 0 → Specific disk names (advanced)
         return self._prompt_specific_disks()
+
+    @staticmethod
+    def _count_voice_memos() -> Optional[int]:
+        """How many memos iCloud has already put on this Mac.
+
+        Deliberately a plain glob rather than the connector: this runs before
+        the daemon exists and pulling in ``src.voice_memos`` would drag the
+        whole transcriber import graph into the wizard just to count files.
+        ``None`` means "cannot tell" (macOS denied the folder) — different from
+        zero, and the copy says so.
+        """
+        from src.config import config
+
+        try:
+            folder = config.VOICE_MEMOS_RECORDINGS_DIR
+            return len([p for p in folder.glob("*.m4a") if p.is_file()])
+        except (FileNotFoundError, PermissionError, OSError) as error:
+            logger.debug("Voice Memos count unavailable: %s", error)
+            return None
+
+    def _show_voice_memos(self) -> str:
+        """Offer the iPhone Voice Memos source (optional, own screen).
+
+        Its own step rather than a toggle on the disks screen: that screen
+        picks a mode with BUTTONS, and an accessory switch beside them reads as
+        decoration — plus an accessory shrinks the body to two lines and does
+        not exist at all in the no-AppKit fallback, which is exactly where a
+        source would go silently missing.
+        """
+        from src.setup.onboarding_window import show_onboarding_screen
+
+        if self.settings.voice_memos_enabled:
+            # Wizard re-run on an upgrade: already answered, do not re-ask.
+            return "next"
+
+        count = self._count_voice_memos()
+        if count:
+            body = (
+                f"Found {count} voice memo(s) already synced from your iPhone. "
+                "Turn this on and new memos are transcribed automatically, "
+                "about a minute after you record them.\n\nOlder recordings "
+                "stay untouched — you can import them later from Settings."
+            )
+        else:
+            body = (
+                "No memos visible yet. To connect them: on your iPhone turn on "
+                "Settings → iCloud → Voice Memos, then open the Voice Memos "
+                "app on this Mac once.\n\nYou can turn this on now — memos "
+                "start arriving as soon as iCloud syncs them."
+            )
+
+        response = show_onboarding_screen(
+            title="iPhone Voice Memos (optional)",
+            body=body,
+            primary="Turn on",
+            secondary="Skip",
+            tertiary="Cancel",
+            step_index=self.STEPS_ORDER.index(WizardStep.VOICE_MEMOS),
+            step_count=len(self.STEPS_ORDER),
+        )
+        if response is None:
+            response = self._voice_memos_alert_fallback(count)
+
+        if response == -1:  # Cancel
+            return "cancel"
+
+        # Either answer counts as answering the offer, so the menu-bar prompt
+        # never asks again. Saved immediately (not at FINISH): a crash later in
+        # the wizard must not lose the user's decision.
+        self.settings.voice_memos_proposal_shown = True
+        if response == 1:
+            self.settings.voice_memos_enabled = True
+        self.settings.save()
+
+        if response == 1:
+            self._stamp_voice_memos_consent()
+        return "next"
+
+    @staticmethod
+    def _stamp_voice_memos_consent() -> None:
+        """Mark "from here on" at the moment of consent.
+
+        Same rule as the Settings toggle and the menu offer: the back catalogue
+        must stay opt-in. Best-effort — if this fails, the daemon stamps a
+        marker at startup anyway, only seconds later.
+        """
+        try:
+            from src.config import config
+            from src.voice_memos import VoiceMemosConnector
+
+            VoiceMemosConnector(
+                config.VOICE_MEMOS_RECORDINGS_DIR,
+                config.VOICE_MEMOS_STATE_FILE,
+            ).enable(consented=True)
+        except Exception as error:  # noqa: BLE001 - setup must never crash here
+            logger.warning("Could not stamp the Voice Memos start marker: %s", error)
+
+    @staticmethod
+    def _voice_memos_alert_fallback(count: Optional[int]) -> int:
+        """Plain-alert Voice Memos offer. Returns 1 / -1 like the window."""
+        found = (
+            f"Timshel can see {count} memo(s) synced from your iPhone.\n\n"
+            if count
+            else (
+                "No memos are visible yet. On your iPhone turn on Settings → "
+                "iCloud → Voice Memos, then open the Voice Memos app on this "
+                "Mac once.\n\n"
+            )
+        )
+        return int(
+            rumps.alert(
+                title="🎙 iPhone Voice Memos",
+                message=(
+                    f"{found}Turn this on and new memos are transcribed "
+                    "automatically. Older recordings stay untouched — import "
+                    "them later from Settings."
+                ),
+                ok="Turn on",
+                cancel="Skip",
+            )
+        )
 
     def _source_config_alert_fallback(self) -> int:
         """Plain-alert source-mode picker. Returns 1 / 0 / -1 like the window."""
@@ -1078,15 +1206,31 @@ class SetupWizard:
         return "next"
 
     def _show_finish(self) -> str:
-        """Finish screen (styled onboarding window, alert fallback)."""
+        """Finish screen (styled onboarding window, alert fallback).
+
+        Names what is actually feeding the app, so nobody leaves setup unsure
+        where recordings come from — and says sources can be changed later,
+        because the answer given here is not final.
+        """
         from src.setup.onboarding_window import show_onboarding_screen
+
+        if self.settings.voice_memos_enabled:
+            sources = (
+                "iPhone memos arrive on their own, and a voice recorder or SD "
+                "card is transcribed the moment you connect it."
+            )
+        else:
+            sources = (
+                "Connect a voice recorder or SD card to transcribe it "
+                "automatically — or turn on iPhone Voice Memos in Settings."
+            )
+        sources += " Sources can be changed anytime in Settings."
 
         result = show_onboarding_screen(
             title="Timshel is ready",
             body=(
-                "Setup complete. Connect your voice recorder or SD card and "
-                "Timshel transcribes automatically.\n\nThe icon lives in the "
-                "menu bar at the top of the screen. Happy transcribing!"
+                f"Setup complete. {sources}\n\nThe icon lives in the menu bar "
+                "at the top of the screen. Happy transcribing!"
             ),
             primary="Get started",
             step_index=len(self.STEPS_ORDER) - 1,
@@ -1096,11 +1240,8 @@ class SetupWizard:
             rumps.alert(
                 title="✅ Timshel is ready!",
                 message=(
-                    "Setup complete.\n\n"
-                    "Connect your voice recorder or SD card and Timshel "
-                    "will process your recordings automatically.\n\n"
-                    "The 🎙️ icon appears in the menu bar (top of the screen).\n\n"
-                    "Happy transcribing!"
+                    f"Setup complete.\n\n{sources}\n\nThe 🎙️ icon appears in "
+                    "the menu bar (top of the screen).\n\nHappy transcribing!"
                 ),
                 ok="🎉 Get started!",
             )
