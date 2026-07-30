@@ -55,10 +55,27 @@ winę na jego iCloud. Świadomie osobny
 ekran, nie toggle przy dyskach: tamten ekran wybiera tryb PRZYCISKAMI, a
 akcesorium ścina body do 2 linii i **nie istnieje w fallbacku bez AppKit** —
 źródło zniknęłoby po cichu. Ekran pokazuje realną liczbę widocznych nagrań
-(tani `glob`, bez ciągnięcia grafu importów transcribera do kreatora); „Turn
-on" i „Skip" oba ustawiają `voice_memos_proposal_shown`, więc 20-sekundowa
+(`iterdir`, NIE `glob` — glob połyka PermissionError i myli odmowę dostępu z
+pustym folderem, a te dwa przypadki wymagają przeciwnych porad); „Turn on" i
+„Skip" oba ustawiają `voice_memos_proposal_shown`, więc 20-sekundowa
 propozycja w menu nie nagabuje po kreatorze. WELCOME i FINISH nazywają
 źródła. Zoom/Teams NIE są wspominane — nie istnieją, nie obiecujemy.
+
+**Pętla review #98: 5 rund (2→2→2→1→0), żadne znalezisko w nowym kodzie —
+wszystkie w założeniach o środowisku.** Największe: **re-run kreatora po
+bumpie major.minor startował na FINISH**, bo `setup_stage="finish"` był
+traktowany jak punkt wznowienia — czyli nowe kroki nie docierały do NIKOGO,
+kto już ma apkę (wznawiamy tylko przebieg PRZERWANY, `setup_completed=False`).
+Naprawa tego udostępniła ścieżkę „kreator na skonfigurowanej instalacji",
+gdzie czekały trzy defekty niszczące dane: pole klucza API nie pokazywało
+zapisanej wartości, a „Skip"/puste pole ustawiało `enable_ai_summaries=False`
+(upgrade po cichu wyłączał Insights w trakcie H1!); ekran dysków kasował
+`watched_volumes`; a prompt nazw dysków pre-wypełniał PRZYKŁAD „LS-P1", więc
+zatwierdzenie podmieniało realną listę. Zasada wyprowadzona i utrwalona
+testem: **na skonfigurowanej instalacji ekran musi pokazywać to, co jest
+skonfigurowane, a „Skip" znaczy „zostaw", nie „wyłącz"** (capstone
+`TestFullRerunOnAConfiguredInstall` przeprowadza pełen re-run i sprawdza, że
+nic nie ginie). Testy: 1352.
 
 **ZOSTAJE do weryfikacji na buildzie DMG (nie z terminala!):** TCC dla Group
 Containers — dev-run dziedziczy uprawnienia terminala i może fałszywie
