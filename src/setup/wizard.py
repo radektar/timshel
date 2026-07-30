@@ -24,6 +24,7 @@ class WizardStep(Enum):
     DOWNLOAD = auto()
     PERMISSIONS = auto()
     SOURCE_CONFIG = auto()
+    VOICE_MEMOS = auto()
     BASIC_CONFIG = auto()
     AI_CONFIG = auto()
     IMPORT_NOTES = auto()
@@ -39,6 +40,12 @@ class SetupWizard:
         WizardStep.BASIC_CONFIG,
         WizardStep.DOWNLOAD,
         WizardStep.PERMISSIONS,
+        # AFTER the permission step, not next to the disks screen where it
+        # reads better: reading another app's container needs Full Disk
+        # Access, and that step ends with "restart the app". Asked earlier,
+        # the screen would tell a user with a hundred memos that it can see
+        # none, and blame their iCloud setup for it.
+        WizardStep.VOICE_MEMOS,
         WizardStep.AI_CONFIG,
         # After the key screen (the key is the hook: "add a key, then let's
         # analyze YOUR notes"), right before FINISH.
@@ -61,11 +68,24 @@ class SetupWizard:
         self._restore_step_from_settings()
 
     def _restore_step_from_settings(self) -> None:
-        """Restore wizard position from persisted setup_stage when available."""
+        """Restore wizard position from persisted setup_stage when available.
+
+        Only a run that was INTERRUPTED is resumable. If the previous run
+        completed, we are here because the version line changed — and the saved
+        stage is "finish", which would drop the user straight onto the closing
+        screen and skip every step the new version wants to show (that is how
+        the Voice Memos screen would have reached nobody who already had the
+        app). A re-run starts at the beginning; the individual steps skip
+        themselves when their work is already done.
+        """
+        if self.settings.setup_completed:
+            return
+
         stage_name = (self.settings.setup_stage or "").lower()
         stage_map = {
             "welcome": WizardStep.WELCOME,
             "source_config": WizardStep.SOURCE_CONFIG,
+            "voice_memos": WizardStep.VOICE_MEMOS,
             "basic_config": WizardStep.BASIC_CONFIG,
             "download": WizardStep.DOWNLOAD,
             "permissions": WizardStep.PERMISSIONS,
@@ -150,6 +170,7 @@ class SetupWizard:
             WizardStep.DOWNLOAD: self._show_download,
             WizardStep.PERMISSIONS: self._show_permissions,
             WizardStep.SOURCE_CONFIG: self._show_source_config,
+            WizardStep.VOICE_MEMOS: self._show_voice_memos,
             WizardStep.BASIC_CONFIG: self._show_basic_config,
             WizardStep.AI_CONFIG: self._show_ai_config,
             WizardStep.IMPORT_NOTES: self._show_import_notes,
@@ -187,8 +208,8 @@ class SetupWizard:
             title="Welcome to Timshel",
             body=(
                 "Timshel automatically transcribes recordings from your voice "
-                "recorder or SD card.\n\nWe'll walk you through a quick setup — "
-                "about 3–5 minutes."
+                "recorder, SD card, or iPhone Voice Memos.\n\nWe'll walk you "
+                "through a quick setup — about 3–5 minutes."
             ),
             primary="Get started",
             secondary="Cancel",
@@ -360,12 +381,168 @@ class SetupWizard:
         if response == -1:  # Cancel
             return "cancel"
         if response == 1:  # Ask — manual + UUID whitelist
+            if self.settings.watch_mode == "specific" and self.settings.watched_volumes:
+                # A re-run reaching a configured install: switching modes is
+                # the user's call, but their disk-name list is not ours to
+                # throw away silently.
+                logger.info(
+                    "Wizard: keeping %d configured disk name(s) while "
+                    "switching to ask-on-new-disk",
+                    len(self.settings.watched_volumes),
+                )
+            else:
+                self.settings.watched_volumes = []
             self.settings.watch_mode = "manual"
-            self.settings.watched_volumes = []
             self.settings.needs_volume_onboarding = False
             return "next"
         # response == 0 → Specific disk names (advanced)
         return self._prompt_specific_disks()
+
+    @staticmethod
+    def _count_voice_memos() -> Optional[int]:
+        """How many memos iCloud has already put on this Mac.
+
+        ``None`` means "cannot tell" — macOS denied the folder — which is a
+        different message than "you have none": one is a permission gate, the
+        other an iCloud setup step, and sending someone to fix the wrong one
+        wastes their evening.
+
+        Uses ``iterdir`` rather than ``glob`` for exactly that reason: glob
+        swallows PermissionError and reports an empty folder, making a denied
+        container indistinguishable from an unconfigured one. Deliberately not
+        the connector — this runs before the daemon and should not drag the
+        transcriber import graph into setup just to count files.
+        """
+        from src.config import config
+
+        try:
+            return len(
+                [
+                    entry
+                    for entry in config.VOICE_MEMOS_RECORDINGS_DIR.iterdir()
+                    if entry.is_file() and entry.suffix.lower() == ".m4a"
+                ]
+            )
+        except FileNotFoundError:
+            return 0  # iCloud has not created it yet — an unconfigured folder
+        except OSError as error:  # PermissionError included
+            logger.debug("Voice Memos count unavailable: %s", error)
+            return None
+
+    def _show_voice_memos(self) -> str:
+        """Offer the iPhone Voice Memos source (optional, own screen).
+
+        Its own step rather than a toggle on the disks screen: that screen
+        picks a mode with BUTTONS, and an accessory switch beside them reads as
+        decoration — plus an accessory shrinks the body to two lines and does
+        not exist at all in the no-AppKit fallback, which is exactly where a
+        source would go silently missing.
+        """
+        from src.setup.onboarding_window import show_onboarding_screen
+
+        if self.settings.voice_memos_enabled:
+            # Wizard re-run on an upgrade: already answered, do not re-ask.
+            return "next"
+
+        count = self._count_voice_memos()
+        if count is None:
+            # Denied, not empty: sending this user to their iCloud settings
+            # would be a wild goose chase.
+            body = (
+                "macOS is blocking access to the Voice Memos folder. Give "
+                "Timshel Full Disk Access in System Settings → Privacy & "
+                "Security, then restart the app.\n\nYou can still turn this "
+                "on now — memos start arriving once access is granted."
+            )
+        elif count:
+            body = (
+                f"Found {count} voice memo(s) already synced from your iPhone. "
+                "Turn this on and new memos are transcribed automatically, "
+                "about a minute after you record them.\n\nOlder recordings "
+                "stay untouched — you can import them later from Settings."
+            )
+        else:
+            body = (
+                "No memos visible yet. To connect them: on your iPhone turn on "
+                "Settings → iCloud → Voice Memos, then open the Voice Memos "
+                "app on this Mac once.\n\nYou can turn this on now — memos "
+                "start arriving as soon as iCloud syncs them."
+            )
+
+        response = show_onboarding_screen(
+            title="iPhone Voice Memos (optional)",
+            body=body,
+            primary="Turn on",
+            secondary="Skip",
+            tertiary="Cancel",
+            step_index=self.STEPS_ORDER.index(WizardStep.VOICE_MEMOS),
+            step_count=len(self.STEPS_ORDER),
+        )
+        if response is None:
+            response = self._voice_memos_alert_fallback(count)
+
+        if response == -1:  # Cancel
+            return "cancel"
+
+        # Either answer counts as answering the offer, so the menu-bar prompt
+        # never asks again. Saved immediately (not at FINISH): a crash later in
+        # the wizard must not lose the user's decision.
+        self.settings.voice_memos_proposal_shown = True
+        if response == 1:
+            self.settings.voice_memos_enabled = True
+        self.settings.save()
+
+        if response == 1:
+            self._stamp_voice_memos_consent()
+        return "next"
+
+    @staticmethod
+    def _stamp_voice_memos_consent() -> None:
+        """Mark "from here on" at the moment of consent.
+
+        Same rule as the Settings toggle and the menu offer: the back catalogue
+        must stay opt-in. Best-effort — if this fails, the daemon stamps a
+        marker at startup anyway, only seconds later.
+        """
+        try:
+            from src.config import config
+            from src.voice_memos import VoiceMemosConnector
+
+            VoiceMemosConnector(
+                config.VOICE_MEMOS_RECORDINGS_DIR,
+                config.VOICE_MEMOS_STATE_FILE,
+            ).enable(consented=True)
+        except Exception as error:  # noqa: BLE001 - setup must never crash here
+            logger.warning("Could not stamp the Voice Memos start marker: %s", error)
+
+    @staticmethod
+    def _voice_memos_alert_fallback(count: Optional[int]) -> int:
+        """Plain-alert Voice Memos offer. Returns 1 / -1 like the window."""
+        if count is None:
+            found = (
+                "macOS is blocking access to the Voice Memos folder — give "
+                "Timshel Full Disk Access and restart the app.\n\n"
+            )
+        elif count:
+            found = f"Timshel can see {count} memo(s) synced from your iPhone.\n\n"
+        else:
+            found = (
+                "No memos are visible yet. On your iPhone turn on Settings → "
+                "iCloud → Voice Memos, then open the Voice Memos app on this "
+                "Mac once.\n\n"
+            )
+        return int(
+            rumps.alert(
+                title="🎙 iPhone Voice Memos",
+                message=(
+                    f"{found}Turn this on and new memos are transcribed "
+                    "automatically. Older recordings stay untouched — import "
+                    "them later from Settings."
+                ),
+                ok="Turn on",
+                cancel="Skip",
+            )
+        )
 
     def _source_config_alert_fallback(self) -> int:
         """Plain-alert source-mode picker. Returns 1 / 0 / -1 like the window."""
@@ -387,11 +564,16 @@ class SetupWizard:
         )
 
     def _prompt_specific_disks(self) -> str:
-        """Collect explicit disk names for the legacy 'specific' watch mode."""
+        """Collect explicit disk names for the legacy 'specific' watch mode.
+
+        Pre-filled with what the user already configured. The example that used
+        to sit here looked like a real answer, so confirming the screen on a
+        re-run replaced their actual disks with a recorder they may not own.
+        """
         window = rumps.Window(
             title="Disk names",
             message="Enter disk names separated by commas\n(e.g. LS-P1, ZOOM-H6):",
-            default_text="LS-P1",
+            default_text=", ".join(self.settings.watched_volumes or []),
             ok="OK",
             cancel="Back",
             dimensions=(300, 24),
@@ -861,7 +1043,7 @@ class SetupWizard:
         if choice == -1:  # Cancel
             return "cancel"
         if choice == 0:  # Skip
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
             return "next"
 
         # choice == 1 → key-entry screen with an embedded text field.
@@ -869,15 +1051,26 @@ class SetupWizard:
 
         refs: dict = {}
 
+        stored_key = self.settings.ai_api_key or ""
+
         def build(width, _delegate):
             field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 26))
             field.setPlaceholderString_("sk-ant-...")
+            # Show the stored key on a re-run. An empty field hides that one is
+            # configured, and the user then clears it just by clicking through
+            # (same reasoning as the Settings field — see the 401 saga).
+            if stored_key:
+                field.setStringValue_(stored_key)
             refs["field"] = field
             return field, 26.0
 
         key_result = show_onboarding_screen(
             title="Claude API key",
-            body="Paste the key from console.anthropic.com.",
+            body=(
+                "Your key is already saved — leave it as is, or paste a new one."
+                if stored_key
+                else "Paste the key from console.anthropic.com."
+            ),
             primary="Save",
             secondary="Skip",
             accessory=build,
@@ -890,8 +1083,21 @@ class SetupWizard:
             self.settings.enable_ai_summaries = True
             self.settings.ai_api_key = key
         else:
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
         return "next"
+
+    def _skip_ai_config(self) -> None:
+        """Handle "no key given" — without destroying one already configured.
+
+        On a first run this means "no AI summaries". On a re-run (version bump)
+        it must mean "leave my setup alone": silently switching the Insights
+        layer off during an upgrade would take away the very thing being
+        measured, with nothing on screen saying so.
+        """
+        if self.settings.ai_api_key:
+            logger.info("Wizard: keeping the existing Claude API key")
+            return
+        self.settings.enable_ai_summaries = False
 
     def _ai_config_legacy(self) -> str:
         """AI summary configuration — plain alert + text-window fallback."""
@@ -912,14 +1118,14 @@ class SetupWizard:
         if response == -1:  # Cancel (other button)
             return "cancel"
         elif response == 1:  # Skip
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
             return "next"
 
-        # Configure API key
+        # Configure API key — pre-filled on a re-run, same as the styled path.
         window = rumps.Window(
             title="Claude API key",
             message="Paste the API key from anthropic.com:",
-            default_text="",
+            default_text=self.settings.ai_api_key or "",
             ok="Save",
             cancel="Skip",
             dimensions=(350, 24),
@@ -930,7 +1136,7 @@ class SetupWizard:
             self.settings.enable_ai_summaries = True
             self.settings.ai_api_key = result.text.strip()
         else:
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
 
         return "next"
 
@@ -1078,15 +1284,31 @@ class SetupWizard:
         return "next"
 
     def _show_finish(self) -> str:
-        """Finish screen (styled onboarding window, alert fallback)."""
+        """Finish screen (styled onboarding window, alert fallback).
+
+        Names what is actually feeding the app, so nobody leaves setup unsure
+        where recordings come from — and says sources can be changed later,
+        because the answer given here is not final.
+        """
         from src.setup.onboarding_window import show_onboarding_screen
+
+        if self.settings.voice_memos_enabled:
+            sources = (
+                "iPhone memos arrive on their own, and a voice recorder or SD "
+                "card is transcribed the moment you connect it."
+            )
+        else:
+            sources = (
+                "Connect a voice recorder or SD card to transcribe it "
+                "automatically — or turn on iPhone Voice Memos in Settings."
+            )
+        sources += " Sources can be changed anytime in Settings."
 
         result = show_onboarding_screen(
             title="Timshel is ready",
             body=(
-                "Setup complete. Connect your voice recorder or SD card and "
-                "Timshel transcribes automatically.\n\nThe icon lives in the "
-                "menu bar at the top of the screen. Happy transcribing!"
+                f"Setup complete. {sources}\n\nThe icon lives in the menu bar "
+                "at the top of the screen. Happy transcribing!"
             ),
             primary="Get started",
             step_index=len(self.STEPS_ORDER) - 1,
@@ -1096,11 +1318,8 @@ class SetupWizard:
             rumps.alert(
                 title="✅ Timshel is ready!",
                 message=(
-                    "Setup complete.\n\n"
-                    "Connect your voice recorder or SD card and Timshel "
-                    "will process your recordings automatically.\n\n"
-                    "The 🎙️ icon appears in the menu bar (top of the screen).\n\n"
-                    "Happy transcribing!"
+                    f"Setup complete.\n\n{sources}\n\nThe 🎙️ icon appears in "
+                    "the menu bar (top of the screen).\n\nHappy transcribing!"
                 ),
                 ok="🎉 Get started!",
             )

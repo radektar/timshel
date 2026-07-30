@@ -74,9 +74,23 @@ Kreator przeprowadzi Cię przez wszystko, po kolei:
    systemowe. Włącz przełącznik przy Timshelu i **zrestartuj apkę**. To
    konieczne: bez tego Timshel widzi pustą kartę SD i nigdy nic nie
    transkrybuje. Po restarcie kreator wraca tam, gdzie skończyłeś.
-4. Wklej **klucz Claude API**, który dostałeś od Radka — kreator ma na to
+4. **„iPhone Voice Memos (optional)"** — jeśli nagrywasz głosówki telefonem,
+   kliknij **Turn on**. Timshel będzie je przepisywał sam, mniej więcej minutę
+   po nagraniu — nie musisz nic podłączać ani kopiować. Ekran pokaże, ile
+   nagrań już widzi.
+   - Jeśli pisze, że nie widzi żadnych: na iPhonie włącz **Ustawienia → iCloud
+     → Notatki głosowe**, a na Macu **otwórz raz apkę Notatki głosowe**. Potem
+     wszystko dzieje się samo. Możesz kliknąć **Turn on** od razu — nagrania
+     dopłyną, gdy iCloud je zsynchronizuje.
+   - Jeśli pisze o **Full Disk Access** — to nie iCloud, tylko brakujące
+     uprawnienie z punktu 3. Nadaj je i zrestartuj apkę.
+   - **Starsze nagrania nie są ruszane.** Liczy się to, co nagrasz od teraz.
+     Archiwum możesz przemielić później: menu → **Settings…** → **Voice
+     Memos** → **Import older memos…**.
+   - Nie nagrywasz telefonem? **Skip** — nic nie tracisz.
+5. Wklej **klucz Claude API**, który dostałeś od Radka — kreator ma na to
    osobny ekran.
-5. **„Bring your existing notes (optional)"** — tu zaczyna się test. Kliknij
+6. **„Bring your existing notes (optional)"** — tu zaczyna się test. Kliknij
    **Choose folder…** i wskaż folder ze swoimi istniejącymi transkryptami
    albo notatkami (txt / md / vtt — np. eksporty notatek ze spotkań;
    podfoldery też się liczą). Celuj w **30+ notatek** — im gęstszy materiał,
@@ -108,6 +122,12 @@ Nagrywaj albo importuj tak, jak normalnie pracujesz. Digest (podsumowanie
 połączeń) pojawia się mniej więcej co tydzień w folderze **Timshel Digests**
 w Twoim vaultcie.
 
+Materiał może płynąć z trzech miejsc: **dyktafonu / karty SD** (podłącz —
+transkrybuje się samo), **głosówek z iPhone'a** (jeśli włączyłeś Voice Memos
+— nagranie ląduje w vaultcie ok. minuty po nagraniu, nic nie klikasz) oraz
+**jednorazowego importu** istniejących notatek (menu → **Import
+transcripts…**). Źródła zmienisz w każdej chwili: menu → **Settings…**.
+
 Poza tym w głównym oknie (menu → **Insights**) możesz:
 
 - **Przeszukiwać swoje notatki** — pasek pytania na górze okna albo skrót
@@ -136,6 +156,10 @@ Rób tak przez co najmniej trzy tygodnie.
 
 - **Nic się nie transkrybuje / karta SD niewykryta** → brak Full Disk
   Access; włącz i zrestartuj apkę.
+- **Głosówki z iPhone'a nie dochodzą** → sprawdź, czy na iPhonie jest
+  włączone **Ustawienia → iCloud → Notatki głosowe** i czy apka **Notatki
+  głosowe** była raz otwarta na Macu. Status konektora zobaczysz w menu →
+  **Settings…** → **Voice Memos**.
 - **Brak podsumowań AI / brak digestu** → brak klucza API albo wyczerpany
   limit (menu → **Settings…** → **Transcription**).
 - **Wyszukiwarka mówi, że nic nie ma** → chwilę po instalacji indeks może

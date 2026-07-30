@@ -252,9 +252,13 @@ tags: [{tags}]
         # to a hardcoded list even in "auto" mode - which caused recorders with
         # non-matching volume names to be ignored. Discovery now lives in
         # ``Transcriber.find_recorders`` / ``volume_utils`` and honours the
-        # user's ``watch_mode``. This field is kept populated only when the
-        # user explicitly selected "specific" mode, so callers that still rely
-        # on it have a meaningful whitelist; otherwise it stays empty.
+        # user's ``watch_mode``. It is populated only while the user is in
+        # "specific" mode, so callers that still rely on it get a meaningful
+        # whitelist; in any other mode it stays empty. Note that
+        # ``settings.watched_volumes`` itself may hold a list the user typed
+        # earlier even in "manual" mode — the wizard keeps it so switching
+        # modes does not destroy it — so the mode, never the list's emptiness,
+        # is what decides here.
         if self.RECORDER_NAMES is None:
             if (
                 self._user_settings.watch_mode == "specific"
