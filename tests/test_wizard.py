@@ -736,3 +736,73 @@ class TestRerunPreservesConfiguration:
 
         wizard._prompt_specific_disks()
         assert captured["default_text"] == ""
+
+
+class TestFullRerunOnAConfiguredInstall:
+    """Capstone: walk EVERY step of a re-run and assert nothing is lost.
+
+    Three review rounds found the same class of defect — the re-run treating a
+    configured install as blank — in three different steps. This locks the
+    whole family instead of one screen at a time.
+    """
+
+    CONFIGURED = dict(
+        setup_completed=True,
+        setup_version="1.9.0",
+        setup_stage="finish",
+        language="pl",
+        whisper_model="medium",
+        ai_api_key="sk-ant-STORED",
+        enable_ai_summaries=True,
+        watch_mode="specific",
+        watched_volumes=["ZOOM-H6", "DR-05"],
+        voice_memos_enabled=True,
+        tester_mode=True,
+    )
+
+    def test_default_answers_preserve_every_setting(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        UserSettings(output_dir=vault, **self.CONFIGURED).save()
+        monkeypatch.setattr(
+            "src.setup.onboarding_window._APPKIT_AVAILABLE", True, raising=False
+        )
+
+        # Every screen answered with its primary button — the click-through a
+        # user in a hurry actually performs. The stub builds the accessory
+        # first, exactly as the real window does, so the popups' pre-selection
+        # is part of what this test covers rather than something it skips.
+        def _screen(**kwargs):
+            builder = kwargs.get("accessory")
+            if builder is not None:
+                builder(444.0, None)
+            return 1
+
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", _screen
+        )
+        monkeypatch.setattr("rumps.alert", lambda *a, **kw: 1)
+
+        wizard = SetupWizard()
+        assert wizard.current_step == WizardStep.WELCOME  # a re-run starts over
+
+        wizard._show_source_config()
+        wizard._show_basic_config()
+        wizard._show_voice_memos()
+        wizard._show_ai_config()
+        wizard.settings.save()
+
+        saved = UserSettings.load()
+        assert saved.ai_api_key == "sk-ant-STORED"
+        assert saved.enable_ai_summaries is True
+        assert saved.watched_volumes == ["ZOOM-H6", "DR-05"]
+        assert saved.output_dir == vault
+        assert saved.language == "pl"
+        assert saved.whisper_model == "medium"
+        assert saved.voice_memos_enabled is True
+        # The tester build's instrumentation flag is not the wizard's business.
+        assert saved.tester_mode is True
