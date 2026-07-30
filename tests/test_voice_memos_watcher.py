@@ -108,9 +108,14 @@ class TestAppCoreWiring:
         process.assert_not_called()
 
     @patch("src.app_core.process_voice_memos")
-    @patch("src.voice_memos.FSEVENTS_AVAILABLE", False)
-    def test_enabled_connector_imports_and_arms_the_watcher(self, process, tmp_path):
+    @patch("src.voice_memos.FSEVENTS_AVAILABLE", True)
+    @patch("src.voice_memos.Stream")
+    @patch("src.voice_memos.Observer")
+    def test_enabled_connector_imports_and_arms_the_watcher(
+        self, _observer, _stream, process, tmp_path
+    ):
         app = self._app(tmp_path)
+        app.voice_memos.recordings_dir.mkdir()
 
         with patch.object(app, "_voice_memos_enabled", return_value=True):
             app._sync_voice_memos()
@@ -120,15 +125,47 @@ class TestAppCoreWiring:
 
     @patch("src.app_core.process_voice_memos")
     @patch("src.voice_memos.FSEVENTS_AVAILABLE", False)
-    def test_turning_the_toggle_off_stops_the_watcher(self, _process, tmp_path):
+    def test_a_watcher_that_failed_to_arm_is_retried(self, _process, tmp_path):
+        # iCloud may not have created the folder yet; keeping a dead watcher
+        # would silently disable live events until the app restarts.
         app = self._app(tmp_path)
+
         with patch.object(app, "_voice_memos_enabled", return_value=True):
             app._sync_voice_memos()
+
+        assert app.voice_memos_watcher is None
+
+    @patch("src.app_core.process_voice_memos")
+    @patch("src.voice_memos.FSEVENTS_AVAILABLE", False)
+    def test_enabling_stamps_the_start_marker(self, _process, tmp_path):
+        # Self-healing: the toggle may have been saved while the connector did
+        # not exist yet, leaving no marker — without one, scan() imports nothing.
+        app = self._app(tmp_path)
+        assert app.voice_memos.enabled_at is None
+
+        with patch.object(app, "_voice_memos_enabled", return_value=True):
+            app._sync_voice_memos()
+
+        assert app.voice_memos.enabled_at is not None
+
+    @patch("src.app_core.process_voice_memos")
+    @patch("src.voice_memos.FSEVENTS_AVAILABLE", True)
+    @patch("src.voice_memos.Stream")
+    @patch("src.voice_memos.Observer")
+    def test_turning_the_toggle_off_stops_the_watcher(
+        self, observer, _stream, _process, tmp_path
+    ):
+        app = self._app(tmp_path)
+        app.voice_memos.recordings_dir.mkdir()
+        with patch.object(app, "_voice_memos_enabled", return_value=True):
+            app._sync_voice_memos()
+        assert app.voice_memos_watcher is not None
 
         with patch.object(app, "_voice_memos_enabled", return_value=False):
             app._sync_voice_memos()
 
         assert app.voice_memos_watcher is None
+        observer.return_value.stop.assert_called_once()
 
     def test_no_transcriber_yet_is_harmless(self, tmp_path):
         app = self._app(tmp_path)

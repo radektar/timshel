@@ -231,6 +231,26 @@ class TestConcurrency:
         assert transcriber.import_audio_file.call_count == 1
 
 
+class TestBusyModule:
+    def test_a_blocked_pass_reports_itself_as_unfinished(
+        self, connector, transcriber, recordings_dir
+    ):
+        # A caller that retries (the archive backfill) must not read this as
+        # "nothing left to do" and report 0 of N transcribed as success.
+        import src.voice_memos as vm
+
+        vm._IMPORT_LOCK.acquire()
+        try:
+            stats = process_voice_memos(
+                transcriber, connector, candidates=[memo(recordings_dir)]
+            )
+        finally:
+            vm._IMPORT_LOCK.release()
+
+        assert stats.lock_aborted is True
+        transcriber.import_audio_file.assert_not_called()
+
+
 class TestProgress:
     def test_progress_is_reported_per_memo(
         self, connector, transcriber, recordings_dir

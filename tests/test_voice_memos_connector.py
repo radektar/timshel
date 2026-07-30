@@ -259,6 +259,31 @@ class TestScan:
 
         assert connector.archive_candidates() == []
 
+    def test_without_a_watermark_nothing_is_new_either(
+        self, connector: VoiceMemosConnector, recordings_dir: Path
+    ):
+        # Fail closed. A missing marker (settings saved before the connector
+        # existed, or a lost state file) must not read as "no filter" — that
+        # would sweep a decade of memos into an unasked-for whisper run.
+        make_memo(recordings_dir, "20180101 101010-DEADBEEF.m4a")
+        make_memo(recordings_dir, "20260730 095901-4E1A2B3C.m4a")
+        connector.scan()
+        settle(connector)
+
+        assert connector.scan() == []
+
+    def test_vanished_files_leave_no_trace_in_the_stability_map(
+        self, connector: VoiceMemosConnector, recordings_dir: Path
+    ):
+        connector.enable(datetime(2026, 7, 1))
+        path = make_memo(recordings_dir, "20260730 095901-4E1A2B3C.m4a")
+        connector.scan()
+        path.unlink()
+
+        connector.scan()
+
+        assert connector._last_seen == {}
+
 
 # ----------------------------------------------------------------- status
 

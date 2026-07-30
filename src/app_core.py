@@ -161,12 +161,21 @@ class TimshelTranscriber:
                 self.voice_memos_watcher = None
             return
 
+        # Idempotent: only stamps a start marker if there is none. Covers the
+        # settings toggle saved before this connector existed, and a lost state
+        # file — in both cases the marker lands NOW, so the back catalogue stays
+        # opt-in instead of being swept in as "new".
+        self.voice_memos.enable()
+
         if self.voice_memos_watcher is None:
-            self.voice_memos_watcher = VoiceMemosWatcher(
+            watcher = VoiceMemosWatcher(
                 recordings_dir=self.voice_memos.recordings_dir,
                 on_activity=self._sync_voice_memos,
             )
-            self.voice_memos_watcher.start()
+            # Keep it only if it actually armed: a folder that iCloud has not
+            # created yet must be retried on a later tick, not written off.
+            if watcher.start():
+                self.voice_memos_watcher = watcher
 
         from src.transcriber import send_notification
 

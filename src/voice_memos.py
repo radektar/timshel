@@ -85,7 +85,13 @@ class MemoCandidate:
 
 @dataclass(frozen=True)
 class ImportStats:
-    """Outcome of one batch."""
+    """Outcome of one batch.
+
+    ``lock_aborted`` covers both ways a batch can end early without finishing:
+    the transcriber was busy mid-batch, and another import pass already held
+    this module's lock so we never started. Callers that retry must not read
+    "nothing happened" as "nothing left to do".
+    """
 
     imported: int = 0
     skipped: int = 0
@@ -315,15 +321,35 @@ class VoiceMemosConnector:
         """New memos recorded since the connector was switched on."""
         memos = self._list_memos()
         if not memos:
+            self._last_seen.clear()
             return []
 
+        # Forget files that are gone (deleted in the Voice Memos app), so the
+        # stability map cannot grow for the lifetime of the menu-bar process.
+        present = {str(path) for path in memos}
+        self._last_seen = {
+            key: value for key, value in self._last_seen.items() if key in present
+        }
+
         watermark = self.enabled_at
+        if watermark is None:
+            # Fail closed. No watermark means we never recorded the moment of
+            # consent — either the settings toggle was saved before the
+            # connector existed, or the state file was lost. Treating that as
+            # "no filter" would sweep in the entire archive (a decade of memos,
+            # hours of whisper) that the user never agreed to import.
+            logger.warning(
+                "Voice Memos: enabled with no start marker — importing nothing "
+                "until it is set (re-toggle the connector in Settings)"
+            )
+            return []
+
         fresh: List[MemoCandidate] = []
         for path in memos:
             candidate = parse_memo_filename(path)
             if candidate is None or self._is_settled(candidate.memo_id):
                 continue
-            if watermark is not None and candidate.recorded_at < watermark:
+            if candidate.recorded_at < watermark:
                 continue  # archive: only imported on an explicit opt-in
             if not self._is_stable(candidate):
                 continue
@@ -374,7 +400,9 @@ def process_voice_memos(
     """
     if not _IMPORT_LOCK.acquire(blocking=False):
         logger.debug("Voice Memos: an import pass is already running — skipping")
-        return ImportStats()
+        # Not "done": the backfill loop must retry rather than report a batch
+        # of zero as a finished job.
+        return ImportStats(lock_aborted=True)
 
     try:
         pending = connector.scan() if candidates is None else candidates
