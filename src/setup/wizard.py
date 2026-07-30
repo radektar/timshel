@@ -68,7 +68,19 @@ class SetupWizard:
         self._restore_step_from_settings()
 
     def _restore_step_from_settings(self) -> None:
-        """Restore wizard position from persisted setup_stage when available."""
+        """Restore wizard position from persisted setup_stage when available.
+
+        Only a run that was INTERRUPTED is resumable. If the previous run
+        completed, we are here because the version line changed — and the saved
+        stage is "finish", which would drop the user straight onto the closing
+        screen and skip every step the new version wants to show (that is how
+        the Voice Memos screen would have reached nobody who already had the
+        app). A re-run starts at the beginning; the individual steps skip
+        themselves when their work is already done.
+        """
+        if self.settings.setup_completed:
+            return
+
         stage_name = (self.settings.setup_stage or "").lower()
         stage_map = {
             "welcome": WizardStep.WELCOME,

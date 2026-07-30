@@ -560,3 +560,58 @@ class TestVoiceMemosStep:
             lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")),
         )
         SetupWizard._stamp_voice_memos_consent()  # must not raise
+
+    def test_alert_fallback_blames_permissions_not_icloud(self, tmp_path, monkeypatch):
+        """The no-AppKit path must not send a blocked user to iCloud either."""
+        captured: dict = {}
+        monkeypatch.setattr(
+            "rumps.alert",
+            lambda **kw: captured.update(kw) or 1,
+        )
+
+        SetupWizard._voice_memos_alert_fallback(None)
+
+        assert "Full Disk Access" in captured["message"]
+        assert "iCloud" not in captured["message"]
+
+    def test_alert_fallback_reports_the_count(self, monkeypatch):
+        captured: dict = {}
+        monkeypatch.setattr("rumps.alert", lambda **kw: captured.update(kw) or 1)
+
+        SetupWizard._voice_memos_alert_fallback(12)
+
+        assert "12" in captured["message"]
+
+
+class TestWizardRerunOnUpgrade:
+    """An upgrade re-run must actually walk the user through the steps."""
+
+    def _settings_on_disk(self, tmp_path, monkeypatch, **fields):
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        UserSettings(**fields).save()
+
+    def test_completed_setup_restarts_from_the_beginning(self, tmp_path, monkeypatch):
+        # Otherwise the saved "finish" stage drops the user on the closing
+        # screen and every new step (Voice Memos) reaches nobody who already
+        # had the app installed.
+        self._settings_on_disk(
+            tmp_path,
+            monkeypatch,
+            setup_completed=True,
+            setup_version="1.9.0",
+            setup_stage="finish",
+        )
+
+        assert SetupWizard.needs_setup() is True
+        assert SetupWizard().current_step == WizardStep.WELCOME
+
+    def test_an_interrupted_run_still_resumes(self, tmp_path, monkeypatch):
+        # A crash mid-wizard must not send the user back to square one.
+        self._settings_on_disk(
+            tmp_path, monkeypatch, setup_completed=False, setup_stage="permissions"
+        )
+
+        assert SetupWizard().current_step == WizardStep.PERMISSIONS
