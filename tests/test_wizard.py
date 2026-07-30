@@ -62,12 +62,13 @@ class TestSetupWizard:
     def test_wizard_step_order(self):
         """Kroki są w poprawnej kolejności."""
         assert SetupWizard.STEPS_ORDER[0] == WizardStep.WELCOME
-        # The two continuous sources are adjacent: someone without a recorder
-        # must still be told their iPhone is enough.
         assert SetupWizard.STEPS_ORDER[1] == WizardStep.SOURCE_CONFIG
-        assert SetupWizard.STEPS_ORDER[2] == WizardStep.VOICE_MEMOS
-        assert SetupWizard.STEPS_ORDER[3] == WizardStep.BASIC_CONFIG
-        assert SetupWizard.STEPS_ORDER[4] == WizardStep.DOWNLOAD
+        assert SetupWizard.STEPS_ORDER[2] == WizardStep.BASIC_CONFIG
+        assert SetupWizard.STEPS_ORDER[3] == WizardStep.DOWNLOAD
+        # Voice Memos needs Full Disk Access to see anything, so it follows the
+        # permission step (asserted on its own in TestVoiceMemosStep).
+        assert SetupWizard.STEPS_ORDER[4] == WizardStep.PERMISSIONS
+        assert SetupWizard.STEPS_ORDER[5] == WizardStep.VOICE_MEMOS
         # Import step sits AFTER the key screen (the hook) and before FINISH.
         assert SetupWizard.STEPS_ORDER[-3] == WizardStep.AI_CONFIG
         assert SetupWizard.STEPS_ORDER[-2] == WizardStep.IMPORT_NOTES
@@ -497,17 +498,51 @@ class TestVoiceMemosStep:
         assert wizard._show_voice_memos() == "next"
         assert UserSettings.load().voice_memos_enabled is True
 
-    def test_counting_survives_a_denied_folder(self, tmp_path, monkeypatch):
-        # macOS can gate another app's container: report "unknown", not a crash.
+    def _point_at(self, monkeypatch, folder):
         from src.config import config
 
         monkeypatch.setattr(
-            type(config),
-            "VOICE_MEMOS_RECORDINGS_DIR",
-            tmp_path / "nope",
-            raising=False,
+            type(config), "VOICE_MEMOS_RECORDINGS_DIR", folder, raising=False
         )
-        assert SetupWizard._count_voice_memos() in (0, None)
+
+    def test_missing_folder_counts_as_zero(self, tmp_path, monkeypatch):
+        self._point_at(monkeypatch, tmp_path / "not-created-by-icloud-yet")
+
+        assert SetupWizard._count_voice_memos() == 0
+
+    def test_denied_folder_is_unknown_not_empty(self, tmp_path, monkeypatch):
+        # A permission gate and an unconfigured iCloud need OPPOSITE advice;
+        # glob would have swallowed the error and reported an empty folder.
+        denied = tmp_path / "denied"
+        denied.mkdir()
+        (denied / "20260730 100258-AAAAAAAA.m4a").touch()
+        denied.chmod(0o000)
+        self._point_at(monkeypatch, denied)
+        try:
+            assert SetupWizard._count_voice_memos() is None
+        finally:
+            denied.chmod(0o755)
+
+    def test_denied_folder_body_blames_permissions_not_icloud(
+        self, tmp_path, monkeypatch
+    ):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            SetupWizard, "_count_voice_memos", staticmethod(lambda: None)
+        )
+        captured: dict = {}
+        self._answer(monkeypatch, 0, captured)
+
+        wizard._show_voice_memos()
+
+        assert "Full Disk Access" in captured["body"]
+        assert "iCloud" not in captured["body"]
+
+    def test_step_runs_after_the_permission_step(self):
+        # Reading another app's container needs Full Disk Access, and that step
+        # ends with an app restart: asked earlier, the count is always wrong.
+        order = SetupWizard.STEPS_ORDER
+        assert order.index(WizardStep.VOICE_MEMOS) > order.index(WizardStep.PERMISSIONS)
 
     def test_resume_stage_maps_voice_memos(self, tmp_path, monkeypatch):
         config_file = tmp_path / "config.json"

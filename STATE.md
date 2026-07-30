@@ -46,9 +46,12 @@ izolowanym `$HOME` → notatka z `recording_date` z nazwy pliku (nie z mtime,
 który sync ustawił 2h później), `source_type: voice-memo`, fingerprint z
 prawdziwego czasu. Testy 1327, mypy 100 plików.
 
-**Onboarding (2026-07-30, drugi PR):** kreator dostał osobny krok
-`VOICE_MEMOS` zaraz po ekranie dysków — dwa ciągłe źródła obok siebie, więc
-tester bez dyktafonu dowiaduje się, że wystarczy mu iPhone. Świadomie osobny
+**Onboarding (2026-07-30, PR #98):** kreator dostał osobny krok `VOICE_MEMOS`
+— tester bez dyktafonu dowiaduje się, że wystarczy mu iPhone. **Krok stoi PO
+PERMISSIONS, nie obok ekranu dysków** (runda review): czytanie kontenera innej
+apki wymaga FDA, a krok uprawnień kończy się restartem apki — zapytany
+wcześniej ekran mówiłby komuś ze 100 nagraniami, że nie widzi żadnego, i zrzucał
+winę na jego iCloud. Świadomie osobny
 ekran, nie toggle przy dyskach: tamten ekran wybiera tryb PRZYCISKAMI, a
 akcesorium ścina body do 2 linii i **nie istnieje w fallbacku bez AppKit** —
 źródło zniknęłoby po cichu. Ekran pokazuje realną liczbę widocznych nagrań

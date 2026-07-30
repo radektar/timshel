@@ -37,13 +37,15 @@ class SetupWizard:
     STEPS_ORDER = [
         WizardStep.WELCOME,
         WizardStep.SOURCE_CONFIG,
-        # Straight after the recorder: the two continuous sources belong
-        # together, so someone without a recorder learns their iPhone is
-        # enough instead of finishing the wizard with nothing feeding it.
-        WizardStep.VOICE_MEMOS,
         WizardStep.BASIC_CONFIG,
         WizardStep.DOWNLOAD,
         WizardStep.PERMISSIONS,
+        # AFTER the permission step, not next to the disks screen where it
+        # reads better: reading another app's container needs Full Disk
+        # Access, and that step ends with "restart the app". Asked earlier,
+        # the screen would tell a user with a hundred memos that it can see
+        # none, and blame their iCloud setup for it.
+        WizardStep.VOICE_MEMOS,
         WizardStep.AI_CONFIG,
         # After the key screen (the key is the hook: "add a key, then let's
         # analyze YOUR notes"), right before FINISH.
@@ -378,18 +380,30 @@ class SetupWizard:
     def _count_voice_memos() -> Optional[int]:
         """How many memos iCloud has already put on this Mac.
 
-        Deliberately a plain glob rather than the connector: this runs before
-        the daemon exists and pulling in ``src.voice_memos`` would drag the
-        whole transcriber import graph into the wizard just to count files.
-        ``None`` means "cannot tell" (macOS denied the folder) — different from
-        zero, and the copy says so.
+        ``None`` means "cannot tell" — macOS denied the folder — which is a
+        different message than "you have none": one is a permission gate, the
+        other an iCloud setup step, and sending someone to fix the wrong one
+        wastes their evening.
+
+        Uses ``iterdir`` rather than ``glob`` for exactly that reason: glob
+        swallows PermissionError and reports an empty folder, making a denied
+        container indistinguishable from an unconfigured one. Deliberately not
+        the connector — this runs before the daemon and should not drag the
+        transcriber import graph into setup just to count files.
         """
         from src.config import config
 
         try:
-            folder = config.VOICE_MEMOS_RECORDINGS_DIR
-            return len([p for p in folder.glob("*.m4a") if p.is_file()])
-        except (FileNotFoundError, PermissionError, OSError) as error:
+            return len(
+                [
+                    entry
+                    for entry in config.VOICE_MEMOS_RECORDINGS_DIR.iterdir()
+                    if entry.is_file() and entry.suffix.lower() == ".m4a"
+                ]
+            )
+        except FileNotFoundError:
+            return 0  # iCloud has not created it yet — an unconfigured folder
+        except OSError as error:  # PermissionError included
             logger.debug("Voice Memos count unavailable: %s", error)
             return None
 
@@ -409,7 +423,16 @@ class SetupWizard:
             return "next"
 
         count = self._count_voice_memos()
-        if count:
+        if count is None:
+            # Denied, not empty: sending this user to their iCloud settings
+            # would be a wild goose chase.
+            body = (
+                "macOS is blocking access to the Voice Memos folder. Give "
+                "Timshel Full Disk Access in System Settings → Privacy & "
+                "Security, then restart the app.\n\nYou can still turn this "
+                "on now — memos start arriving once access is granted."
+            )
+        elif count:
             body = (
                 f"Found {count} voice memo(s) already synced from your iPhone. "
                 "Turn this on and new memos are transcribed automatically, "
@@ -473,15 +496,19 @@ class SetupWizard:
     @staticmethod
     def _voice_memos_alert_fallback(count: Optional[int]) -> int:
         """Plain-alert Voice Memos offer. Returns 1 / -1 like the window."""
-        found = (
-            f"Timshel can see {count} memo(s) synced from your iPhone.\n\n"
-            if count
-            else (
+        if count is None:
+            found = (
+                "macOS is blocking access to the Voice Memos folder — give "
+                "Timshel Full Disk Access and restart the app.\n\n"
+            )
+        elif count:
+            found = f"Timshel can see {count} memo(s) synced from your iPhone.\n\n"
+        else:
+            found = (
                 "No memos are visible yet. On your iPhone turn on Settings → "
                 "iCloud → Voice Memos, then open the Voice Memos app on this "
                 "Mac once.\n\n"
             )
-        )
         return int(
             rumps.alert(
                 title="🎙 iPhone Voice Memos",

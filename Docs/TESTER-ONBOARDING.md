@@ -67,7 +67,14 @@ zanim zaczniesz.
 
 Kreator przeprowadzi Cię przez wszystko, po kolei:
 
-1. **„iPhone Voice Memos (optional)"** — jeśli nagrywasz głosówki telefonem,
+1. Wybierz folder docelowy — **wskaż swój vault Obsidiana** (albo dowolny
+   folder na notatki).
+2. Potwierdź pobranie silnika (~700 MB — potrzebny internet, kilka minut).
+3. **Full Disk Access (Pełny dostęp do dysku)** — kreator otworzy Ustawienia
+   systemowe. Włącz przełącznik przy Timshelu i **zrestartuj apkę**. To
+   konieczne: bez tego Timshel widzi pustą kartę SD i nigdy nic nie
+   transkrybuje. Po restarcie kreator wraca tam, gdzie skończyłeś.
+4. **„iPhone Voice Memos (optional)"** — jeśli nagrywasz głosówki telefonem,
    kliknij **Turn on**. Timshel będzie je przepisywał sam, mniej więcej minutę
    po nagraniu — nie musisz nic podłączać ani kopiować. Ekran pokaże, ile
    nagrań już widzi.
@@ -75,17 +82,12 @@ Kreator przeprowadzi Cię przez wszystko, po kolei:
      → Notatki głosowe**, a na Macu **otwórz raz apkę Notatki głosowe**. Potem
      wszystko dzieje się samo. Możesz kliknąć **Turn on** od razu — nagrania
      dopłyną, gdy iCloud je zsynchronizuje.
+   - Jeśli pisze o **Full Disk Access** — to nie iCloud, tylko brakujące
+     uprawnienie z punktu 3. Nadaj je i zrestartuj apkę.
    - **Starsze nagrania nie są ruszane.** Liczy się to, co nagrasz od teraz.
      Archiwum możesz przemielić później: menu → **Settings…** → **Voice
      Memos** → **Import older memos…**.
    - Nie nagrywasz telefonem? **Skip** — nic nie tracisz.
-2. Wybierz folder docelowy — **wskaż swój vault Obsidiana** (albo dowolny
-   folder na notatki).
-3. Potwierdź pobranie silnika (~700 MB — potrzebny internet, kilka minut).
-4. **Full Disk Access (Pełny dostęp do dysku)** — kreator otworzy Ustawienia
-   systemowe. Włącz przełącznik przy Timshelu i **zrestartuj apkę**. To
-   konieczne: bez tego Timshel widzi pustą kartę SD i nigdy nic nie
-   transkrybuje. Po restarcie kreator wraca tam, gdzie skończyłeś.
 5. Wklej **klucz Claude API**, który dostałeś od Radka — kreator ma na to
    osobny ekran.
 6. **„Bring your existing notes (optional)"** — tu zaczyna się test. Kliknij
