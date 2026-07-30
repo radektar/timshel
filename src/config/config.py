@@ -416,11 +416,10 @@ tags: [{tags}]
             if raw_embed_threads > 0
             else max(1, (os.cpu_count() or 4) // 2)
         )
-        # Voice Memos connector: OFF until the user opts in (it reaches into
-        # another app's container and can queue hours of whisper work).
-        self.ENABLE_VOICE_MEMOS = bool(
-            getattr(self._user_settings, "voice_memos_enabled", False)
-        )
+        # NOTE: the Voice Memos toggle is deliberately NOT mirrored here. The
+        # connector reads UserSettings per tick so the switch takes effect
+        # without a reload_config(); a copy on Config would be a second source
+        # of truth that goes stale the moment someone forgets to refresh it.
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama
         # needs no key; cloud providers need an API key. Key presence is the

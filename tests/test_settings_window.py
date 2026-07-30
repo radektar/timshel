@@ -7,6 +7,8 @@ the Save logic depends on. A regression there would only surface at runtime.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from src.config import SUPPORTED_LANGUAGES, SUPPORTED_MODELS, UserSettings
@@ -49,6 +51,8 @@ def _state():
         "selected_model": next(iter(SUPPORTED_MODELS)),
         "original_api_key": "",
         "start_at_login": False,
+        "voice_memos_enabled": False,
+        "voice_memos_connector": None,
         "result_save": False,
     }
 
@@ -64,6 +68,7 @@ def test_all_sections_build_and_populate_state():
         lambda: sw._build_general_section(state, delegate),
         lambda: sw._build_transcription_section(state),
         lambda: sw._build_disks_section(settings, state, {}, delegate),
+        lambda: sw._build_voice_memos_section(state, {}, delegate),
         lambda: sw._build_maintenance_section(state, {}, delegate),
     ]
     for build in builders:
@@ -79,6 +84,7 @@ def test_all_sections_build_and_populate_state():
         "model_popup",
         "api_key_field",
         "disks_textview",
+        "voice_memos_checkbox",
     ):
         assert key in state, f"missing state key: {key}"
 
@@ -95,10 +101,72 @@ def test_sections_fit_the_content_pane():
         sw._build_general_section(state, delegate),
         sw._build_transcription_section(state),
         sw._build_disks_section(settings, state, {}, delegate),
+        sw._build_voice_memos_section(state, {}, delegate),
         sw._build_maintenance_section(state, {}, delegate),
     ]
     for _view, height in sections:
         assert height <= available, f"section height {height} exceeds {available}"
+
+
+class _FakeSwitch:
+    def __init__(self, on):
+        self._on = on
+
+    def state(self):
+        return 1 if self._on else 0
+
+
+class TestApplyVoiceMemosSettings:
+    """The consent rule, isolated from the modal so it can be verified."""
+
+    def _apply(self, *, was_enabled, now_on, connector=None):
+        settings = UserSettings(voice_memos_enabled=was_enabled)
+        state = {
+            "voice_memos_checkbox": _FakeSwitch(now_on),
+            "voice_memos_connector": connector,
+        }
+        changed = sw.apply_voice_memos_settings(settings, state)
+        return settings, changed
+
+    def test_turning_it_on_saves_and_stamps_consent(self):
+        connector = MagicMock()
+
+        settings, changed = self._apply(
+            was_enabled=False, now_on=True, connector=connector
+        )
+
+        assert (changed, settings.voice_memos_enabled) == (True, True)
+        # consented=True moves the marker to now, so an off period stays back
+        # catalogue instead of being swept in as new.
+        assert connector.enable.call_args.kwargs == {"consented": True}
+        assert settings.voice_memos_proposal_shown is True
+
+    def test_turning_it_off_leaves_the_marker_alone(self):
+        connector = MagicMock()
+
+        settings, changed = self._apply(
+            was_enabled=True, now_on=False, connector=connector
+        )
+
+        assert (changed, settings.voice_memos_enabled) == (True, False)
+        connector.enable.assert_not_called()
+
+    def test_no_change_is_not_reported_as_a_save(self):
+        _settings, changed = self._apply(was_enabled=True, now_on=True)
+
+        assert changed is False
+
+    def test_a_missing_connector_still_saves_the_toggle(self):
+        # Settings can be opened before the daemon built the connector; the
+        # per-tick self-repair stamps the marker instead.
+        settings, changed = self._apply(was_enabled=False, now_on=True, connector=None)
+
+        assert (changed, settings.voice_memos_enabled) == (True, True)
+
+    def test_an_unbuilt_section_is_a_no_op(self):
+        settings = UserSettings(voice_memos_enabled=False)
+
+        assert sw.apply_voice_memos_settings(settings, {}) is False
 
 
 @requires_appkit

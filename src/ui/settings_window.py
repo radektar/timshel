@@ -578,6 +578,33 @@ def _voice_memos_status_text(connector, enabled):
     return "On — watching for new memos from your iPhone."
 
 
+def apply_voice_memos_settings(settings, state) -> bool:
+    """Save the Voice Memos toggle. Returns True when it changed.
+
+    Kept out of the modal function so the consent rule is testable: turning the
+    connector ON is the moment the user agrees to "from here on", so the start
+    marker moves to now and anything recorded while it was off stays back
+    catalogue behind the explicit backfill dialog. Turning it OFF leaves the
+    marker — and everything already imported — untouched.
+    """
+    switch = state.get("voice_memos_checkbox")
+    if switch is None:
+        return False  # section never built (AppKit fallback): nothing to save
+
+    new_enabled = bool(switch.state())
+    if settings.voice_memos_enabled == new_enabled:
+        return False
+
+    settings.voice_memos_enabled = new_enabled
+    if new_enabled:
+        connector = state.get("voice_memos_connector")
+        if connector is not None:
+            connector.enable(consented=True)
+        # Answering here counts as answering the offer — never nag afterwards.
+        settings.voice_memos_proposal_shown = True
+    return True
+
+
 def _build_voice_memos_section(state, callbacks, delegate):
     from AppKit import NSButton
     from Foundation import NSMakeRect
@@ -963,19 +990,7 @@ def _show_native_settings_window(
         else:
             startup_manager.disable_launch_at_login()
 
-    new_voice_memos = bool(state["voice_memos_checkbox"].state())
-    voice_memos_changed = settings.voice_memos_enabled != new_voice_memos
-    if voice_memos_changed:
-        settings.voice_memos_enabled = new_voice_memos
-        if new_voice_memos:
-            # Stamp the "from here on" watermark at the moment of consent, so
-            # the existing archive stays opt-in instead of queueing hours of
-            # whisper the user never asked for. Turning the connector back off
-            # leaves it — and the imported set — alone.
-            connector = state.get("voice_memos_connector")
-            if connector is not None:
-                connector.enable(consented=True)
-            settings.voice_memos_proposal_shown = True
+    voice_memos_changed = apply_voice_memos_settings(settings, state)
 
     return (
         basic_changed
