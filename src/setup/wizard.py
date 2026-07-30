@@ -381,8 +381,18 @@ class SetupWizard:
         if response == -1:  # Cancel
             return "cancel"
         if response == 1:  # Ask — manual + UUID whitelist
+            if self.settings.watch_mode == "specific" and self.settings.watched_volumes:
+                # A re-run reaching a configured install: switching modes is
+                # the user's call, but their disk-name list is not ours to
+                # throw away silently.
+                logger.info(
+                    "Wizard: keeping %d configured disk name(s) while "
+                    "switching to ask-on-new-disk",
+                    len(self.settings.watched_volumes),
+                )
+            else:
+                self.settings.watched_volumes = []
             self.settings.watch_mode = "manual"
-            self.settings.watched_volumes = []
             self.settings.needs_volume_onboarding = False
             return "next"
         # response == 0 → Specific disk names (advanced)
@@ -1028,7 +1038,7 @@ class SetupWizard:
         if choice == -1:  # Cancel
             return "cancel"
         if choice == 0:  # Skip
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
             return "next"
 
         # choice == 1 → key-entry screen with an embedded text field.
@@ -1036,15 +1046,26 @@ class SetupWizard:
 
         refs: dict = {}
 
+        stored_key = self.settings.ai_api_key or ""
+
         def build(width, _delegate):
             field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 26))
             field.setPlaceholderString_("sk-ant-...")
+            # Show the stored key on a re-run. An empty field hides that one is
+            # configured, and the user then clears it just by clicking through
+            # (same reasoning as the Settings field — see the 401 saga).
+            if stored_key:
+                field.setStringValue_(stored_key)
             refs["field"] = field
             return field, 26.0
 
         key_result = show_onboarding_screen(
             title="Claude API key",
-            body="Paste the key from console.anthropic.com.",
+            body=(
+                "Your key is already saved — leave it as is, or paste a new one."
+                if stored_key
+                else "Paste the key from console.anthropic.com."
+            ),
             primary="Save",
             secondary="Skip",
             accessory=build,
@@ -1057,8 +1078,21 @@ class SetupWizard:
             self.settings.enable_ai_summaries = True
             self.settings.ai_api_key = key
         else:
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
         return "next"
+
+    def _skip_ai_config(self) -> None:
+        """Handle "no key given" — without destroying one already configured.
+
+        On a first run this means "no AI summaries". On a re-run (version bump)
+        it must mean "leave my setup alone": silently switching the Insights
+        layer off during an upgrade would take away the very thing being
+        measured, with nothing on screen saying so.
+        """
+        if self.settings.ai_api_key:
+            logger.info("Wizard: keeping the existing Claude API key")
+            return
+        self.settings.enable_ai_summaries = False
 
     def _ai_config_legacy(self) -> str:
         """AI summary configuration — plain alert + text-window fallback."""
@@ -1079,14 +1113,14 @@ class SetupWizard:
         if response == -1:  # Cancel (other button)
             return "cancel"
         elif response == 1:  # Skip
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
             return "next"
 
-        # Configure API key
+        # Configure API key — pre-filled on a re-run, same as the styled path.
         window = rumps.Window(
             title="Claude API key",
             message="Paste the API key from anthropic.com:",
-            default_text="",
+            default_text=self.settings.ai_api_key or "",
             ok="Save",
             cancel="Skip",
             dimensions=(350, 24),
@@ -1097,7 +1131,7 @@ class SetupWizard:
             self.settings.enable_ai_summaries = True
             self.settings.ai_api_key = result.text.strip()
         else:
-            self.settings.enable_ai_summaries = False
+            self._skip_ai_config()
 
         return "next"
 

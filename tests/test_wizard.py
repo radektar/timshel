@@ -615,3 +615,74 @@ class TestWizardRerunOnUpgrade:
         )
 
         assert SetupWizard().current_step == WizardStep.PERMISSIONS
+
+
+class TestRerunPreservesConfiguration:
+    """A version-bump re-run walks a CONFIGURED install — it must not reset it."""
+
+    def _wizard(self, tmp_path, monkeypatch, **fields):
+        config_file = tmp_path / "config.json"
+        monkeypatch.setattr(
+            UserSettings, "config_path", staticmethod(lambda: config_file)
+        )
+        UserSettings(**fields).save()
+        monkeypatch.setattr(
+            "src.setup.onboarding_window._APPKIT_AVAILABLE", True, raising=False
+        )
+        return SetupWizard()
+
+    def test_skipping_the_key_screen_keeps_a_stored_key(self, tmp_path, monkeypatch):
+        # Turning Insights off during an upgrade, silently, would remove the
+        # very thing H1 measures.
+        wizard = self._wizard(
+            tmp_path, monkeypatch, ai_api_key="sk-ant-STORED", enable_ai_summaries=True
+        )
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", lambda **kw: 0
+        )
+
+        assert wizard._show_ai_config() == "next"
+        assert wizard.settings.enable_ai_summaries is True
+        assert wizard.settings.ai_api_key == "sk-ant-STORED"
+
+    def test_skipping_without_a_key_still_disables_ai(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", lambda **kw: 0
+        )
+
+        assert wizard._show_ai_config() == "next"
+        assert wizard.settings.enable_ai_summaries is False
+
+    def test_legacy_path_also_keeps_a_stored_key(self, tmp_path, monkeypatch):
+        wizard = self._wizard(
+            tmp_path, monkeypatch, ai_api_key="sk-ant-STORED", enable_ai_summaries=True
+        )
+        monkeypatch.setattr("rumps.alert", lambda **kw: 1)  # Skip
+
+        assert wizard._ai_config_legacy() == "next"
+        assert wizard.settings.enable_ai_summaries is True
+
+    def test_ask_on_new_disk_keeps_legacy_disk_names(self, tmp_path, monkeypatch):
+        wizard = self._wizard(
+            tmp_path,
+            monkeypatch,
+            watch_mode="specific",
+            watched_volumes=["LS-P1", "ZOOM-H6"],
+        )
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", lambda **kw: 1
+        )
+
+        assert wizard._show_source_config() == "next"
+        assert wizard.settings.watch_mode == "manual"
+        assert wizard.settings.watched_volumes == ["LS-P1", "ZOOM-H6"]
+
+    def test_fresh_install_starts_with_no_disk_names(self, tmp_path, monkeypatch):
+        wizard = self._wizard(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            "src.setup.onboarding_window.show_onboarding_screen", lambda **kw: 1
+        )
+
+        assert wizard._show_source_config() == "next"
+        assert wizard.settings.watched_volumes == []
