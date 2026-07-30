@@ -1,7 +1,38 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-29 · Faza: kod → test
+Data: 2026-07-30 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Konektor Voice Memos — ingest v2 faza 1 (2026-07-30, w PR)
+
+Decyzja zakresu: z meeting-ingest v2 wchodzi **najpierw wyłącznie Voice
+Memos**; Zoom/Teams/drop-folder, docx, mówcy i destylacja → backlog ingesta
+(`Docs/future/meeting-ingest-plan.md`, przepisany). Powód: największy zasięg
+adopcyjny (wystarczy iPhone, nie dyktafon), zero nowej logiki treści (głosówka
+jest solowa i pierwszoosobowa), zasila trwający H1.
+
+**Spike potwierdził wykonalność empirycznie:** po jednorazowym setupie (iCloud
+→ Voice Memos na iPhonie + otwarcie appki raz na Macu) systemowy `voicememod`
+dosyła nagrania przy zamkniętym GUI — zmierzone ~1 min od nagrania; archiwum
+(104 pliki od 2018) spływa od razu; 104/104 nazwy sparsowane poprawnie.
+
+**Pułapka, wokół której zbudowany jest cały moduł: mtime kłamie** — to czas
+syncu, nie nagrania (archiwum ma mtime z dnia pierwszego syncu, a
+eviction+redownload nadaje świeży). Dlatego prawda idzie z nazwy pliku
+(`YYYYMMDD HHMMSS-XXXXXXXX.m4a`): stąd `recorded_at` (wstrzykiwany aż do
+frontmatteru i do `compute_fingerprint`, który inaczej spada do mtime) oraz
+klucz dedupu. Prywatnej bazy `CloudRecordings.db` NIE czytamy.
+
+Zakres PR: `src/voice_memos.py` (rdzeń pollowalny `scan()` + stan + skorupa
+FSEvents + pętla importu), przelot `recorded_at`/`provenance` przez
+`import_audio_file → transcribe_file → _postprocess_transcript` (defaulty
+`None` ⇒ ścieżka /Volumes bez zmian, chronione testem regresyjnym), sekcja
+ustawień + jednorazowa auto-propozycja + dialog backfillu. Domyślnie OFF,
+backfill „od dziś", archiwum tylko jawnym opt-inem.
+
+**Do weryfikacji na buildzie DMG (nie z terminala!):** TCC dla Group
+Containers — dev-run dziedziczy uprawnienia terminala i może fałszywie
+przechodzić; obsłużone statusem `NO_ACCESS` + hintem.
 
 ## Checklista wysyłki do testerów (2026-07-29) — kod GOTOWY, zostały manuale
 

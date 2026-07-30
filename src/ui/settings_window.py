@@ -284,6 +284,12 @@ try:
             if cb is not None:
                 cb(None)
 
+        # Voice Memos
+        def voiceMemosBackfillClicked_(self, sender):
+            cb = self.callbacks.get("voice_memos_backfill")
+            if cb is not None:
+                cb(None)
+
     _APPKIT_DELEGATE_AVAILABLE = True
 except ImportError:
     _APPKIT_DELEGATE_AVAILABLE = False
@@ -540,6 +546,120 @@ def _build_disks_section(settings, state, callbacks, delegate):
     return _section([(list_card, lh), (action_card, ah), note])
 
 
+def _voice_memos_status_text(connector, enabled):
+    """Copy for the connector's current state — the setup hint lives here.
+
+    A user whose iCloud sync is off sees an empty folder; without this the app
+    would look broken while silently watching nothing.
+    """
+    from src.voice_memos import ConnectorStatus
+
+    if connector is None:
+        return "Connector unavailable — the transcriber is still starting up."
+
+    status = connector.status(enabled=enabled)
+    if status is ConnectorStatus.NO_ACCESS:
+        return (
+            "macOS is blocking access to the Voice Memos folder. Grant Timshel "
+            "Full Disk Access (System Settings → Privacy & Security) and "
+            "restart the app."
+        )
+    if status is ConnectorStatus.NOT_CONFIGURED:
+        return (
+            "No recordings visible yet. On your iPhone turn on Settings → "
+            "iCloud → Voice Memos, then open the Voice Memos app on this Mac "
+            "once — after that memos arrive on their own."
+        )
+    if status is ConnectorStatus.DISABLED:
+        return (
+            "Off. When on, memos recorded on your iPhone are transcribed "
+            "automatically about a minute after they sync."
+        )
+    return "On — watching for new memos from your iPhone."
+
+
+def apply_voice_memos_settings(settings, state) -> bool:
+    """Save the Voice Memos toggle. Returns True when it changed.
+
+    Kept out of the modal function so the consent rule is testable: turning the
+    connector ON is the moment the user agrees to "from here on", so the start
+    marker moves to now and anything recorded while it was off stays back
+    catalogue behind the explicit backfill dialog. Turning it OFF leaves the
+    marker — and everything already imported — untouched.
+    """
+    switch = state.get("voice_memos_checkbox")
+    if switch is None:
+        return False  # section never built (AppKit fallback): nothing to save
+
+    new_enabled = bool(switch.state())
+    if settings.voice_memos_enabled == new_enabled:
+        return False
+
+    settings.voice_memos_enabled = new_enabled
+    if new_enabled:
+        connector = state.get("voice_memos_connector")
+        if connector is not None:
+            connector.enable(consented=True)
+        # Answering here counts as answering the offer — never nag afterwards.
+        settings.voice_memos_proposal_shown = True
+    return True
+
+
+def _build_voice_memos_section(state, callbacks, delegate):
+    from AppKit import NSButton
+    from Foundation import NSMakeRect
+
+    connector = state.get("voice_memos_connector")
+    enabled = bool(state.get("voice_memos_enabled"))
+
+    switch = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 40, 22))
+    switch.setButtonType_(3)  # switch
+    switch.setTitle_("")
+    switch.setState_(1 if enabled else 0)
+    state["voice_memos_checkbox"] = switch
+
+    toggle_card, th = _build_card(
+        [_field_row("Transcribe iPhone Voice Memos", switch, 40, 22)]
+    )
+
+    archive_count = 0
+    if connector is not None and enabled:
+        try:
+            archive_count = len(connector.archive_candidates())
+        except Exception:  # noqa: BLE001 - the panel must open regardless
+            archive_count = 0
+
+    backfill_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 240, _BUTTON_H))
+    backfill_btn.setTitle_(
+        f"Import older memos… ({archive_count})"
+        if archive_count
+        else "Import older memos…"
+    )
+    backfill_btn.setBezelStyle_(1)
+    if archive_count and "voice_memos_backfill" in callbacks:
+        backfill_btn.setTarget_(delegate)
+        backfill_btn.setAction_("voiceMemosBackfillClicked:")
+    else:
+        backfill_btn.setEnabled_(False)
+
+    action_card, ah = _build_card(
+        [
+            _action_row(
+                backfill_btn,
+                240,
+                _BUTTON_H,
+                _secondary_hint(
+                    "Only memos recorded from the moment you switch this on are "
+                    "picked up automatically."
+                ),
+            )
+        ]
+    )
+
+    note = _note(_voice_memos_status_text(connector, enabled), height=48)
+    return _section([(toggle_card, th), (action_card, ah), note])
+
+
 def _tinted_block(title, body, hex_accent, hex_title, height):
     """A rounded, tinted block (redesign H3 — the privacy contract cards)."""
     from AppKit import NSColor, NSFont, NSTextField
@@ -552,9 +672,7 @@ def _tinted_block(title, body, hex_accent, hex_title, height):
         return NSColor.colorWithRed_green_blue_alpha_(r, g, b, a)
 
     width = _content_width()
-    block = _SettingsFlippedView.alloc().initWithFrame_(
-        NSMakeRect(0, 0, width, height)
-    )
+    block = _SettingsFlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
     block.setWantsLayer_(True)
     if block.layer() is not None:
         block.layer().setCornerRadius_(10.0)
@@ -568,9 +686,7 @@ def _tinted_block(title, body, hex_accent, hex_title, height):
     t.setFrame_(NSMakeRect(14, 12, width - 28, 15))
     block.addSubview_(t)
 
-    b = NSTextField.alloc().initWithFrame_(
-        NSMakeRect(14, 33, width - 28, height - 43)
-    )
+    b = NSTextField.alloc().initWithFrame_(NSMakeRect(14, 33, width - 28, height - 43))
     b.setStringValue_(body)
     b.setBezeled_(False)
     b.setDrawsBackground_(False)
@@ -593,17 +709,19 @@ def _build_privacy_section(state):
         "ZAWSZE LOKALNIE",
         "Nagrania, transkrypcje, indeks wyszukiwania, wyszukiwanie i historia "
         "zapytań nigdy nie opuszczają tego Maca.",
-        "#46B17E", "#1E7A52", 78,
+        "#46B17E",
+        "#1E7A52",
+        78,
     )
     gold = _tinted_block(
         "✦ DO CHMURY — TYLKO NA TWÓJ GEST",
         "Digest połączeń, synteza wyników i handoff do Claude/ChatGPT wysyłają "
         "wyłącznie dopasowane fragmenty — i tylko gdy sam to uruchomisz.",
-        "#D6B033", "#8A6D1C", 78,
+        "#D6B033",
+        "#8A6D1C",
+        78,
     )
-    note = _note(
-        "Klucz API, model i rytm digestu ustawisz w zakładce Transcription."
-    )
+    note = _note("Klucz API, model i rytm digestu ustawisz w zakładce Transcription.")
     return _section([jade, gold, note])
 
 
@@ -699,6 +817,14 @@ def _show_native_settings_window(
         ),
         "original_api_key": settings.ai_api_key or "",
         "start_at_login": bool(settings.start_at_login),
+        "voice_memos_enabled": bool(settings.voice_memos_enabled),
+        # A getter, not the object: `callbacks` is Dict[str, Callable], and the
+        # connector only exists once the transcriber has started.
+        "voice_memos_connector": (
+            callbacks["voice_memos_connector"]()
+            if "voice_memos_connector" in callbacks
+            else None
+        ),
         "result_save": False,
     }
 
@@ -759,6 +885,11 @@ def _show_native_settings_window(
             "Disks",
             "externaldrive",
             lambda: _build_disks_section(settings, state, callbacks, delegate),
+        ),
+        (
+            "Voice Memos",
+            "iphone",
+            lambda: _build_voice_memos_section(state, callbacks, delegate),
         ),
         (
             "Privacy",
@@ -859,7 +990,14 @@ def _show_native_settings_window(
         else:
             startup_manager.disable_launch_at_login()
 
-    return basic_changed or api_key_changed or start_at_login_changed
+    voice_memos_changed = apply_voice_memos_settings(settings, state)
+
+    return (
+        basic_changed
+        or api_key_changed
+        or start_at_login_changed
+        or voice_memos_changed
+    )
 
 
 # ---------------------------------------------------------------------------

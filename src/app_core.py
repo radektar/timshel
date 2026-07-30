@@ -10,6 +10,11 @@ from src.logger import logger
 from src.transcriber import Transcriber
 from src.file_monitor import FileMonitor
 from src.app_status import AppStatus, AppState
+from src.voice_memos import (
+    VoiceMemosConnector,
+    VoiceMemosWatcher,
+    process_voice_memos,
+)
 
 
 class TimshelTranscriber:
@@ -28,12 +33,14 @@ class TimshelTranscriber:
 
     def __init__(self, setup_signals: bool = True):
         """Initialize the application.
-        
+
         Args:
             setup_signals: Whether to setup signal handlers (only works in main thread)
         """
         self.transcriber: Optional[Transcriber] = None
         self.monitor: Optional[FileMonitor] = None
+        self.voice_memos: Optional[VoiceMemosConnector] = None
+        self.voice_memos_watcher: Optional[VoiceMemosWatcher] = None
         self.periodic_thread: Optional[threading.Thread] = None
         self.running = False
         self.state = AppState()
@@ -45,9 +52,7 @@ class TimshelTranscriber:
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
 
-    def set_ai_billing_callback(
-        self, callback: Callable[[Exception], None]
-    ) -> None:
+    def set_ai_billing_callback(self, callback: Callable[[Exception], None]) -> None:
         """Register a callback forwarded to the underlying Transcriber."""
         self._ai_billing_callback = callback
         if self.transcriber is not None:
@@ -130,6 +135,54 @@ class TimshelTranscriber:
         logger.info(f"Received {signal_name}, shutting down...")
         self.stop()
 
+    def _voice_memos_enabled(self) -> bool:
+        """Read the toggle from disk, not from the cached Config.
+
+        The settings window writes it while we run; re-reading per tick makes
+        the switch take effect without a restart and without wiring the UI to
+        this object.
+        """
+        try:
+            from src.config.settings import UserSettings
+
+            return bool(UserSettings.load().voice_memos_enabled)
+        except Exception as error:  # noqa: BLE001
+            logger.debug("Voice Memos: cannot read the setting: %s", error)
+            return False
+
+    def _sync_voice_memos(self) -> None:
+        """Start/stop the watcher to match the toggle, then import what is new."""
+        if self.transcriber is None or self.voice_memos is None:
+            return
+
+        if not self._voice_memos_enabled():
+            if self.voice_memos_watcher is not None:
+                self.voice_memos_watcher.stop()
+                self.voice_memos_watcher = None
+            return
+
+        # Idempotent: only stamps a start marker if there is none. Covers the
+        # settings toggle saved before this connector existed, and a lost state
+        # file — in both cases the marker lands NOW, so the back catalogue stays
+        # opt-in instead of being swept in as "new".
+        self.voice_memos.enable()
+
+        if self.voice_memos_watcher is None:
+            watcher = VoiceMemosWatcher(
+                recordings_dir=self.voice_memos.recordings_dir,
+                on_activity=self._sync_voice_memos,
+            )
+            # Keep it only if it actually armed: a folder that iCloud has not
+            # created yet must be retried on a later tick, not written off.
+            if watcher.start():
+                self.voice_memos_watcher = watcher
+
+        from src.transcriber import send_notification
+
+        process_voice_memos(
+            self.transcriber, self.voice_memos, notify=send_notification
+        )
+
     def _periodic_check(self):
         """Periodic check for recorder (fallback if FSEvents misses event).
 
@@ -175,6 +228,15 @@ class TimshelTranscriber:
                             "Error in digest run: %s", digest_error, exc_info=True
                         )
 
+                    # Voice Memos: catches memos that arrived while the app was
+                    # down, and covers the case where FSEvents misses one.
+                    try:
+                        self._sync_voice_memos()
+                    except Exception as memo_error:  # noqa: BLE001
+                        logger.error(
+                            "Error in Voice Memos sync: %s", memo_error, exc_info=True
+                        )
+
             except Exception as e:
                 logger.error(f"Error in periodic check: {e}", exc_info=True)
                 self.state.status = AppStatus.ERROR
@@ -198,12 +260,14 @@ class TimshelTranscriber:
             f"ℹ️  TRANSCRIBE_DIR: {config.TRANSCRIBE_DIR} "
             f"(set TIMSHEL_TRANSCRIBE_DIR env var and restart to change)"
         )
-        
+
         # Ensure transcription directory exists
         try:
             config.ensure_directories()
             if config.TRANSCRIBE_DIR.exists():
-                logger.info(f"✓ Transcription directory exists: {config.TRANSCRIBE_DIR}")
+                logger.info(
+                    f"✓ Transcription directory exists: {config.TRANSCRIBE_DIR}"
+                )
             else:
                 logger.warning(
                     f"⚠️  Transcription directory does not exist and could not be created: "
@@ -211,18 +275,20 @@ class TimshelTranscriber:
                 )
         except Exception as e:
             logger.error(
-                f"✗ Failed to create transcription directory: {e}",
-                exc_info=True
+                f"✗ Failed to create transcription directory: {e}", exc_info=True
             )
             logger.error(
                 "Please ensure TIMSHEL_TRANSCRIBE_DIR points to a valid, "
                 "accessible directory (same vault path on all computers to avoid duplicates)"
             )
             raise
-        
+
         # Diagnostic check: warn if directory doesn't look like a synced vault
         transcribe_path_str = str(config.TRANSCRIBE_DIR)
-        if "iCloud" not in transcribe_path_str and "Obsidian" not in transcribe_path_str:
+        if (
+            "iCloud" not in transcribe_path_str
+            and "Obsidian" not in transcribe_path_str
+        ):
             logger.warning(
                 "⚠️  TRANSCRIBE_DIR does not appear to be in a synced location "
                 "(iCloud/Obsidian). For multi-computer setups, ensure all instances "
@@ -266,15 +332,28 @@ class TimshelTranscriber:
             self.state.status = AppStatus.ERROR
             self.state.error_message = f"Błąd monitora plików: {e}"
 
+        # Voice Memos connector. Built regardless of the toggle so the settings
+        # UI can report status; _sync_voice_memos does nothing while it is off.
+        self.voice_memos = VoiceMemosConnector(
+            recordings_dir=config.VOICE_MEMOS_RECORDINGS_DIR,
+            state_file=config.VOICE_MEMOS_STATE_FILE,
+        )
+
         # Start periodic checker thread
         self.running = True
         self.state.status = AppStatus.IDLE
         self.periodic_thread = threading.Thread(
-            target=self._periodic_check,
-            daemon=True,
-            name="PeriodicChecker"
+            target=self._periodic_check, daemon=True, name="PeriodicChecker"
         )
         self.periodic_thread.start()
+
+        # Startup pass: memos recorded while the app was down get seen now
+        # rather than one tick later. Off the main thread — it can queue whisper.
+        threading.Thread(
+            target=self._sync_voice_memos,
+            daemon=True,
+            name="VoiceMemosStartup",
+        ).start()
 
         logger.info("=" * 60)
         logger.info("✓ All monitors running")
@@ -317,6 +396,13 @@ class TimshelTranscriber:
             except Exception as e:
                 logger.error(f"Error stopping monitor: {e}")
 
+        if self.voice_memos_watcher:
+            try:
+                self.voice_memos_watcher.stop()
+            except Exception as e:  # noqa: BLE001 — shutdown must proceed
+                logger.error(f"Error stopping Voice Memos watcher: {e}")
+            self.voice_memos_watcher = None
+
         # Wait for periodic thread to finish
         if self.periodic_thread and self.periodic_thread.is_alive():
             logger.debug("Waiting for periodic checker to stop...")
@@ -346,4 +432,3 @@ class TimshelTranscriber:
         self.state.pending_count = pending_count
         if error_message:
             self.state.error_message = error_message
-

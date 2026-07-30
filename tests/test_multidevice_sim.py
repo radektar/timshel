@@ -58,6 +58,7 @@ def test_device_b_versions_after_device_a_transcribed(tmp_path: Path) -> None:
         version: int = 1,
         previous_version: str | None = None,
         output_filename: str | None = None,
+        **_provenance_kwargs,
     ) -> Path:
         md_v2.write_text("---\nprevious_version: sample.md\n---\n")
         return md_v2

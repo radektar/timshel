@@ -304,6 +304,10 @@ class TimshelMenuApp(rumps.App):
             # Normal start - check dependencies
             rumps.Timer(self._delayed_check_dependencies, 1).start()
 
+        # Voice Memos: one-shot offer, late enough that the daemon has built the
+        # connector and any onboarding dialogs have had their turn.
+        rumps.Timer(self._maybe_offer_voice_memos, 20).start()
+
     def _resolve_icon_paths(self) -> dict[AppStatus, Optional[str]]:
         """Build menu bar status icons by rendering SF Symbols to template PNGs.
 
@@ -769,6 +773,236 @@ class TimshelMenuApp(rumps.App):
             send_notification("Timshel", "Import done", summary)
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------------
+    # Voice Memos connector
+    # ------------------------------------------------------------------
+
+    def _voice_memos_connector(self):
+        """The live connector, or None while the daemon is still starting."""
+        return getattr(self.transcriber, "voice_memos", None)
+
+    def _voice_memos_backfill_clicked(self, _=None) -> None:
+        """Offer to transcribe the memos recorded before the connector was on."""
+        connector = self._voice_memos_connector()
+        if connector is None:
+            rumps.alert(
+                title="Timshel",
+                message="Still starting up — try again in a moment.",
+                ok="OK",
+            )
+            return
+
+        # The Settings window stays open, so the button can be clicked again
+        # mid-run. A second worker could not double-import (the import lock
+        # stops that), but it would release the digest hold out from under the
+        # first one and report a second, confusing summary.
+        if getattr(self, "_voice_memos_backfill_running", False):
+            rumps.alert(
+                title="Timshel",
+                message="Already transcribing older recordings — check back soon.",
+                ok="OK",
+            )
+            return
+
+        try:
+            archive = connector.archive_candidates()
+        except Exception as error:  # noqa: BLE001
+            logger.error("Voice Memos: cannot list the archive: %s", error)
+            return
+
+        if not archive:
+            rumps.alert(
+                title="Timshel",
+                message="No older memos left to import.",
+                ok="OK",
+            )
+            return
+
+        clicked = rumps.alert(
+            title="Timshel",
+            message=(
+                f"Found {len(archive)} older Voice Memos recording(s). "
+                "Transcribe them now? This runs locally and can take a while "
+                "for a large archive — recordings from your recorder always go "
+                "first."
+            ),
+            ok="Transcribe",
+            cancel="Not now",
+        )
+        if clicked != 1:
+            return
+
+        self._voice_memos_backfill_running = True
+        threading.Thread(
+            target=self._run_voice_memos_backfill,
+            args=(archive,),
+            daemon=True,
+            name="VoiceMemosBackfill",
+        ).start()
+
+    def _run_voice_memos_backfill(self, archive) -> None:
+        """Transcribe the archive (background thread), retrying a busy lock.
+
+        The user agreed to local transcription, nothing more. Every finished
+        note bumps the digest's new-note counter, so a few dozen memos would
+        sail past the pattern trigger and buy an Opus digest over a decade of
+        old recordings — the escalation ``settle_after_import`` exists to stop.
+        Clamping once at the end is not enough either: the suspend hold expires
+        after an hour and this batch can run longer, so the counter is settled
+        after every pass.
+        """
+        import time as _time
+        from datetime import datetime as _dt
+
+        from src.connections.scheduler import get_scheduler
+        from src.voice_memos import process_voice_memos
+
+        connector = self._voice_memos_connector()
+        if connector is None or self.transcriber is None:
+            return
+
+        engine = getattr(self.transcriber, "transcriber", None)
+        if engine is None:
+            return
+
+        total = len(archive)
+        try:
+            send_notification(
+                "Timshel", "Voice Memos", f"Transcribing {total} recording(s)…"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        scheduler = get_scheduler()
+
+        def _keep_digest_cheap() -> None:
+            """Start the clock if idle and hold the counter below the trigger."""
+            try:
+                scheduler.settle_after_import(_dt.now())
+            except Exception as exc:  # noqa: BLE001 - never break the import
+                logger.debug("Voice Memos: could not settle the digest: %s", exc)
+
+        try:
+            scheduler.suspend_auto_digest()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Voice Memos: could not hold the digest: %s", exc)
+
+        pending = list(archive)
+        imported = failed = 0
+        try:
+            # The recorder owns the transcription lock; wait it out rather than
+            # dropping the batch, the same way the first-session import does.
+            deadline = _time.time() + 300
+            while pending:
+                stats = process_voice_memos(engine, connector, candidates=pending)
+                imported += stats.imported
+                failed += stats.failed
+                done = stats.imported + stats.skipped + stats.failed
+                pending = pending[done:]
+                _keep_digest_cheap()
+                if not stats.lock_aborted:
+                    break
+                if _time.time() >= deadline:
+                    logger.info("Voice Memos backfill: gave up waiting for the lock")
+                    break
+                _time.sleep(15)
+        finally:
+            # Settle before releasing the hold, never after: the very next tick
+            # may fire, and it must see an already-clamped counter.
+            _keep_digest_cheap()
+            try:
+                scheduler.resume_auto_digest()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Voice Memos: could not release the hold: %s", exc)
+            self._voice_memos_backfill_running = False
+
+        summary = f"{imported} of {total} transcribed"
+        if failed:
+            summary += f", {failed} skipped"
+        if pending:
+            summary += f", {len(pending)} left — run it again"
+        try:
+            send_notification("Timshel", "Voice Memos", summary)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # How many times the offer may find the daemon not ready before giving up
+    # on this session (~5 min at the timer's 20 s interval).
+    _VOICE_MEMOS_OFFER_ATTEMPTS = 15
+
+    def _maybe_offer_voice_memos(self, _timer=None) -> None:
+        """One-shot offer: we can see memos, the connector is off — connect?
+
+        Shown once ever. Held back until setup is done and the onboarding
+        first-session flow is not running, so it never lands on top of the
+        wizard's own dialogs.
+
+        The timer keeps ticking while the answer is merely "not yet" (the daemon
+        is still starting, so there is no connector to ask): stopping on the
+        first fire would lose the offer for the whole session on exactly the
+        slowest machines. It stops as soon as a real decision is made — or after
+        a bounded number of tries, so a user with no memos is not polled forever.
+        """
+
+        def _done() -> None:
+            if _timer is not None:
+                try:
+                    _timer.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._voice_memos_offer_tries = getattr(self, "_voice_memos_offer_tries", 0) + 1
+        if self._voice_memos_offer_tries >= self._VOICE_MEMOS_OFFER_ATTEMPTS:
+            _done()
+
+        try:
+            settings = UserSettings.load()
+            if settings.voice_memos_enabled or settings.voice_memos_proposal_shown:
+                _done()
+                return
+            if not settings.setup_completed or settings.pending_import_dir:
+                return  # onboarding owns the screen — ask again on a later tick
+
+            connector = self._voice_memos_connector()
+            if connector is None or not connector.has_any_recordings():
+                return  # daemon still starting, or nothing to offer yet
+
+            _done()
+
+            def _on_main() -> None:
+                clicked = rumps.alert(
+                    title="Timshel",
+                    message=(
+                        "I can see Voice Memos recordings synced from your "
+                        "iPhone. Transcribe new ones automatically from now on? "
+                        "Older recordings stay untouched unless you ask."
+                    ),
+                    ok="Turn on",
+                    cancel="Not now",
+                )
+
+                def _accept(s) -> None:
+                    s.voice_memos_enabled = True
+                    s.voice_memos_proposal_shown = True
+
+                def _decline(s) -> None:
+                    s.voice_memos_proposal_shown = True
+
+                if clicked == 1:
+                    from src.config.config import reload_config
+
+                    # Watermark first: if the settings write failed afterwards,
+                    # a later enable must still not treat the archive as new.
+                    connector.enable(consented=True)
+                    UserSettings.mutate(_accept)
+                    reload_config()
+                else:
+                    UserSettings.mutate(_decline)
+
+            _run_on_main_thread(_on_main)
+        except Exception as error:  # noqa: BLE001 - an offer must never crash the app
+            logger.error("Voice Memos offer failed: %s", error, exc_info=True)
 
     def _export_feedback_clicked(self, _) -> None:
         """Menu: zip the H1 feedback (signal/metrics + digests) onto the Desktop
@@ -2172,6 +2406,8 @@ class TimshelMenuApp(rumps.App):
             "show_about": self._show_about,
             "review_volumes": self._manage_volumes_clicked,
             "forget_all_volumes": self._forget_all_volumes,
+            "voice_memos_connector": self._voice_memos_connector,
+            "voice_memos_backfill": self._voice_memos_backfill_clicked,
         }
         prior_dir = Path(config.TRANSCRIBE_DIR)
         saved = show_settings_window(callbacks)

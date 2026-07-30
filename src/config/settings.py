@@ -116,6 +116,14 @@ class UserSettings:
     # maps it to the runtime knobs.
     tester_mode: bool = False
 
+    # Apple Voice Memos connector: watch the iCloud-synced Recordings folder and
+    # transcribe new memos automatically. OFF by default — it reads another
+    # app's container and can queue hours of whisper work on a large archive.
+    voice_memos_enabled: bool = False
+    # The one-shot "I can see your Voice Memos — connect them?" offer. Sticky
+    # once shown (either answer), so we never nag twice.
+    voice_memos_proposal_shown: bool = False
+
     def __post_init__(self) -> None:
         """Normalize types after init (e.g., JSON-loaded values)."""
         if isinstance(self.output_dir, str):
@@ -208,6 +216,8 @@ class UserSettings:
             "index_migrated": self.index_migrated,
             "legacy_migrated": self.legacy_migrated,
             "tester_mode": self.tester_mode,
+            "voice_memos_enabled": self.voice_memos_enabled,
+            "voice_memos_proposal_shown": self.voice_memos_proposal_shown,
         }
 
     def find_trusted_volume(self, uuid: str) -> Optional[TrustedVolume]:
