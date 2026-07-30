@@ -793,6 +793,18 @@ class TimshelMenuApp(rumps.App):
             )
             return
 
+        # The Settings window stays open, so the button can be clicked again
+        # mid-run. A second worker could not double-import (the import lock
+        # stops that), but it would release the digest hold out from under the
+        # first one and report a second, confusing summary.
+        if getattr(self, "_voice_memos_backfill_running", False):
+            rumps.alert(
+                title="Timshel",
+                message="Already transcribing older recordings — check back soon.",
+                ok="OK",
+            )
+            return
+
         try:
             archive = connector.archive_candidates()
         except Exception as error:  # noqa: BLE001
@@ -821,6 +833,7 @@ class TimshelMenuApp(rumps.App):
         if clicked != 1:
             return
 
+        self._voice_memos_backfill_running = True
         threading.Thread(
             target=self._run_voice_memos_backfill,
             args=(archive,),
@@ -829,9 +842,20 @@ class TimshelMenuApp(rumps.App):
         ).start()
 
     def _run_voice_memos_backfill(self, archive) -> None:
-        """Transcribe the archive (background thread), retrying a busy lock."""
-        import time as _time
+        """Transcribe the archive (background thread), retrying a busy lock.
 
+        The user agreed to local transcription, nothing more. Every finished
+        note bumps the digest's new-note counter, so a few dozen memos would
+        sail past the pattern trigger and buy an Opus digest over a decade of
+        old recordings — the escalation ``settle_after_import`` exists to stop.
+        Clamping once at the end is not enough either: the suspend hold expires
+        after an hour and this batch can run longer, so the counter is settled
+        after every pass.
+        """
+        import time as _time
+        from datetime import datetime as _dt
+
+        from src.connections.scheduler import get_scheduler
         from src.voice_memos import process_voice_memos
 
         connector = self._voice_memos_connector()
@@ -850,23 +874,48 @@ class TimshelMenuApp(rumps.App):
         except Exception:  # noqa: BLE001
             pass
 
+        scheduler = get_scheduler()
+
+        def _keep_digest_cheap() -> None:
+            """Start the clock if idle and hold the counter below the trigger."""
+            try:
+                scheduler.settle_after_import(_dt.now())
+            except Exception as exc:  # noqa: BLE001 - never break the import
+                logger.debug("Voice Memos: could not settle the digest: %s", exc)
+
+        try:
+            scheduler.suspend_auto_digest()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Voice Memos: could not hold the digest: %s", exc)
+
         pending = list(archive)
         imported = failed = 0
-        # The recorder owns the transcription lock; wait it out rather than
-        # dropping the batch, the same way the first-session import does.
-        deadline = _time.time() + 300
-        while pending:
-            stats = process_voice_memos(engine, connector, candidates=pending)
-            imported += stats.imported
-            failed += stats.failed
-            done = stats.imported + stats.skipped + stats.failed
-            pending = pending[done:]
-            if not stats.lock_aborted:
-                break
-            if _time.time() >= deadline:
-                logger.info("Voice Memos backfill: gave up waiting for the lock")
-                break
-            _time.sleep(15)
+        try:
+            # The recorder owns the transcription lock; wait it out rather than
+            # dropping the batch, the same way the first-session import does.
+            deadline = _time.time() + 300
+            while pending:
+                stats = process_voice_memos(engine, connector, candidates=pending)
+                imported += stats.imported
+                failed += stats.failed
+                done = stats.imported + stats.skipped + stats.failed
+                pending = pending[done:]
+                _keep_digest_cheap()
+                if not stats.lock_aborted:
+                    break
+                if _time.time() >= deadline:
+                    logger.info("Voice Memos backfill: gave up waiting for the lock")
+                    break
+                _time.sleep(15)
+        finally:
+            # Settle before releasing the hold, never after: the very next tick
+            # may fire, and it must see an already-clamped counter.
+            _keep_digest_cheap()
+            try:
+                scheduler.resume_auto_digest()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Voice Memos: could not release the hold: %s", exc)
+            self._voice_memos_backfill_running = False
 
         summary = f"{imported} of {total} transcribed"
         if failed:
