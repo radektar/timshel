@@ -3,7 +3,7 @@
 Data: 2026-07-30 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
-## Konektor Voice Memos — ingest v2 faza 1 (2026-07-30, w PR)
+## Konektor Voice Memos — ingest v2 faza 1 (PR #97, MERGE 2026-07-30)
 
 Decyzja zakresu: z meeting-ingest v2 wchodzi **najpierw wyłącznie Voice
 Memos**; Zoom/Teams/drop-folder, docx, mówcy i destylacja → backlog ingesta
@@ -30,9 +30,26 @@ FSEvents + pętla importu), przelot `recorded_at`/`provenance` przez
 ustawień + jednorazowa auto-propozycja + dialog backfillu. Domyślnie OFF,
 backfill „od dziś", archiwum tylko jawnym opt-inem.
 
-**Do weryfikacji na buildzie DMG (nie z terminala!):** TCC dla Group
+**Pętla review: 4 rundy do czystej (4 → 2 → 1 → 0 defektów).** R1: `scan()`
+bez watermarku zwracał CAŁE archiwum (fail-open) + backfill raportował sukces,
+nie robiąc nic, gdy tick trzymał lock. R2: ponowne włączenie po przerwie
+zasysało całą przerwę — `enable()` rozdzielone na zgodę (przesuwa znacznik) i
+samonaprawę (tylko uzupełnia). R3 (najpoważniejsze): backfill archiwum omijał
+`settle_after_import`, więc 104 notatki wypychały licznik ponad pattern-trigger
+i kupowały płatny digest Opusa nad nagraniami z 2018 — przycinanie po KAŻDYM
+przebiegu, bo hold wygasa po 60 min. R4: zero defektów; reguła zgody wydzielona
+z modala do `apply_voice_memos_settings()` (była nietestowalna) + usunięty
+martwy `ENABLE_VOICE_MEMOS`.
+
+**Weryfikacja E2E bez mocków:** prawdziwa głosówka przez pełny pipeline w
+izolowanym `$HOME` → notatka z `recording_date` z nazwy pliku (nie z mtime,
+który sync ustawił 2h później), `source_type: voice-memo`, fingerprint z
+prawdziwego czasu. Testy 1327, mypy 100 plików.
+
+**ZOSTAJE do weryfikacji na buildzie DMG (nie z terminala!):** TCC dla Group
 Containers — dev-run dziedziczy uprawnienia terminala i może fałszywie
-przechodzić; obsłużone statusem `NO_ACCESS` + hintem.
+przechodzić; obsłużone statusem `NO_ACCESS` + hintem. To jedyne realne ryzyko,
+którego review nie rozstrzygnie.
 
 ## Checklista wysyłki do testerów (2026-07-29) — kod GOTOWY, zostały manuale
 
