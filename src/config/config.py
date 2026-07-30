@@ -60,6 +60,12 @@ class Config:
     LOG_FILE: Path = None
     DIGEST_LOCK_FILE: Path = None  # Lock serialising connection-synthesis digest runs
     CONNECTIONS_STATE_FILE: Path = None  # digest scheduler state (own file)
+    VOICE_MEMOS_STATE_FILE: Path = None  # Voice Memos connector state (own file)
+
+    # Apple Voice Memos: iCloud drops iPhone recordings here (stable since
+    # Sonoma). Read-only for us — we never touch the CloudRecordings.db beside
+    # them, so no dependency on Apple's private schema.
+    VOICE_MEMOS_RECORDINGS_DIR: Path = None
 
     # Whisper configuration
     WHISPER_MODEL: str = (
@@ -294,6 +300,18 @@ tags: [{tags}]
         if self.CONNECTIONS_STATE_FILE is None:
             self.CONNECTIONS_STATE_FILE = support_dir / "connections_state.json"
 
+        if self.VOICE_MEMOS_STATE_FILE is None:
+            self.VOICE_MEMOS_STATE_FILE = support_dir / "voice_memos_state.json"
+
+        if self.VOICE_MEMOS_RECORDINGS_DIR is None:
+            self.VOICE_MEMOS_RECORDINGS_DIR = (
+                Path.home()
+                / "Library"
+                / "Group Containers"
+                / "group.com.apple.VoiceMemos.shared"
+                / "Recordings"
+            )
+
         if self.AUDIO_EXTENSIONS is None:
             self.AUDIO_EXTENSIONS = defaults.AUDIO_EXTENSIONS
 
@@ -305,11 +323,11 @@ tags: [{tags}]
         if self.WHISPER_CPP_PATH is None:
             # Nowa lokalizacja: ~/Library/Application Support/Timshel/bin/
             support_dir = (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / defaults.APP_SUPPORT_DIR_NAME
-        )
+                Path.home()
+                / "Library"
+                / "Application Support"
+                / defaults.APP_SUPPORT_DIR_NAME
+            )
             new_whisper_path = support_dir / "bin" / "whisper-cli"
 
             # Sprawdź nową lokalizację (Faza 2)
@@ -397,6 +415,11 @@ tags: [{tags}]
             raw_embed_threads
             if raw_embed_threads > 0
             else max(1, (os.cpu_count() or 4) // 2)
+        )
+        # Voice Memos connector: OFF until the user opts in (it reaches into
+        # another app's container and can queue hours of whisper work).
+        self.ENABLE_VOICE_MEMOS = bool(
+            getattr(self._user_settings, "voice_memos_enabled", False)
         )
 
         # AI summaries run whenever a usable LLM backend is configured: Ollama

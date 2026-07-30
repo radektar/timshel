@@ -580,6 +580,78 @@ def test_postprocess_transcript_success(transcriber, tmp_path, monkeypatch):
     assert not transcript_file.exists()
 
 
+def _postprocess_with_mocks(transcriber, tmp_path, monkeypatch, **kwargs):
+    """Run _postprocess_transcript with stubbed summarizer/generator."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(exist_ok=True)
+    update_transcriber_config(
+        transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, DELETE_TEMP_TXT=False
+    )
+
+    audio_file = tmp_path / "test.m4a"
+    audio_file.touch()
+    transcript_file = output_dir / "test.txt"
+    transcript_file.write_text("Test transcript content")
+
+    mock_summarizer = MagicMock(spec=BaseSummarizer)
+    mock_summarizer.generate.return_value = {"title": "T", "summary": "S"}
+    transcriber.summarizer = mock_summarizer
+
+    mock_md_gen = MagicMock(spec=MarkdownGenerator)
+    mock_md_gen.extract_audio_metadata.return_value = {
+        "source_file": "test.m4a",
+        "extension": ".m4a",
+        "recording_datetime": datetime(2020, 1, 1, 0, 0, 0),
+        "duration_seconds": 60,
+        "duration_formatted": "00:01:00",
+    }
+    mock_md_gen.create_markdown_document.return_value = output_dir / "note.md"
+    transcriber.markdown_generator = mock_md_gen
+
+    transcriber._postprocess_transcript(
+        audio_file, transcript_file, fingerprint="sha256:test", **kwargs
+    )
+    return mock_md_gen.create_markdown_document.call_args
+
+
+def test_postprocess_without_provenance_is_unchanged(
+    transcriber, tmp_path, monkeypatch
+):
+    """Regression: the recorder path must produce exactly what it always did."""
+    call = _postprocess_with_mocks(transcriber, tmp_path, monkeypatch)
+
+    extra = call.kwargs["extra_frontmatter"]
+    assert {"source_volume", "model", "language"} <= set(extra)
+    # No provenance leaks into recorder notes: the renderer only emits the
+    # source_type/origin lines when they are present, so their absence keeps
+    # existing notes byte-for-byte identical.
+    assert "source_type" not in extra
+    assert "origin" not in extra
+    # The file's own metadata still decides the date.
+    assert call.kwargs["metadata"]["recording_datetime"] == datetime(2020, 1, 1)
+
+
+def test_postprocess_applies_provenance_and_recorded_at(
+    transcriber, tmp_path, monkeypatch
+):
+    """Voice Memos: filename time wins over the file, provenance is stamped."""
+    true_time = datetime(2026, 7, 30, 9, 59, 1)
+
+    call = _postprocess_with_mocks(
+        transcriber,
+        tmp_path,
+        monkeypatch,
+        recorded_at=true_time,
+        provenance={"source_type": "voice-memo", "origin": "apple-voice-memos"},
+    )
+
+    extra = call.kwargs["extra_frontmatter"]
+    assert extra["source_type"] == "voice-memo"
+    assert extra["origin"] == "apple-voice-memos"
+    # mtime/tags would have said 2020 — the caller knows better.
+    assert call.kwargs["metadata"]["recording_datetime"] == true_time
+
+
 def test_postprocess_transcript_no_summarizer(transcriber, tmp_path, monkeypatch):
     """Test post-processing without summarizer (fallback)."""
     output_dir = tmp_path / "output"

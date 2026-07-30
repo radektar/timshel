@@ -1174,7 +1174,9 @@ class Transcriber:
         except APIBillingError as exc:
             # Keep the first (good) summary; disable AI for subsequent notes.
             self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
-            logger.warning("alias-judge retry hit billing error — keeping first summary")
+            logger.warning(
+                "alias-judge retry hit billing error — keeping first summary"
+            )
             return summary
 
         retry_summary = retry.get("summary", "") if retry else ""
@@ -1464,12 +1466,19 @@ class Transcriber:
         version: int = 1,
         previous_version: Optional[str] = None,
         output_filename: Optional[str] = None,
+        recorded_at: Optional[datetime] = None,
+        provenance: Optional[Dict[str, str]] = None,
     ) -> Optional[Path]:
         """Post-process transcript: generate summary and create markdown.
 
         Args:
             audio_file: Original audio file path
             transcript_path: Path to temporary TXT transcript file
+            recorded_at: True recording time, when the caller knows it better
+                than the file does (Voice Memos: parsed from the filename,
+                because iCloud sync rewrites mtime).
+            provenance: Extra frontmatter identifying the source
+                (``source_type``/``origin``); merged over the audio defaults.
 
         Returns:
             True if post-processing succeeded, False otherwise
@@ -1481,6 +1490,16 @@ class Transcriber:
                 transcript_text = f.read()
 
             metadata = self.markdown_generator.extract_audio_metadata(audio_file)
+            if recorded_at is not None:
+                metadata["recording_datetime"] = recorded_at
+
+            extra_frontmatter = {
+                "source_volume": audio_file.parent.name,
+                "model": self.config.WHISPER_MODEL,
+                "language": self.config.WHISPER_LANGUAGE,
+            }
+            extra_frontmatter.update(provenance or {})
+
             md_path = self._finalize_note(
                 transcript_text,
                 metadata,
@@ -1489,11 +1508,7 @@ class Transcriber:
                 previous_version=previous_version,
                 output_filename=output_filename,
                 fallback_title=audio_file.stem.replace("_", " ").title(),
-                extra_frontmatter={
-                    "source_volume": audio_file.parent.name,
-                    "model": self.config.WHISPER_MODEL,
-                    "language": self.config.WHISPER_LANGUAGE,
-                },
+                extra_frontmatter=extra_frontmatter,
             )
             if md_path is None:
                 return None
@@ -2071,7 +2086,13 @@ Brak podsumowania AI. Możliwe przyczyny:
         self._cleanup_transcript_sidecar(transcript_path)
         return candidate
 
-    def transcribe_file(self, audio_file: Path) -> bool:
+    def transcribe_file(
+        self,
+        audio_file: Path,
+        *,
+        recorded_at: Optional[datetime] = None,
+        provenance: Optional[Dict[str, str]] = None,
+    ) -> bool:
         """Transcribe a single audio file using whisper.cpp.
 
         Automatically falls back to CPU-only if Core ML fails.
@@ -2079,13 +2100,17 @@ Brak podsumowania AI. Możliwe przyczyny:
 
         Args:
             audio_file: Path to the audio file to transcribe
+            recorded_at: True recording time when the caller knows it better
+                than the file (Voice Memos: from the filename). Also stabilises
+                the fingerprint, which otherwise falls back to mtime.
+            provenance: Extra frontmatter identifying the source.
 
         Returns:
             True if transcription succeeded, False otherwise
         """
         # If markdown already exists for this audio (based on `source` field),
         # treat it as successfully transcribed and skip any further work.
-        fingerprint = compute_fingerprint(audio_file)
+        fingerprint = compute_fingerprint(audio_file, recording_datetime=recorded_at)
         existing_entry = self.vault_index.lookup(fingerprint)
         # Tier gating removed: versioning (v2/v3) is available to everyone.
         can_version = True
@@ -2138,6 +2163,8 @@ Brak podsumowania AI. Możliwe przyczyny:
                 transcript_path,
                 fingerprint=fingerprint,
                 version=1,
+                recorded_at=recorded_at,
+                provenance=provenance,
             )
             success = md_path is not None
             if success:
@@ -2195,6 +2222,8 @@ Brak podsumowania AI. Możliwe przyczyny:
             version=version,
             previous_version=previous_version,
             output_filename=output_filename,
+            recorded_at=recorded_at,
+            provenance=provenance,
         )
         success = md_path is not None
 
@@ -2295,11 +2324,18 @@ Brak podsumowania AI. Możliwe przyczyny:
                 return candidate
             index += 1
 
-    def import_audio_file(self, source: Path) -> bool:
+    def import_audio_file(
+        self,
+        source: Path,
+        *,
+        recorded_at: Optional[datetime] = None,
+        provenance: Optional[Dict[str, str]] = None,
+    ) -> bool:
         """Stage *source* and run the full single-file pipeline on the copy.
 
         Convenience wrapper around :meth:`stage_audio_file` +
-        :meth:`transcribe_file` for the menu-bar "Import audio…" action.
+        :meth:`transcribe_file` for the menu-bar "Import audio…" action and the
+        Voice Memos connector (which passes ``recorded_at``/``provenance``).
 
         Takes the same locks as :meth:`force_retranscribe` — without them a
         manual import (menu background thread) could run a second whisper-cli
@@ -2336,16 +2372,16 @@ Brak podsumowania AI. Możliwe przyczyny:
 
         try:
             staged = self.stage_audio_file(source)
-            return self.transcribe_file(staged)
+            return self.transcribe_file(
+                staged, recorded_at=recorded_at, provenance=provenance
+            )
         finally:
             lock.release()
             self._workflow_lock.release()
             if not self.transcription_in_progress:
                 self._update_state(AppStatus.IDLE)
 
-    def import_text_file(
-        self, source: Path, status: Optional[dict] = None
-    ) -> bool:
+    def import_text_file(self, source: Path, status: Optional[dict] = None) -> bool:
         """Import an already-transcribed text file (txt/md/vtt) as a note.
 
         Skips whisper entirely: parses the source via :mod:`src.ingest`, then
@@ -2396,7 +2432,9 @@ Brak podsumowania AI. Możliwe przyczyny:
             fingerprint = text_fingerprint(doc.text, doc.source_name)
 
             if self.vault_index.lookup(fingerprint):
-                logger.info("✓ Already imported (fingerprint exists): %s", doc.source_name)
+                logger.info(
+                    "✓ Already imported (fingerprint exists): %s", doc.source_name
+                )
                 if status is not None:
                     status["duplicate"] = True
                 return True

@@ -43,6 +43,7 @@ def test_creates_v2_and_v3(tmp_path: Path) -> None:
         version: int = 1,
         previous_version: str | None = None,
         output_filename: str | None = None,
+        **_provenance_kwargs,
     ) -> Path:
         postprocess_calls.append(
             {

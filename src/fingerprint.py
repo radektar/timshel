@@ -52,12 +52,21 @@ def _parse_datetime(raw: str) -> Optional[datetime]:
         return None
 
 
-def compute_fingerprint(audio_file: Path) -> str:
-    """Compute deterministic fingerprint from content + metadata."""
+def compute_fingerprint(
+    audio_file: Path, recording_datetime: Optional[datetime] = None
+) -> str:
+    """Compute deterministic fingerprint from content + metadata.
+
+    ``recording_datetime`` overrides the tag/mtime lookup. Callers that know the
+    true recording time from a source outside the file (the Voice Memos
+    connector reads it from the filename) must pass it: for a tagless .m4a the
+    fallback is mtime, and iCloud rewrites mtime on re-sync — which would give
+    the same recording two different fingerprints and duplicate its note.
+    """
     hasher = hashlib.sha256()
     with audio_file.open("rb") as handle:
         hasher.update(handle.read(1024 * 1024))
     hasher.update(str(audio_file.stat().st_size).encode("utf-8"))
-    hasher.update(_extract_recording_datetime(audio_file).isoformat().encode("utf-8"))
+    stamp = recording_datetime or _extract_recording_datetime(audio_file)
+    hasher.update(stamp.isoformat().encode("utf-8"))
     return f"sha256:{hasher.hexdigest()}"
-
