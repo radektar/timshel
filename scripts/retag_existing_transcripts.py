@@ -21,8 +21,8 @@ load_env_file()
 
 from src.config import config
 from src.logger import logger
-from src.tag_index import TagIndex
 from src.summarizer import APIBillingError
+from src.tag_index import TagIndex
 from src.tagger import BaseTagger, get_tagger
 from src.vocabulary import VocabularyIndex
 
@@ -31,15 +31,16 @@ from src.vocabulary import VocabularyIndex
 class MarkdownSections:
     """Structured representation of markdown parts."""
 
-    frontmatter_lines: List[str]
     body: str
 
 
 # Frontmatter tags, in both styles Obsidian round-trips: inline
 # ``tags: [a, b]`` and the block list its property editor writes
 # (``tags:`` followed by indented ``- item`` lines).
-_INLINE_TAGS_RE = re.compile(r"^tags:[ \t]*\[(.*)\][ \t]*$", re.MULTILINE)
-_BLOCK_TAGS_RE = re.compile(r"^tags:[ \t]*\n((?:[ \t]*-[ \t]+.*\n)+)", re.MULTILINE)
+_INLINE_TAGS_RE = re.compile(r"^tags:[ \t]*\[(.*)\][ \t]*\r?$", re.MULTILINE)
+_BLOCK_TAGS_RE = re.compile(
+    r"^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]+.*\r?\n)+)", re.MULTILINE
+)
 
 
 def _frontmatter_span(text: str) -> Optional[Tuple[int, int]]:
@@ -105,7 +106,14 @@ def replace_tags(text: str, tags: List[str]) -> Optional[str]:
         rendered = "tags: [" + ", ".join(tags) + "]"
         return head + front[: inline.start()] + rendered + front[inline.end() :] + tail
 
-    return None
+    # No tags key at all: add one rather than skip the note — we already paid
+    # for the tags by the time we get here, and the previous renderer appended
+    # in this case too.
+    closing = front.rfind("---")
+    if closing == -1:
+        return None
+    rendered = "tags: [" + ", ".join(tags) + "]\n"
+    return head + front[:closing] + rendered + front[closing:] + tail
 
 
 class TranscriptRetagger:
@@ -244,6 +252,11 @@ class TranscriptRetagger:
             self.skipped += 1
             return
 
+        # Grow the reusable-tag pool before the dry-run branch: a preview that
+        # offered a different vocabulary than the real run would predict
+        # different tags than the run it is previewing.
+        self.existing_tags.extend(merged_tags[1:])
+
         if self.dry_run:
             logger.info(
                 "DRY-RUN %s: %s -> %s",
@@ -257,9 +270,6 @@ class TranscriptRetagger:
         self._write_updated_file(md_path, content, updated_content)
         self.updated += 1
 
-        # Update in-memory existing tags for future calls
-        self.existing_tags.extend(merged_tags[1:])
-
     def _split_frontmatter(self, content: str) -> MarkdownSections | None:
         """Split content into frontmatter lines and body."""
         lines = content.splitlines()
@@ -268,9 +278,8 @@ class TranscriptRetagger:
 
         for idx in range(1, len(lines)):
             if lines[idx].strip() == "---":
-                frontmatter_lines = lines[1:idx]
                 body = "\n".join(lines[idx + 1 :])
-                return MarkdownSections(frontmatter_lines=frontmatter_lines, body=body)
+                return MarkdownSections(body=body)
         return None
 
     def _extract_sections(self, body: str) -> Tuple[str, str]:
@@ -323,7 +332,14 @@ class TranscriptRetagger:
         the whole vault. Mirrors scripts/resummarize_vault.py.
         """
         self.backup_dir.mkdir(parents=True, exist_ok=True)
-        (self.backup_dir / md_path.name).write_text(original, encoding="utf-8")
+        target = self.backup_dir / md_path.name
+        if target.exists():
+            # First write wins. The stamp has second resolution, so two runs
+            # can share a folder — overwriting would replace the true original
+            # with the previous run's output, which is the one thing a backup
+            # must never do.
+            return
+        target.write_text(original, encoding="utf-8")
 
 
 def main() -> int:
@@ -365,7 +381,17 @@ def main() -> int:
         logger.error("Cannot run retagger: %s", err)
         return 1
 
-    retagger.run()
+    try:
+        retagger.run()
+    except APIBillingError as err:
+        # Auth / credits / retired model: nothing left to try. Report it the
+        # same way as a startup failure instead of dumping a traceback.
+        logger.error(
+            "Aborted after %s notes — Claude API unavailable: %s",
+            retagger.updated,
+            err,
+        )
+        return 1
     return 0
 
 

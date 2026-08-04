@@ -110,16 +110,19 @@ def test_fuller_text_contains_everything_synthesis_could_quote(tmp_path):
     """
     from src.connections.candidate_assembly import load_corpus
 
-    # Podsumowanie fits the 2400-char budget on its own; the two together do
-    # not — so the blind prefix cut ends inside Kluczowe punkty and never
-    # reaches the stance, while the priority view keeps it.
+    # Sizes matter and are load-bearing, so they are asserted below:
+    # Podsumowanie fits the synthesis budget (2400) on its own, but the whole
+    # summary block must exceed the VERIFIER's window (VERDICT_MAX_NOTE_CHARS
+    # = 4000) — otherwise the old head/tail excerpt would have seen the stance
+    # anyway and this test would pass against the un-fixed code.
     summary = (
         "## Podsumowanie\n\n"
-        + ("Treść podsumowania. " * 110)
+        + ("Treść podsumowania. " * 100)
         + "\n## Kluczowe punkty\n\n"
-        + ("- punkt do omówienia\n" * 20)
+        + ("- punkt do omówienia\n" * 120)
         + "\n## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ STANCE-NEEDLE\n"
     )
+    assert len(summary) > config.VERDICT_MAX_NOTE_CHARS
     md = tmp_path / "long.md"
     md.write_text(
         '---\ntitle: "long"\ndate: 2026-06-20\ntags: []\n---\n\n'
@@ -135,6 +138,45 @@ def test_fuller_text_contains_everything_synthesis_could_quote(tmp_path):
     assert "STANCE-NEEDLE" in note.synthesis_md  # synthesis sees it...
     assert "STANCE-NEEDLE" in fuller  # ...so the verifier must too
     assert "slowo" in fuller  # transcript still there (anti-circularity)
+
+    # Pin the failure this test exists for: the pre-fix implementation (a plain
+    # head/tail excerpt of the whole body) must NOT see the stance — otherwise
+    # the assertions above would hold with or without the fix.
+    from src.connections.candidate_assembly import _body_after_frontmatter, _excerpt
+
+    pre_fix = _excerpt(
+        _body_after_frontmatter(md.read_text(encoding="utf-8")).strip(),
+        config.VERDICT_MAX_NOTE_CHARS,
+    )
+    assert "STANCE-NEEDLE" not in pre_fix
+
+    # And the fix must not trade the bound away: the summary side is
+    # synthesis_md, so it stays capped however long the note's summary is.
+    assert len(fuller) <= len(note.synthesis_md) + 4 * config.VERDICT_MAX_NOTE_CHARS
+
+
+def test_fuller_text_stays_bounded_for_a_huge_summary_block(tmp_path):
+    """A hand-written/imported note must not dominate the verdict prompt.
+
+    _build_user_prompt has no total cap, so an unbounded per-note text is a
+    silent cost blow-up (and a context overflow fails open — no verification
+    at all, no error).
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    md = tmp_path / "huge.md"
+    md.write_text(
+        '---\ntitle: "huge"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        "## Podsumowanie\n\n" + ("bardzo dlugi blok. " * 10000)
+        + "\n## Transkrypcja\nkrotka transkrypcja.\n",
+        encoding="utf-8",
+    )
+
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert len(note.synthesis_md) <= config.MAX_SYNTHESIS_NOTE_CHARS * 2
+    assert len(fuller) < 20_000  # was ~200k when the raw block was spliced in
 
 
 def test_get_verifier_gated_by_config(monkeypatch):

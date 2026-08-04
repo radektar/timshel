@@ -791,3 +791,22 @@ def test_tag_bridge_ignores_notes_sharing_only_the_app_tag(vault):
     # claims to have bridged.
     assert "tag" in cs.channel_map["real"]  # a genuinely shared tag still bridges
     assert "tag" not in cs.channel_map.get("app_only", set())
+
+
+def test_synthesis_view_clips_a_giant_preamble(vault):
+    """A note whose text starts before any heading must still fit the budget.
+
+    The preamble was counted against the budget but emitted in full, so such a
+    note blew the per-note bound by its own length — and the prompt's char
+    budget is measured on summary_md, so nothing downstream caught it.
+    """
+    (vault / "preamble.md").write_text(
+        '---\ntitle: "p"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        + ("tekst bez naglowka. " * 600)
+        + "\n## Podsumowanie\n\nKrótkie.\n"
+        + "\n## Transkrypcja\nfoo\n",
+        encoding="utf-8",
+    )
+    note = load_corpus(vault)[0]
+
+    assert len(note.synthesis_md) <= config.MAX_SYNTHESIS_NOTE_CHARS * 2

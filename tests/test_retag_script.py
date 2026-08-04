@@ -200,3 +200,64 @@ class TestByteFaithfulRewrite:
             runner.run()
 
         assert runner.tagger.generate_tags.call_count == 1
+
+
+class TestRewriteEdgeCases:
+    """Inputs a real vault produces that the rewriter must not choke on."""
+
+    def test_crlf_note_is_parsed_and_rewritten(self, retagger, retag_module, tmp_path):
+        """CRLF made both regexes miss: the note looked untagged, got processed
+        without --force, then skipped after the API call was already paid for."""
+        note = tmp_path / "crlf.md"
+        note.write_bytes(
+            (
+                "---\r\ntitle: n\r\ntags: [transcription, stary]\r\n---\r\n\r\n"
+                "## Podsumowanie\r\n\r\nTreść.\r\n\r\n## Transkrypcja\r\nTekst.\r\n"
+            ).encode("utf-8")
+        )
+
+        assert retag_module.parse_tags(note.read_text(encoding="utf-8")) == [
+            "transcription",
+            "stary",
+        ]
+
+        retagger(force=True).run()
+        after = note.read_text(encoding="utf-8")
+        assert "nowy-tag" in after
+        assert "## Podsumowanie" in after and "Tekst." in after
+        # Line endings are normalised to LF on read (universal newlines) — the
+        # same as before this change; the fix here is that the note is no
+        # longer read as untagged and then dropped after the API call.
+
+    def test_note_without_tags_key_gets_one(self, retagger, tmp_path):
+        """We already paid for the tags — adding the key beats skipping."""
+        note = tmp_path / "notags.md"
+        note.write_text(
+            "---\ntitle: n\ndate: 2026-06-20\n---\n\n"
+            "## Podsumowanie\n\nTreść.\n\n## Transkrypcja\nTekst.\n",
+            encoding="utf-8",
+        )
+
+        runner = retagger(force=True)
+        runner.run()
+        after = note.read_text(encoding="utf-8")
+
+        assert runner.updated == 1
+        assert "tags: [transcription, nowy-tag]" in after
+        assert after.count("---") == 2
+        assert "## Podsumowanie" in after
+
+    def test_backup_keeps_the_true_original_on_a_stamp_collision(
+        self, retagger, tmp_path
+    ):
+        """Two runs sharing a stamp folder must not overwrite the original
+        with the first run's output."""
+        note = tmp_path / "a.md"
+        _note(note)
+        pristine = note.read_text(encoding="utf-8")
+
+        retagger(force=True, stamp="fixed").run()
+        retagger(force=True, stamp="fixed").run()
+
+        backup = tmp_path / ".timshel" / "retag-backup" / "fixed" / "a.md"
+        assert backup.read_text(encoding="utf-8") == pristine

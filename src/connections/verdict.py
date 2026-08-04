@@ -120,9 +120,16 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
     Synthesis reads ``synthesis_md``, which lifts Stanowiska / Wątki otwarte
     out of the MIDDLE of a long summary — a plain head/tail excerpt of the body
     can drop exactly those lines into the blind gap, and a quote the verifier
-    cannot find is judged FABRICATED and the connection is dropped. So the
-    summary block goes in whole (it is small and already bounded by the
-    summarizer), and the transcript fills whatever budget is left.
+    cannot find is judged FABRICATED and the connection is dropped.
+
+    So the summary side is ``synthesis_md`` itself: it IS what synthesis saw,
+    which makes containment exact rather than approximate, and it is already
+    bounded (``MAX_SYNTHESIS_NOTE_CHARS * 2``). Splicing the raw summary block
+    in instead would be unbounded — one hand-written or imported note with a
+    long block before ``## Transkrypcja`` could dominate the whole verdict
+    prompt, which has no total cap. A prefix cut of that block is NOT an
+    option either: ``_synthesis_view`` reorders sections, so cutting by prefix
+    would drop the very lines it pulled forward.
     """
     try:
         full = note.md_path.read_text(encoding="utf-8")
@@ -136,14 +143,16 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
     if _TRANSCRIPT_MARKER not in body:
         return _excerpt(body, max_chars)
 
-    summary_block, marker, transcript = body.partition(_TRANSCRIPT_MARKER)
-    summary_block = summary_block.strip()
-    if not summary_block:
+    summary_view = (note.synthesis_md or note.summary_md).strip()
+    transcript = body.partition(_TRANSCRIPT_MARKER)[2]
+    if not summary_view:
         return _excerpt(body, max_chars)
 
     # _excerpt keeps head+tail of max_chars each, so the transcript's own
-    # budget is unchanged; only the summary is now guaranteed complete.
-    return f"{summary_block}\n\n{marker}{_excerpt(transcript, max_chars)}"
+    # budget is unchanged; only the summary side is now exactly what synthesis
+    # was shown. The newline after the marker matters: the verifier matches
+    # quotes verbatim, and gluing the first word onto the heading breaks that.
+    return f"{summary_view}\n\n{_TRANSCRIPT_MARKER}\n{_excerpt(transcript, max_chars)}"
 
 
 def _build_user_prompt(

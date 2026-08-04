@@ -688,3 +688,20 @@ class TestTitleTruncation:
 
         assert len(title) <= summarizer.title_max_length
         assert not title[:-3].endswith(" ")
+
+
+class TestTranscriptTruncation:
+    """head+tail must stay inside the bound, separator included."""
+
+    def test_result_is_exactly_max_chars(self):
+        from src.summarizer import _truncate_transcript
+
+        out = _truncate_transcript("x" * 50_000, 10_000)
+        assert len(out) == 10_000
+        assert "\n[...]\n" in out
+
+    def test_short_transcript_untouched(self):
+        from src.summarizer import _truncate_transcript
+
+        text = "krótka transkrypcja"
+        assert _truncate_transcript(text, 10_000) == text
