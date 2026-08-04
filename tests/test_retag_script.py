@@ -206,8 +206,13 @@ class TestRewriteEdgeCases:
     """Inputs a real vault produces that the rewriter must not choke on."""
 
     def test_crlf_note_is_parsed_and_rewritten(self, retagger, retag_module, tmp_path):
-        """CRLF made both regexes miss: the note looked untagged, got processed
-        without --force, then skipped after the API call was already paid for."""
+        """A CRLF file on disk round-trips.
+
+        Note what carries this: ``read_text`` applies universal-newline
+        translation, so ``\\r`` never reaches the regexes — the guarantee is at
+        the read boundary, not in the patterns. This test pins the end-to-end
+        path so a future switch to byte-level reading cannot break it quietly.
+        """
         note = tmp_path / "crlf.md"
         note.write_bytes(
             (
@@ -261,3 +266,33 @@ class TestRewriteEdgeCases:
 
         backup = tmp_path / ".timshel" / "retag-backup" / "fixed" / "a.md"
         assert backup.read_text(encoding="utf-8") == pristine
+
+    def test_unrewritable_tags_key_is_skipped_not_duplicated(
+        self, retagger, retag_module, tmp_path
+    ):
+        """A `tags:` key we can't rewrite must leave the note alone.
+
+        Appending a second `tags:` line would make a DUPLICATE mapping key:
+        invalid YAML, with the user's own value silently orphaned. A skipped
+        note is recoverable; a corrupted one is not.
+        """
+        variants = {
+            "bare.md": "tags:",
+            "scalar.md": "tags: notatka",
+            "null.md": "tags: null",
+            "empty.md": 'tags: ""',
+        }
+        for name, tags_line in variants.items():
+            (tmp_path / name).write_text(
+                f"---\ntitle: n\ndate: 2026-06-20\n{tags_line}\n---\n\n"
+                "## Podsumowanie\n\nTreść.\n\n## Transkrypcja\nTekst.\n",
+                encoding="utf-8",
+            )
+        before = {n: (tmp_path / n).read_text(encoding="utf-8") for n in variants}
+
+        retagger(force=True).run()
+
+        for name, original in before.items():
+            after = (tmp_path / name).read_text(encoding="utf-8")
+            assert after == original, name
+            assert after.count("tags:") == 1, name

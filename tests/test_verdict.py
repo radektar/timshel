@@ -167,7 +167,8 @@ def test_fuller_text_stays_bounded_for_a_huge_summary_block(tmp_path):
     md = tmp_path / "huge.md"
     md.write_text(
         '---\ntitle: "huge"\ndate: 2026-06-20\ntags: []\n---\n\n'
-        "## Podsumowanie\n\n" + ("bardzo dlugi blok. " * 10000)
+        "## Podsumowanie\n\n"
+        + ("bardzo dlugi blok. " * 10000)
         + "\n## Transkrypcja\nkrotka transkrypcja.\n",
         encoding="utf-8",
     )

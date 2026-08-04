@@ -37,10 +37,12 @@ class MarkdownSections:
 # Frontmatter tags, in both styles Obsidian round-trips: inline
 # ``tags: [a, b]`` and the block list its property editor writes
 # (``tags:`` followed by indented ``- item`` lines).
-_INLINE_TAGS_RE = re.compile(r"^tags:[ \t]*\[(.*)\][ \t]*\r?$", re.MULTILINE)
-_BLOCK_TAGS_RE = re.compile(
-    r"^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]+.*\r?\n)+)", re.MULTILINE
-)
+_INLINE_TAGS_RE = re.compile(r"^tags:[ \t]*\[(.*)\][ \t]*$", re.MULTILINE)
+_BLOCK_TAGS_RE = re.compile(r"^tags:[ \t]*\n((?:[ \t]*-[ \t]+.*\n)+)", re.MULTILINE)
+# Any tags key at all, including forms the two above cannot rewrite. Used to
+# tell "no tags key" (safe to add one) from "a tags key we don't understand"
+# (must not touch — a second key would be a YAML duplicate).
+_ANY_TAGS_KEY_RE = re.compile(r"^tags:", re.MULTILINE)
 
 
 def _frontmatter_span(text: str) -> Optional[Tuple[int, int]]:
@@ -106,12 +108,17 @@ def replace_tags(text: str, tags: List[str]) -> Optional[str]:
         rendered = "tags: [" + ", ".join(tags) + "]"
         return head + front[: inline.start()] + rendered + front[inline.end() :] + tail
 
-    # No tags key at all: add one rather than skip the note — we already paid
-    # for the tags by the time we get here, and the previous renderer appended
-    # in this case too.
-    closing = front.rfind("---")
-    if closing == -1:
+    # A tags key we cannot rewrite (bare `tags:`, a scalar `tags: notatka`,
+    # `tags: null`, `tags: ""`): skip. Appending a second `tags:` line would
+    # put a DUPLICATE key in the mapping — invalid YAML, with the user's own
+    # value silently orphaned. A skipped note is recoverable; a corrupted one
+    # is not.
+    if _ANY_TAGS_KEY_RE.search(front):
         return None
+
+    # Genuinely no tags key: add one rather than skip — we already paid for
+    # the tags by the time we get here.
+    closing = front.rfind("---")
     rendered = "tags: [" + ", ".join(tags) + "]\n"
     return head + front[:closing] + rendered + front[closing:] + tail
 
@@ -267,8 +274,12 @@ class TranscriptRetagger:
             self.updated += 1
             return
 
-        self._write_updated_file(md_path, content, updated_content)
-        self.updated += 1
+        # Count what actually reached disk — "Aborted after N notes" is read as
+        # a recovery instruction, so it must not include failed writes.
+        if self._write_updated_file(md_path, content, updated_content):
+            self.updated += 1
+        else:
+            self.skipped += 1
 
     def _split_frontmatter(self, content: str) -> MarkdownSections | None:
         """Split content into frontmatter lines and body."""
@@ -311,18 +322,20 @@ class TranscriptRetagger:
             logger.error("Tag generation failed: %s", exc, exc_info=True)
             return []
 
-    def _write_updated_file(self, md_path: Path, original: str, updated: str) -> None:
-        """Back the note up, then write the updated text."""
+    def _write_updated_file(self, md_path: Path, original: str, updated: str) -> bool:
+        """Back the note up, then write the updated text. True when written."""
         try:
             self._backup(md_path, original)
         except OSError as err:
             logger.error("Skipping %s — could not back it up: %s", md_path, err)
-            return
+            return False
         try:
             md_path.write_text(updated, encoding="utf-8")
             logger.info("Updated tags for %s", md_path.name)
+            return True
         except OSError as err:
             logger.error("Failed to write %s: %s", md_path, err)
+            return False
 
     def _backup(self, md_path: Path, original: str) -> None:
         """Copy the note into a timestamped backup dir before rewriting it.

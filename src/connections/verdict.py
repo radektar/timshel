@@ -143,9 +143,11 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
     if _TRANSCRIPT_MARKER not in body:
         return _excerpt(body, max_chars)
 
+    summary_block, _, transcript = body.partition(_TRANSCRIPT_MARKER)
     summary_view = (note.synthesis_md or note.summary_md).strip()
-    transcript = body.partition(_TRANSCRIPT_MARKER)[2]
-    if not summary_view:
+    if not summary_block.strip() or not summary_view:
+        # Transcript-only note: the "summary" is already an excerpt of that
+        # same transcript, so prepending it would just duplicate ~2.4k chars.
         return _excerpt(body, max_chars)
 
     # _excerpt keeps head+tail of max_chars each, so the transcript's own
