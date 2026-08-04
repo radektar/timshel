@@ -62,8 +62,25 @@ w prompcie whispera dalej siedziała nazwa pliku notatki:
 Zmierzone: 73 takie wikilinki z „Timshel Digests", 2 z „Timshel Recall".
 Ta sama reguła co przy `signal_tags` — metadana pisana przez apkę nie jest
 sygnałem użytkownika. Harvest chodzi teraz po top-levelu (jak `load_corpus`).
-Słownik: 310 → 196 (po czyszczeniu stanowisk) → **76** (po naprawie harvestu);
-termy w kształcie nazw plików 33 → 1.
+
+**I to samo w drugim wejściu taggera.** `TagIndex.build_index` też skanował
+rekurencyjnie: 704 → 486 tagów (216 istniało wyłącznie w kopiach z
+`.timshel/resummarize-backup`), `df('transcription')` 311 → 153. Najgorsze:
+**`malinche-digest` siedział w liście `ISTNIEJĄCE TAGI`** podawanej modelowi
+z instrukcją „użyj DOKŁADNIE w tej formie", a `signal_tags` zdejmuje tylko
+`GENERATED_TAG` — marker digestu na notatce użytkownika stałby się pełnym
+sygnałem połączenia. Ranking wg df (dodany w tym PR) był układany przez kopie
+zapasowe: 74 ze 150 slotów promptu miało zawyżone df.
+`NON_SOURCE_TYPES` (digesty + stuby `redirect`) to teraz jedna wspólna stała
+w `tag_index`, importowana przez słownik.
+
+Słownik: 310 → 196 (po czyszczeniu stanowisk) → **75** (po obu naprawach);
+termy w kształcie nazw plików 33 → **0**.
+
+**Reguła do zapamiętania:** każdy indeks czytający vault musi chodzić po
+top-levelu. Zweryfikowane: `load_corpus`, `recall/engine`, `VocabularyIndex`
+i `TagIndex` — zgodne. `menu_app`/`ui/obsidian_link` używają `rglob` do
+otwierania notatek, nie do budowania sygnału, więc zostają.
 
 Backupy: `scratchpad/vault-backup-20260804-095539` (sprzed retagu),
 `vault-backup-stance-20260804-113227` (sprzed czyszczenia stanowisk).
@@ -481,12 +498,13 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 
 ## Następny krok
 
-0. **PR #99 czeka na merge** — kod gotowy, 1442 testy zielone, mypy czysty,
-   cztery rundy review (ostatnia czysta), vault wyczyszczony i zweryfikowany.
-   Otwarte drobiazgi z listy nice-to-have, świadomie NIE wzięte: jeden term
-   w kształcie ścieżki został w słowniku (wikilink do notatki w innym folderze
-   vaulta z notatki top-level) — filtr na linki-do-notatek to nowa heurystyka,
-   więc do decyzji osobno.
+0. **PR #99 czeka na merge** — 1444 testy zielone, mypy czysty, sześć rund
+   review, vault wyczyszczony i zweryfikowany. Znany dług odsłonięty przy
+   okazji, świadomie NIE brany: `TagIndex` nie czyta tagów w stylu blokowym
+   (`tags:` + lista, czyli to, co pisze edytor properties w Obsidianie), więc
+   ~30 notatek nie wchodzi do puli reuse taggera. Gotowy, przetestowany parser
+   obu stylów leży w `scripts/retag_existing_transcripts.py::parse_tags` —
+   do przeniesienia do `tag_index` osobnym krokiem.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Protokół A — DOMKNIĘTY 2026-07-18** (drugi Mac, DMG `06d99e9c…`):
    instalacja ✓, wizard+folder ✓, download ✓, import tekstów ✓, audio PL/EN
