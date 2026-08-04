@@ -3,7 +3,7 @@
 Data: 2026-08-04 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
-## Wejście do insightów: tagi-encje + guard stanowisk (PR #99, 2026-08-04)
+## Wejście do insightów: tagi-encje + guard stanowisk (PR #99, MERGE 2026-08-04)
 
 Punkt wyjścia: ocena mechaniki tagowania i podsumowania na realnej nocie
 („26-07-30 Koalicja Tech to the Rescue"). Diagnoza: digest dostaje z notatki
@@ -498,13 +498,19 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 
 ## Następny krok
 
-0. **PR #99 czeka na merge** — 1444 testy zielone, mypy czysty, sześć rund
-   review, vault wyczyszczony i zweryfikowany. Znany dług odsłonięty przy
-   okazji, świadomie NIE brany: `TagIndex` nie czyta tagów w stylu blokowym
-   (`tags:` + lista, czyli to, co pisze edytor properties w Obsidianie), więc
-   ~30 notatek nie wchodzi do puli reuse taggera. Gotowy, przetestowany parser
-   obu stylów leży w `scripts/retag_existing_transcripts.py::parse_tags` —
-   do przeniesienia do `tag_index` osobnym krokiem.
+0. ~~PR #99~~ — **ZMERGOWANY** (`95be4ea`, squash, branch skasowany).
+   1444 testy zielone na `main`, mypy czysty, sześć rund review, vault
+   wyczyszczony i zweryfikowany, dokumentacja repo+vault zaktualizowana.
+   **Pierwszy digest po tej zmianie jest pierwszym uczciwym pomiarem H1** —
+   wcześniejsze liczyły się z zanieczyszczonych wejść.
+   Znany dług odsłonięty przy okazji, świadomie NIE brany: `TagIndex` nie
+   czyta tagów w stylu blokowym (`tags:` + lista, czyli to, co pisze edytor
+   properties w Obsidianie), więc 30 ze 185 notatek nie wchodzi do puli reuse
+   taggera. Gotowy, przetestowany parser obu stylów leży w
+   `scripts/retag_existing_transcripts.py::parse_tags` — do przeniesienia do
+   `tag_index` osobnym krokiem. Drugi dług: `Docs/ARCHITECTURE.md` opisuje
+   nieistniejący backend (`malinche-backend`, endpointy `/api/v1/tags`,
+   bramkowanie licencją) — kod woła Anthropic bezpośrednio.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Protokół A — DOMKNIĘTY 2026-07-18** (drugi Mac, DMG `06d99e9c…`):
    instalacja ✓, wizard+folder ✓, download ✓, import tekstów ✓, audio PL/EN
