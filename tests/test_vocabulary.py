@@ -225,8 +225,10 @@ class TestHarvestScope:
         _note(vault, "real.md", "Rozmowa o [[Impact Chat]] i planach.")
         digests = vault / config.DIGEST_DIR_NAME
         digests.mkdir()
+        # Deliberately WITHOUT the `type:` frontmatter: only the directory
+        # scope can exclude this one, so the test cannot pass on the strength
+        # of the type guard instead.
         (digests / "2026-06-25 Synthesis.md").write_text(
-            "---\ntype: timshel-digest\n---\n\n"
             "Łączy [[26-06-03 - Przygotowania do Eight Moons - okna]] "
             "z [[26-07-01 - Zmiana nazwy projektu]].\n",
             encoding="utf-8",

@@ -35,7 +35,8 @@ made of ``[[note basename]]`` links, so harvesting it fed the glossary 73 note
 FILENAMES (measured on a real vault), which then biased whisper's decoding and
 the summarizer's KNOWN TERMS block. Same rule as everywhere else in this
 codebase: metadata the app writes about itself is never a signal from the
-user.
+user. Notes whose frontmatter ``type`` marks them as non-source (a digest, a
+redirect stub) are skipped for the same reason.
 
 The vocabulary GROWS with the vault: every new note's wikilinks widen the
 glossary used for the next recording. That flywheel — a personal dictionary
@@ -54,15 +55,12 @@ from typing import Dict, List, Optional, Tuple
 from src.config import config
 from src.connections.entities import _RUN_RE, _WIKILINK_RE
 from src.logger import logger
+from src.markdown_frontmatter import parse_frontmatter
+from src.tag_index import NON_SOURCE_TYPES
 
 # Everything below this heading is raw transcript — never harvest from it.
 _TRANSCRIPT_HEADING_RE = re.compile(
     r"^##\s+(Transkrypcja|Transcript)\s*$", re.MULTILINE
-)
-# A generated digest, by frontmatter type (the pre-rename marker included, as
-# in candidate_assembly.load_corpus).
-_DIGEST_TYPE_RE = re.compile(
-    r"^type:\s*(timshel-digest|malinche-digest)\s*$", re.MULTILINE
 )
 
 # Terms shorter than this (display form) are dropped as noise.
@@ -161,9 +159,10 @@ class VocabularyIndex:
             except OSError as exc:
                 logger.warning("Could not read %s for vocabulary: %s", md_path, exc)
                 continue
-            if _DIGEST_TYPE_RE.search(text[:400]):
-                # A stray digest at top level (a migrated vault can hold one)
-                # would poison exactly the same way as one in the subfolder.
+            # Parse the frontmatter properly rather than regex a fixed window:
+            # load_corpus strips quotes, so `type: "timshel-digest"` must
+            # exclude here too, and a body line can't masquerade as a key.
+            if parse_frontmatter(text).get("type") in NON_SOURCE_TYPES:
                 continue
             self._harvest_note(text)
 
