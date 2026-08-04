@@ -339,3 +339,28 @@ def test_synthesis_empty_still_records_metrics(digest_env, monkeypatch):
     assert metrics[-1]["digest"] == ""
     assert metrics[-1]["verdict_model"] == ""  # verdict never ran
     assert metrics[-1]["verdict_dropped"] == 0
+
+
+def test_fuller_text_containment_holds_for_transcript_only_notes(tmp_path):
+    """Containment for a note with no summary block is DERIVED, not built in.
+
+    Such a note's synthesis view is itself an excerpt of the transcript, so
+    _fuller_text returns the wider excerpt instead of prepending it. That only
+    contains the narrower one because VERDICT_MAX_NOTE_CHARS exceeds
+    MAX_SYNTHESIS_NOTE_CHARS — a relation nothing else pins.
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    md = tmp_path / "raw.md"
+    md.write_text(
+        '---\ntitle: "raw"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        "## Transkrypcja\nHEAD-NEEDLE " + ("slowo " * 2000) + " TAIL-NEEDLE\n",
+        encoding="utf-8",
+    )
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert config.VERDICT_MAX_NOTE_CHARS > config.MAX_SYNTHESIS_NOTE_CHARS + 20
+    for chunk in note.synthesis_md.split("\n...\n"):
+        assert chunk.strip() in fuller
+    assert "HEAD-NEEDLE" in fuller and "TAIL-NEEDLE" in fuller

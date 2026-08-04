@@ -81,6 +81,23 @@ def parse_tags(text: str) -> List[str]:
     return []
 
 
+def is_rewritable(text: str) -> bool:
+    """True when :func:`replace_tags` can safely update this note's tags.
+
+    Same decision as ``replace_tags(...) is not None``, without needing the
+    tags — so the caller can skip a note before paying the tagger for output
+    it would then throw away.
+    """
+    span = _frontmatter_span(text)
+    if not span:
+        return False
+    front = text[span[0] : span[1]]
+    if _BLOCK_TAGS_RE.search(front) or _INLINE_TAGS_RE.search(front):
+        return True
+    # No tags key at all → we may add one. A key we can't parse → hands off.
+    return not _ANY_TAGS_KEY_RE.search(front)
+
+
 def replace_tags(text: str, tags: List[str]) -> Optional[str]:
     """*text* with only its tags replaced — byte-identical everywhere else.
 
@@ -231,6 +248,19 @@ class TranscriptRetagger:
             self.skipped += 1
             return
 
+        # Decide writability BEFORE paying for the tags: a note whose `tags:`
+        # key we cannot rewrite is skipped either way, so calling the tagger
+        # first would burn one request per note on every future run and
+        # produce nothing. Name the note — this is the list to fix by hand.
+        if not is_rewritable(content):
+            logger.warning(
+                "Skipping %s — its `tags:` field is in a form this script "
+                "cannot rewrite safely (fix it by hand in Obsidian).",
+                md_path.name,
+            )
+            self.skipped += 1
+            return
+
         new_tags = self._generate_tags(summary_markdown, transcript_text)
         if not new_tags:
             logger.debug("No new tags generated for %s.", md_path.name)
@@ -254,8 +284,8 @@ class TranscriptRetagger:
                 merged_tags.append(tag)
 
         updated_content = replace_tags(content, merged_tags)
-        if updated_content is None:
-            logger.warning("Skipping %s (no tags field to replace).", md_path.name)
+        if updated_content is None:  # pragma: no cover — is_rewritable gates this
+            logger.warning("Skipping %s (tags field not rewritable).", md_path.name)
             self.skipped += 1
             return
 

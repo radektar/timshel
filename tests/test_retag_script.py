@@ -296,3 +296,38 @@ class TestRewriteEdgeCases:
             after = (tmp_path / name).read_text(encoding="utf-8")
             assert after == original, name
             assert after.count("tags:") == 1, name
+
+    def test_unrewritable_note_costs_no_api_call(self, retagger, tmp_path):
+        """Skipping after calling the tagger would burn one request per note,
+        on every future run, for output that is always discarded."""
+        (tmp_path / "scalar.md").write_text(
+            "---\ntitle: n\ndate: 2026-06-20\ntags: notatka\n---\n\n"
+            "## Podsumowanie\n\nTreść.\n\n## Transkrypcja\nTekst.\n",
+            encoding="utf-8",
+        )
+        _note(tmp_path / "ok.md")
+
+        runner = retagger(force=True)
+        runner.run()
+
+        assert runner.updated == 1 and runner.skipped == 1
+        # Only the rewritable note reached the API.
+        assert runner.tagger.generate_tags.call_count == 1
+
+    def test_is_rewritable_agrees_with_replace_tags(self, retag_module):
+        """The cheap pre-check must not diverge from the real writer."""
+        shapes = [
+            "---\ntags: [a, b]\n---\n\nbody\n",
+            "---\ntags:\n  - a\n---\n\nbody\n",
+            "---\ntitle: n\n---\n\nbody\n",
+            "---\ntags:\n---\n\nbody\n",
+            "---\ntags: notatka\n---\n\nbody\n",
+            "---\ntags: null\n---\n\nbody\n",
+            '---\ntags: ""\n---\n\nbody\n',
+            "---\ntags: [a, b\n---\n\nbody\n",
+            "---\nmeta:\n  tags: [x]\n---\n\nbody\n",
+            "no frontmatter at all\n",
+        ]
+        for text in shapes:
+            expected = retag_module.replace_tags(text, ["t"]) is not None
+            assert retag_module.is_rewritable(text) is expected, text
