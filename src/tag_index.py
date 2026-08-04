@@ -91,14 +91,21 @@ class TagIndex:
         :class:`src.vocabulary.VocabularyIndex`. The subfolders hold what the
         app wrote about itself — generated digests and, in
         ``.timshel/resummarize-backup``, whole COPIES of notes. Measured on a
-        real vault, a recursive scan gave 704 distinct tags instead of 488:
-        216 existed only in backups, ``transcription`` counted 311 times for
-        153 notes, and the tagger's ``ISTNIEJĄCE TAGI`` list — capped and
-        ordered by document frequency — carried ``malinche-digest`` while 35
-        of its 150 slots held tags no live note has. The prompt tells the
-        model to reuse such a tag EXACTLY, and ``signal_tags`` only strips
-        ``GENERATED_TAG``, so a digest marker landing on a user note would
-        become a full connection signal.
+        real vault: a recursive scan gave 704 distinct tags where this one
+        gives 486, ``transcription`` was counted 311 times, and the tagger's
+        ``ISTNIEJĄCE TAGI`` list — capped and ordered by document frequency —
+        carried ``malinche-digest`` while 35 of its 150 slots held tags no
+        live note has. The prompt tells the model to reuse such a tag EXACTLY,
+        and ``signal_tags`` only strips ``GENERATED_TAG``, so a digest marker
+        landing on a user note would become a full connection signal.
+
+        KNOWN GAP: only inline ``tags: [a, b]`` is read. Obsidian's property
+        editor writes a block list instead, and those notes look untagged here
+        — 30 of 185 on that same vault, hiding 81 tags, two of them inside the
+        ``df >= 2`` band that scoring counts. A parser for both styles already
+        exists and is tested in ``scripts/retag_existing_transcripts.py``
+        (``parse_tags``); promoting it here is a separate, behaviour-changing
+        step.
         """
         if self._index is not None and not force_refresh:
             return self._index
@@ -155,8 +162,9 @@ class TagIndex:
         """Existing tags ordered by document frequency, most-used first.
 
         The tagger prompt is capped (``MAX_EXISTING_TAGS_IN_PROMPT``), and in
-        scan order that cap keeps whichever tags ``rglob`` happened to reach
-        first. Frequency order makes the cap keep the tags that can actually
+        scan order that cap keeps whichever tags the directory walk happened
+        to reach first. Frequency order makes the cap keep the tags that can
+        actually
         connect notes: connection scoring only counts a tag inside the
         ``2 <= df < ubiquity_cut`` band (``src/connections/candidate_assembly.py``),
         so a one-off tag is worth nothing downstream and a reused one is worth

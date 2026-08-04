@@ -88,9 +88,9 @@ class TestIndexScope:
         """.timshel holds whole COPIES of notes; digests are app output.
 
         Measured on a real vault, the recursive scan gave 704 distinct tags
-        instead of 488 and counted `transcription` 311 times for 153 notes —
-        so the frequency order that existing_tags_ranked depends on was
-        decided by backup copies.
+        where the top-level one gives 486, and counted `transcription` 311
+        times — so the frequency order that existing_tags_ranked depends on
+        was decided by backup copies.
         """
         root = tmp_path / "vault"
         self._note(root / "live.md", "transcription, sauna")
