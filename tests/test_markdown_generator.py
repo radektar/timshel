@@ -315,6 +315,37 @@ class TestCreateMarkdownDocument:
         content = md_path.read_text(encoding="utf-8")
         assert "tags: [transcription, sauna, zdrowie]" in content
 
+    def test_coverage_absent_for_a_fully_read_recording(
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
+    ):
+        """No key = the summary describes the whole thing. The 99% case."""
+        md_path = generator.create_markdown_document(
+            transcript=sample_transcript,
+            summary=sample_summary,
+            metadata=sample_metadata,
+            output_dir=tmp_path / "output",
+        )
+
+        assert "summary_coverage" not in md_path.read_text(encoding="utf-8")
+
+    def test_coverage_rendered_when_windowed(
+        self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
+    ):
+        """A partial summary says so, inside the frontmatter and before it."""
+        md_path = generator.create_markdown_document(
+            transcript=sample_transcript,
+            summary=sample_summary,
+            metadata=sample_metadata,
+            output_dir=tmp_path / "output",
+            extra_frontmatter={"summary_coverage": 0.055},
+        )
+
+        content = md_path.read_text(encoding="utf-8")
+        assert "\nsummary_coverage: 0.055\n" in content
+        # Must land inside the YAML block, not after it.
+        head = content.split("---", 2)[1]
+        assert "summary_coverage" in head
+
     def test_create_document_io_error(
         self, generator, sample_transcript, sample_summary, sample_metadata, tmp_path
     ):

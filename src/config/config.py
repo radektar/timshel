@@ -93,13 +93,26 @@ class Config:
     SUMMARY_MAX_WORDS: int = 200
     TITLE_MAX_LENGTH: int = 60
     DELETE_TEMP_TXT: bool = True
+    # How much transcript the summarizer may read. Measured: a 3h11m meeting
+    # is ~182k chars, and the old 10k cap meant the summary described 5.5% of
+    # the recording — the last ten minutes — while claiming to describe the
+    # whole thing. 400k chars is ~143k tokens of Polish, which fits Claude's
+    # 200k context with room for the prompt and a 8k answer, and covers ~7h of
+    # speech. Beyond that the head+tail window applies and the note records
+    # ``summary_coverage``.
+    MAX_SUMMARY_TRANSCRIPT_CHARS: int = 400_000
+    # OpenAI is the migration/fallback path and tops out at a 128k context.
+    MAX_SUMMARY_TRANSCRIPT_CHARS_OPENAI: int = 250_000
 
     # Tagging configuration
     ENABLE_LLM_TAGGING: bool = True
     MAX_TAGS_PER_NOTE: int = 6
     MAX_EXISTING_TAGS_IN_PROMPT: int = 150
     MAX_TAGGER_SUMMARY_CHARS: int = 3000
-    MAX_TAGGER_TRANSCRIPT_CHARS: int = 1500
+    # Head+tail snippet, so the tagger reads twice this. Same root cause as
+    # the summarizer cap: on a 3h recording 1500 meant the tags were coined
+    # from 1.6% of the material.
+    MAX_TAGGER_TRANSCRIPT_CHARS: int = 4000
 
     # Personal vocabulary (canonical terms harvested from the vault; grows
     # with use — see src/vocabulary.py). Feeds whisper-cli --prompt and the
@@ -220,7 +233,7 @@ source_volume: {source_volume}
 version: {version}
 transcribed_on: {hostname}
 model: {model}
-language: {language}{previous_version_line}{provenance_line}
+language: {language}{previous_version_line}{provenance_line}{coverage_line}
 duration: {duration}
 tags: [{tags}]
 ---

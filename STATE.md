@@ -3,6 +3,70 @@
 Data: 2026-08-04 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
+## Podsumowanie czytało 5% nagrania (PR #100, 2026-08-04)
+
+Punkt wyjścia: notatka z 3-godzinnego spotkania („26-08-02 Transformacja firmy
+transportowej") vs. to samo spotkanie podsumowane ręcznie. Zarzut: podsumowanie
+nie ma nic wspólnego z tym, o czym była rozmowa. **Potwierdzone i zmierzone.**
+
+**Diagnoza.** Summarizer tnie transkrypt do stałej 10 000 znaków. Ten transkrypt
+ma 181 981 znaków, więc model widział **5,5%** — samą końcówkę. Dowód mechaniczny:
+`planer` 36× w transkrypcie / **0×** w oknie, `aplikacja` 31×/0, `myto` 13×/0;
+wszystkie cytaty i stanowiska w nocie pochodziły z ostatnich 10 minut nagrania.
+Podsumowanie było **wierne — wobec 5,5% wejścia**. To nie był problem promptu
+ani modelu, więc żadne strojenie tekstu by tego nie ruszyło.
+
+**Dlaczego to bije dalej niż jedna nota.** Tagi powstają z podsumowania, a digest
+widzi tylko tagi + Stanowiska + 2400 znaków podsumowania. Najbogatsze strategicznie
+spotkanie w vaultcie wchodziło do warstwy Zestawiania jako nota o zmęczeniu
+i delegowaniu. Pokrycie spadało liniowo z długością: głosówka 20 min = 100%,
+spotkanie 3h = 5%. Mechanizm zaprojektowany pod głosówki **cicho degradował**
+na spotkaniach i nic w nocie tego nie sygnalizowało.
+
+**Zmiana (wariant A — jedna stała, bez map-reduce).**
+`MAX_SUMMARY_TRANSCRIPT_CHARS = 400k` (~143k tokenów PL, ~7h mowy; mieści się
+w 200k kontekstu Claude z zapasem na prompt i 8k odpowiedzi); OpenAI (ścieżka
+migracyjna, 128k) dostaje własne 250k. Do tego `max_tokens` 4096→8192 i timeout
+60→180 s — oba były wymiarowane pod okno 10k i wywracałyby się dokładnie na
+długich nagraniach. `MAX_TAGGER_TRANSCRIPT_CHARS` 1500→4000 (ten sam root cause:
+tagger zgadywał z 1,6% materiału). Nowe pole `summary_coverage` we frontmatterze
+**tylko gdy okno faktycznie zadziałało** (>7h) — zwykłe noty zostają bajt w bajt,
+a niepełne podsumowanie nie może udawać kompletnego. Flaga jest kosmetyczna, więc
+summarizer bez zadeklarowanego capa nie zgłasza nic, zamiast wywracać zapis noty.
+
+**Efekt na korpusie.** 31 notatek widziało mniej niż całość; przepisane 17
+(>30k znaków, pokrycie <33%) + retag tych samych. Wszystkie 17 zmieniły tagi —
+przy **tym samym prompcie taggera**, więc różnicę zrobiło samo pełne wejście:
+`brak-tresci` → 5 realnych tagów, `plyty-hempu` → `plyty-strumber`,
+`projekt-misch` → `projekt-dla-miszy`, `medicus` → `medikus`. Vault: 185 notatek,
+0 błędów YAML, frontmatter i transkrypty bajt w bajt (zweryfikowane wobec backupów).
+
+**Zostało do decyzji:** 14 notatek w paśmie 33–95% pokrycia (10–30k znaków) —
+przepisanie ich to <$0,30, ale to poszerzenie zatwierdzonego zakresu.
+
+**Dług nazwany w review, świadomie NIE brany (decyzja 2026-08-04).** Cztery
+rzeczy zmierzone i odłożone — żadna nie blokuje H1:
+
+1. *Cap jest w znakach, ograniczenie w tokenach.* Zmierzone przez `count_tokens`
+   na realnym transkrypcie: **2,54 znaku/token** dla polskiej mowy, czyli 400k
+   znaków ≈ **157k tokenów** (komentarz w `config.py` mówi ~143k — nieaktualne).
+   Z promptem i 8k outputu ~168k ze 200k, więc bufor to ~16% na współczynniku.
+   Gdyby transkrypt wypadł gęstszy niż 2,12 znaku/token, API zwróci 400
+   („prompt is too long"); `_is_permanent_api_error` tego nie klasyfikuje, więc
+   leci fallback summary BEZ `summary_coverage` — czyli dokładnie ta cicha
+   degradacja, którą ten PR likwiduje. Lek: cap 350k albo złapanie overflow
+   i retry mniejszym oknem.
+2. *`resummarize_vault.py` nigdy nie zapisze `summary_coverage`* — z założenia
+   przepisuje frontmatter bajt w bajt. To ścieżka naprawy korpusu, więc
+   gwarancja uczciwości ma tam dziurę (dziś nieszkodliwą: wszystko < 400k).
+3. *Komentarz przy capie OpenAI jest nieprawdziwy* — „GPT-4.1 tops out at 128k"
+   dotyczy GPT-4o; GPT-4.1 ma 1M kontekstu. Sam cap 250k nieszkodliwy.
+4. *Ekonomika per-nota przestała być płaska.* 3h nagranie to ~157k tokenów
+   wejścia ≈ **$0,16**, a `_canonicalize_aliases` przy trafieniu aliasu wysyła
+   cały transkrypt drugi raz → ~$0,31/nota. Model kosztowy w vaultcie mówi
+   „płaski", ale to dotyczyło digestu, nie podsumowań — do uzgodnienia przy
+   ofercie.
+
 ## Wejście do insightów: tagi-encje + guard stanowisk (PR #99, MERGE 2026-08-04)
 
 Punkt wyjścia: ocena mechaniki tagowania i podsumowania na realnej nocie
@@ -511,6 +575,11 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
    `tag_index` osobnym krokiem. Drugi dług: `Docs/ARCHITECTURE.md` opisuje
    nieistniejący backend (`malinche-backend`, endpointy `/api/v1/tags`,
    bramkowanie licencją) — kod woła Anthropic bezpośrednio.
+0b. **PR #100 — podsumowanie czyta całe nagranie** (szczegóły w sekcji na górze).
+   Kolejność jest tu istotna: PR #99 naprawił *jak* apka opisuje notatkę, PR #100
+   naprawił *co w ogóle widzi*. Uczciwy pomiar H1 zaczyna się dopiero po obu —
+   digest liczony przed nimi brał tagi ukute z 1,6% długiego nagrania.
+   Otwarte: 14 notatek w paśmie 33–95% pokrycia czeka na decyzję o przepisaniu.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Protokół A — DOMKNIĘTY 2026-07-18** (drugi Mac, DMG `06d99e9c…`):
    instalacja ✓, wizard+folder ✓, download ✓, import tekstów ✓, audio PL/EN
@@ -552,6 +621,13 @@ pozycjonowania PRO), nie bramką.
 - Stary korpus wciąż niesie śmieciowe wikilinki w Stanowiskach (guard działa na
   nowych notatkach i przez `resummarize_vault.py`) — glosariusz i kanał encji
   będą je widzieć do czasu przebudowy korpusu.
+- Nagranie dłuższe niż ~7h dalej dostanie okno head+tail — od PR #100 widać to
+  w nocie (`summary_coverage`), więc to ryzyko jest **jawne, nie ciche**.
+  Eskalacja, gdyby takie nagrania się pojawiły: map-reduce (chunkowanie),
+  świadomie NIE budowany teraz — nowy kod i więcej wywołań bez dowodu potrzeby.
+- Whisper `small` na 3h nagraniu masakruje nazwy własne („tabetki",
+  SlickShift→„Slick", „800 film upadłych"). To osobna oś od pokrycia, ale bije
+  w ten sam glosariusz i kanał encji — nierozpoznana diagnoza, nie dług.
 - Słownik uczy się tylko z wikilinków/encji — aliasy przekrętów wymagają
   ręcznego wpisu w vocabulary.json do czasu B1.
 - P3 wdrożone (PR #64) POZA aliasem (patrz Ostatnia decyzja). Dług mypy:

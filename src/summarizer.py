@@ -158,7 +158,20 @@ def _truncate_title(title: str, max_len: int) -> str:
     return truncated + "..."
 
 
-def _truncate_transcript(transcript: str, max_chars: int = 10000) -> str:
+def transcript_coverage(transcript: str, max_chars: int) -> float:
+    """Fraction of *transcript* a summarizer capped at *max_chars* actually read.
+
+    1.0 when the whole recording fits. Below that the summary describes a
+    window, not the meeting, and the note says so — see
+    ``summary_coverage`` in the frontmatter.
+    """
+    length = len(transcript)
+    if length <= max_chars or length == 0:
+        return 1.0
+    return max_chars / length
+
+
+def _truncate_transcript(transcript: str, max_chars: int) -> str:
     """Keep the head AND the tail of an over-long transcript.
 
     Tail-weighted on purpose: endings carry decisions and next steps, which is
@@ -217,6 +230,16 @@ class BaseSummarizer(ABC):
     Provides interface for generating summaries and titles from transcripts.
     All summarizer implementations should inherit from this class.
     """
+
+    @property
+    def transcript_cap(self) -> int:
+        """How much transcript this summarizer reads before the window applies.
+
+        A property, not a constant, so settings hot-reload and tests see the
+        live value — and so the caller can record how much of the recording
+        the summary actually describes.
+        """
+        return int(config.MAX_SUMMARY_TRANSCRIPT_CHARS)
 
     @abstractmethod
     def generate(
@@ -294,11 +317,14 @@ class ClaudeSummarizer(BaseSummarizer):
             return self._fallback_summary()
 
         # Truncate transcript if too long (Claude has token limits)
-        max_transcript_length = 10000
+        max_transcript_length = self.transcript_cap
         if len(transcript) > max_transcript_length:
-            logger.debug(
-                f"Transcript too long ({len(transcript)} chars), "
-                f"keeping head + tail within {max_transcript_length} chars"
+            logger.warning(
+                "Transcript too long (%d chars) — summarizing a head+tail "
+                "window of %d chars (%.0f%% coverage)",
+                len(transcript),
+                max_transcript_length,
+                transcript_coverage(transcript, max_transcript_length) * 100,
             )
             transcript = _truncate_transcript(transcript, max_transcript_length)
 
@@ -317,12 +343,16 @@ class ClaudeSummarizer(BaseSummarizer):
                 extra["temperature"] = 0.2
             message = self.client.messages.create(
                 model=self.model,
-                # 4096: the v2 format (Stances/Open threads + quotes) plus a
-                # long recording overran the old 1024/2048 caps — a preview
-                # produced an action item cut mid-sentence. Real summaries stay
-                # well under; billed on actual output, so this is free headroom.
-                max_tokens=4096,
-                timeout=60.0,
+                # 8192: the v2 format (Stances/Open threads + quotes) overran
+                # the old 1024/2048 caps — a preview produced an action item
+                # cut mid-sentence. Raised again with the transcript cap: a 3h
+                # meeting read in full has far more to say than a voice memo.
+                # Billed on actual output, so the headroom is free.
+                max_tokens=8192,
+                # 180s: a full-length meeting is ~140k input tokens. The old
+                # 60s was sized for a 10k-char window and would now time out
+                # on exactly the long recordings this cap exists to serve.
+                timeout=180.0,
                 messages=[{"role": "user", "content": prompt}],
                 **extra,
             )
@@ -735,14 +765,26 @@ class OpenAISummarizer(ClaudeSummarizer):
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
 
+    @property
+    def transcript_cap(self) -> int:
+        """Lower than Claude's: GPT-4.1-class models top out at a 128k context."""
+        return int(config.MAX_SUMMARY_TRANSCRIPT_CHARS_OPENAI)
+
     def generate(
         self, transcript: str, known_terms_block: str = "", correction: str = ""
     ) -> Dict[str, str]:
         if not transcript or not transcript.strip():
             return self._fallback_summary()
 
-        max_transcript_length = 10000
+        max_transcript_length = self.transcript_cap
         if len(transcript) > max_transcript_length:
+            logger.warning(
+                "Transcript too long (%d chars) — summarizing a head+tail "
+                "window of %d chars (%.0f%% coverage)",
+                len(transcript),
+                max_transcript_length,
+                transcript_coverage(transcript, max_transcript_length) * 100,
+            )
             transcript = _truncate_transcript(transcript, max_transcript_length)
 
         prompt = self._build_prompt(transcript, known_terms_block, correction)
@@ -750,11 +792,12 @@ class OpenAISummarizer(ClaudeSummarizer):
             start_time = time.time()
             response = self.client.chat.completions.create(
                 model=self.model,
-                # 4096: a 4:43 recording's v2 summary hit the 2048 ceiling and
-                # truncated mid-section. Migration is one-off — headroom is cheap.
-                max_completion_tokens=4096,
+                # 8192: a 4:43 recording's v2 summary hit the 2048 ceiling and
+                # truncated mid-section; a full-length meeting needs more still.
+                # Migration is one-off — headroom is cheap.
+                max_completion_tokens=8192,
                 temperature=0.2,
-                timeout=90.0,
+                timeout=180.0,
                 messages=[{"role": "user", "content": prompt}],
             )
             logger.debug("OpenAI call completed in %.2fs", time.time() - start_time)
