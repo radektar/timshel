@@ -29,6 +29,15 @@ Harvesting stops at the ``## Transkrypcja`` / ``## Transcript`` heading of
 each note: the raw transcript below it is exactly where the mangled forms
 live, and a glossary that learns "TekTutoreski" would defeat its purpose.
 
+It also stops at the vault's TOP LEVEL. The subfolders hold what the app
+itself wrote — digests, recall notes, pre-migration backups — and a digest is
+made of ``[[note basename]]`` links, so harvesting it fed the glossary 73 note
+FILENAMES (measured on a real vault), which then biased whisper's decoding and
+the summarizer's KNOWN TERMS block. Same rule as everywhere else in this
+codebase: metadata the app writes about itself is never a signal from the
+user. Notes whose frontmatter ``type`` marks them as non-source (a digest, a
+redirect stub) are skipped for the same reason.
+
 The vocabulary GROWS with the vault: every new note's wikilinks widen the
 glossary used for the next recording. That flywheel — a personal dictionary
 no generic transcriber has — is a core product value, not an implementation
@@ -46,6 +55,8 @@ from typing import Dict, List, Optional, Tuple
 from src.config import config
 from src.connections.entities import _RUN_RE, _WIKILINK_RE
 from src.logger import logger
+from src.markdown_frontmatter import parse_frontmatter
+from src.tag_index import NON_SOURCE_TYPES
 
 # Everything below this heading is raw transcript — never harvest from it.
 _TRANSCRIPT_HEADING_RE = re.compile(
@@ -131,16 +142,27 @@ class VocabularyIndex:
                     term.aliases.append(alias)
 
     def _harvest_vault(self) -> None:
-        """Layers 2+3: wikilink targets and recurring capitalised runs."""
+        """Layers 2+3: wikilink targets and recurring capitalised runs.
+
+        Top-level notes only, matching
+        :func:`src.connections.candidate_assembly.load_corpus`. See the module
+        docstring: the subfolders are the app's own output, and harvesting them
+        turned note filenames into glossary terms.
+        """
         root = self.root_dir
         if not root or not root.exists():
             logger.debug("VocabularyIndex root missing: %s", root)
             return
-        for md_path in root.rglob("*.md"):
+        for md_path in sorted(root.glob("*.md")):
             try:
                 text = md_path.read_text(encoding="utf-8")
             except OSError as exc:
                 logger.warning("Could not read %s for vocabulary: %s", md_path, exc)
+                continue
+            # Parse the frontmatter properly rather than regex a fixed window:
+            # load_corpus strips quotes, so `type: "timshel-digest"` must
+            # exclude here too, and a body line can't masquerade as a key.
+            if parse_frontmatter(text).get("type") in NON_SOURCE_TYPES:
                 continue
             self._harvest_note(text)
 
@@ -209,6 +231,25 @@ class VocabularyIndex:
                 lines.append(f"- {term.canonical} (aliases: {', '.join(term.aliases)})")
             else:
                 lines.append(f"- {term.canonical}")
+        return "\n".join(lines)
+
+    def canonical_terms_block(self) -> str:
+        """Prompt-block lines for the tagger ("" when empty/disabled).
+
+        Canonical spellings only, one per line — no aliases. The tagger runs on
+        an already-canonicalised summary (see
+        :meth:`src.transcriber.Transcriber._canonicalize_aliases`), so alias
+        forms are pure noise there, whereas the summarizer needs them to do the
+        canonicalising in the first place. This block is the tagger's candidate
+        list of *entities worth tagging* — the glossary already is the vault's
+        entity index.
+        """
+        if not config.VOCABULARY_ENABLED:
+            return ""
+        lines = [
+            f"- {term.canonical}"
+            for term in self.ranked_terms()[: config.VOCABULARY_MAX_PROMPT_TERMS]
+        ]
         return "\n".join(lines)
 
     def whisper_prompt(self) -> str:
@@ -284,9 +325,9 @@ def strip_quotes_section(summary_md: str) -> str:
     if match is None:
         return summary_md
     head = summary_md[: match.start()]
-    rest = summary_md[match.start():]
+    rest = summary_md[match.start() :]
     next_section = re.search(r"\n##\s+(?!#)", rest[3:])
-    tail = rest[3 + next_section.start():] if next_section else ""
+    tail = rest[3 + next_section.start() :] if next_section else ""
     return head + tail
 
 

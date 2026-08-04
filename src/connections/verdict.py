@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from src.config import config
 from src.connections.candidate_assembly import (
+    _TRANSCRIPT_MARKER,
     NoteRef,
     _body_after_frontmatter,
     _excerpt,
@@ -114,6 +115,21 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
     circular. We take the whole body after the frontmatter (summary AND
     transcript) and bound it head/tail. Falls back to the summary only when the
     file can't be re-read.
+
+    CONTAINMENT: whatever synthesis could see, the verifier must also see.
+    Synthesis reads ``synthesis_md``, which lifts Stanowiska / Wątki otwarte
+    out of the MIDDLE of a long summary — a plain head/tail excerpt of the body
+    can drop exactly those lines into the blind gap, and a quote the verifier
+    cannot find is judged FABRICATED and the connection is dropped.
+
+    So the summary side is ``synthesis_md`` itself: it IS what synthesis saw,
+    which makes containment exact rather than approximate, and it is already
+    bounded (``MAX_SYNTHESIS_NOTE_CHARS * 2``). Splicing the raw summary block
+    in instead would be unbounded — one hand-written or imported note with a
+    long block before ``## Transkrypcja`` could dominate the whole verdict
+    prompt, which has no total cap. A prefix cut of that block is NOT an
+    option either: ``_synthesis_view`` reorders sections, so cutting by prefix
+    would drop the very lines it pulled forward.
     """
     try:
         full = note.md_path.read_text(encoding="utf-8")
@@ -122,7 +138,23 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
             "verdict: cannot re-read %s (%s); using summary", note.md_path, exc
         )
         return note.summary_md
-    return _excerpt(_body_after_frontmatter(full).strip(), max_chars)
+
+    body = _body_after_frontmatter(full).strip()
+    if _TRANSCRIPT_MARKER not in body:
+        return _excerpt(body, max_chars)
+
+    summary_block, _, transcript = body.partition(_TRANSCRIPT_MARKER)
+    summary_view = (note.synthesis_md or note.summary_md).strip()
+    if not summary_block.strip() or not summary_view:
+        # Transcript-only note: the "summary" is already an excerpt of that
+        # same transcript, so prepending it would just duplicate ~2.4k chars.
+        return _excerpt(body, max_chars)
+
+    # _excerpt keeps head+tail of max_chars each, so the transcript's own
+    # budget is unchanged; only the summary side is now exactly what synthesis
+    # was shown. The newline after the marker matters: the verifier matches
+    # quotes verbatim, and gluing the first word onto the heading breaks that.
+    return f"{summary_view}\n\n{_TRANSCRIPT_MARKER}\n{_excerpt(transcript, max_chars)}"
 
 
 def _build_user_prompt(

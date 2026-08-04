@@ -8,8 +8,9 @@ from typing import Iterable, List, Optional
 
 from src.config import config
 from src.llm.client import build_anthropic_client
+from src.llm.model_router import resolve_model
 from src.logger import logger
-from src.summarizer import APIBillingError, _is_permanent_api_error
+from src.summarizer import APIBillingError, _is_permanent_api_error, detect_language
 from src.tag_index import TagIndex
 
 
@@ -22,8 +23,19 @@ class BaseTagger(ABC):
         transcript: str,
         summary_markdown: str,
         existing_tags: Iterable[str],
+        known_entities: str = "",
     ) -> List[str]:
-        """Generate tags for given transcript and summary."""
+        """Generate tags for given transcript and summary.
+
+        Args:
+            transcript: full transcription text (snippets are taken from it).
+            summary_markdown: the generated, already-canonicalised summary.
+            existing_tags: tags already present in the vault, most-used first
+                (see :meth:`src.tag_index.TagIndex.existing_tags_ranked`).
+            known_entities: canonical glossary lines offered as tag candidates
+                (see :meth:`src.vocabulary.VocabularyIndex.canonical_terms_block`);
+                "" disables the block.
+        """
         raise NotImplementedError
 
 
@@ -40,13 +52,16 @@ class ClaudeTagger(BaseTagger):
         transcript: str,
         summary_markdown: str,
         existing_tags: Iterable[str],
+        known_entities: str = "",
     ) -> List[str]:
         """Generate tags using Claude API."""
         if not config.ENABLE_LLM_TAGGING:
             logger.debug("LLM tagging disabled; skipping tag generation.")
             return []
 
-        summary_snippet = self._truncate(summary_markdown, config.MAX_TAGGER_SUMMARY_CHARS)
+        summary_snippet = self._truncate(
+            summary_markdown, config.MAX_TAGGER_SUMMARY_CHARS
+        )
         transcript_snippet = self._build_transcript_snippet(
             transcript,
             config.MAX_TAGGER_TRANSCRIPT_CHARS,
@@ -56,20 +71,36 @@ class ClaudeTagger(BaseTagger):
             summary_snippet,
             transcript_snippet,
             prepared_existing,
+            known_entities,
         )
 
         try:
-            logger.debug("Calling Claude API for tag generation (model: %s)", self.model)
+            logger.debug(
+                "Calling Claude API for tag generation (model: %s)", self.model
+            )
+            # Low temperature: tag choice is near-mechanical (name what is
+            # there, reuse an existing tag when it fits). Reasoning models
+            # (Opus 4.x) reject `temperature` — omit it there, as in the
+            # summarizer.
+            extra = {}
+            if not self.model.startswith("claude-opus-4"):
+                extra["temperature"] = 0.2
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=128,
-                timeout=10.0,
+                # 256: multi-word entity tags plus JSON overhead clipped at 128
+                # once the prompt started asking for proper names. Billed on
+                # actual output, so the headroom is free.
+                max_tokens=256,
+                # 30s: the prompt now carries the glossary; a timeout means the
+                # note silently ships with no tags at all.
+                timeout=30.0,
                 messages=[
                     {
                         "role": "user",
                         "content": prompt,
                     }
                 ],
+                **extra,
             )
             response_text = message.content[0].text if message.content else ""
             return self._parse_tags_response(response_text)
@@ -124,22 +155,64 @@ class ClaudeTagger(BaseTagger):
         summary_snippet: str,
         transcript_snippet: str,
         existing_tags: List[str],
+        known_entities: str = "",
     ) -> str:
-        """Construct concise prompt for Claude."""
+        """Construct concise prompt for Claude.
+
+        Tags are not decoration: they are one of only three signals the digest
+        gets per note (tags, the Stanowiska section, the summary text), and
+        connection scoring only counts a tag that recurs across notes. So the
+        prompt optimises for two things — naming the concrete entities the
+        recording is about, and reusing an existing tag whenever it honestly
+        fits.
+        """
         existing_line = ", ".join(existing_tags)
         max_tags = config.MAX_TAGS_PER_NOTE
 
+        # Name the tag language explicitly (same reasoning as the summarizer's
+        # language directive): the instruction block is Polish, so a model left
+        # to infer would tag an English recording in Polish.
+        lang = detect_language(f"{summary_snippet}\n{transcript_snippet}")
+        tag_language = "angielski" if lang == "en" else "polski"
+
+        entities_block = ""
+        if known_entities:
+            entities_block = (
+                "ZNANE ENCJE — nazwy potwierdzone w tym vaultcie, kandydaci na "
+                "tagi. Użyj TYLKO tych, o których to nagranie faktycznie mówi; "
+                "nie taguj z listy na siłę:\n"
+                f"{known_entities}\n\n"
+            )
+
         return (
-            "Na podstawie podsumowania (markdown) oraz krótkich fragmentów "
-            "transkrypcji wygeneruj od 1 do "
-            f"{max_tags} tagów opisujących główne tematy nagrania.\n\n"
-            "ZASADY:\n"
-            "- język polski;\n"
-            "- forma: rzeczowniki w mianowniku, maks. 2 słowa, małe litery;\n"
-            "- bez znaków specjalnych (#, przecinki itp.);\n"
-            "- jeżeli nowy tag jest bliskoznaczny istniejącego, użyj dokładnie "
-            "istniejącego tagu (np. jeśli jest 'sauna', nie twórz 'saunowanie').\n\n"
-            "ISTNIEJĄCE_TAGI:\n"
+            "Na podstawie podsumowania (markdown) oraz fragmentów transkrypcji "
+            f"wygeneruj od 1 do {max_tags} tagów nazywających, o CZYM naprawdę "
+            "jest to nagranie.\n\n"
+            "ZASADA NADRZĘDNA — konkret bije ogólnik. Priorytet:\n"
+            "1. nazwy własne faktycznie omawiane w nagraniu (osoby, organizacje, "
+            "projekty, produkty, miejsca) — nazwy wielowyrazowe są dozwolone "
+            "i pożądane, np. 'Tech to the Rescue';\n"
+            "2. konkretne tematy tego nagrania;\n"
+            "3. najwyżej JEDEN szeroki tag dziedzinowy.\n\n"
+            "CZEGO NIE ROBIĆ:\n"
+            "- żadnych rzeczowników odczasownikowych opisujących czynność w "
+            "ogóle: 'planowanie strategii rozwoju', 'mapowanie procesu', "
+            "'konfiguracja narzędzia', 'omówienie tematu'. Taki tag pasuje do "
+            "każdego nagrania, więc nie łączy niczego z niczym. Wyjątek: proces, "
+            "który sam jest nazwanym, powracającym tematem;\n"
+            "- nie taguj rzeczy, których w nagraniu nie ma.\n\n"
+            "PONOWNE UŻYCIE: tag jest użyteczny tylko wtedy, gdy POWTARZA się "
+            "między notatkami. Jeśli któryś z istniejących tagów uczciwie opisuje "
+            "to nagranie, użyj go DOKŁADNIE w tej formie (nawet jeśli jest w innym "
+            "języku niż nagranie). Nowy tag twórz dla konkretnej encji lub tematu, "
+            "który prawdopodobnie wróci w kolejnych nagraniach.\n\n"
+            "FORMA:\n"
+            f"- język {tag_language};\n"
+            "- mianownik, małe litery (nazwy własne też);\n"
+            "- krótko: pojedyncze słowo albo nazwa własna;\n"
+            "- bez znaków specjalnych (#, przecinki itp.).\n\n"
+            f"{entities_block}"
+            "ISTNIEJĄCE TAGI (najczęstsze w vaultcie):\n"
             f"{existing_line}\n\n"
             "PODSUMOWANIE (MARKDOWN):\n"
             f"{summary_snippet}\n\n"
@@ -213,7 +286,7 @@ def get_tagger() -> Optional[BaseTagger]:
         return None
 
     try:
-        return ClaudeTagger(api_key=config.LLM_API_KEY, model=config.LLM_MODEL)
+        return ClaudeTagger(api_key=config.LLM_API_KEY, model=resolve_model("tags"))
     except ImportError:
         logger.error(
             "anthropic package not installed. Install via `pip install anthropic`."
@@ -222,4 +295,3 @@ def get_tagger() -> Optional[BaseTagger]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to initialize ClaudeTagger: %s", exc)
         return None
-

@@ -215,7 +215,10 @@ def _build_user_prompt(
         new = " | NEW" if note.basename in candidates.window_basenames else ""
         tags = ", ".join(note.tags) if note.tags else "—"
         lines.append(f"\n[[{note.basename}]] | {note.date} | tags: {tags}{new}")
-        lines.append(note.summary_md.strip())
+        # synthesis_md, not summary_md: same char budget, but a long summary
+        # keeps its stances and open threads instead of losing whatever sat
+        # past the cut. Scoring still runs on summary_md (candidate_assembly).
+        lines.append((note.synthesis_md or note.summary_md).strip())
     if dismissed:
         lines.append("\nALREADY-DISMISSED (do not re-propose):")
         for desc in dismissed:

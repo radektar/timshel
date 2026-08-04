@@ -108,6 +108,26 @@ class TestViews:
         block = VocabularyIndex(vault).known_terms_block()
         assert "- Tech to the Rescue (aliases: TTTR)" in block
 
+    def test_canonical_terms_block_omits_aliases(self, vault):
+        """The tagger runs on canonicalised text — aliases are noise there."""
+        malinche = vault / ".timshel"
+        malinche.mkdir()
+        (malinche / "vocabulary.json").write_text(
+            json.dumps(
+                {"terms": [{"canonical": "Tech to the Rescue", "aliases": ["TTTR"]}]}
+            ),
+            encoding="utf-8",
+        )
+        block = VocabularyIndex(vault).canonical_terms_block()
+        assert "- Tech to the Rescue" in block
+        assert "TTTR" not in block
+        assert "aliases" not in block
+
+    def test_canonical_terms_block_honours_master_switch(self, vault, monkeypatch):
+        _note(vault, "a.md", "Notatka o [[Haetta]].")
+        monkeypatch.setattr(config, "VOCABULARY_ENABLED", False)
+        assert VocabularyIndex(vault).canonical_terms_block() == ""
+
     def test_whisper_prompt_includes_acronym_alias_and_respects_cap(
         self, vault, monkeypatch
     ):
@@ -190,3 +210,58 @@ class TestFindAliasHits:
     def test_disabled_switch_reports_nothing(self, idx, monkeypatch):
         monkeypatch.setattr(config, "VOCABULARY_ENABLED", False)
         assert idx.find_alias_hits("Strategia TekTutoreski rośnie.") == []
+
+
+class TestHarvestScope:
+    """What the app writes about itself is never a glossary term."""
+
+    def test_digest_subfolder_is_not_harvested(self, vault):
+        """A digest is made of [[note basename]] links.
+
+        Harvesting it put 73 note FILENAMES into a real vault's glossary —
+        which then biased whisper's decoding prompt and the summarizer's
+        KNOWN TERMS block toward filenames.
+        """
+        _note(vault, "real.md", "Rozmowa o [[Impact Chat]] i planach.")
+        digests = vault / config.DIGEST_DIR_NAME
+        digests.mkdir()
+        # Deliberately WITHOUT the `type:` frontmatter: only the directory
+        # scope can exclude this one, so the test cannot pass on the strength
+        # of the type guard instead.
+        (digests / "2026-06-25 Synthesis.md").write_text(
+            "Łączy [[26-06-03 - Przygotowania do Eight Moons - okna]] "
+            "z [[26-07-01 - Zmiana nazwy projektu]].\n",
+            encoding="utf-8",
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert not [t for t in terms if t.startswith("26-")]
+
+    def test_sidecar_backups_are_not_harvested(self, vault):
+        """.timshel holds pre-migration COPIES — harvesting them double-counts
+        every term and resurrects ones the vault has since dropped."""
+        _note(vault, "real.md", "Notatka o [[Impact Chat]].")
+        backup = vault / ".timshel" / "resummarize-backup" / "20260707"
+        backup.mkdir(parents=True)
+        (backup / "old.md").write_text(
+            "Stara kopia o [[Nieaktualny Term]].\n", encoding="utf-8"
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert "nieaktualny term" not in terms
+
+    def test_stray_top_level_digest_is_skipped(self, vault):
+        _note(vault, "real.md", "Notatka o [[Impact Chat]].")
+        (vault / "stray.md").write_text(
+            "---\ntype: timshel-digest\n---\n\nŁączy [[26-06-03 - Cos tam]].\n",
+            encoding="utf-8",
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert not [t for t in terms if t.startswith("26-")]

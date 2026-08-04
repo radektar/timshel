@@ -27,6 +27,7 @@ from src.summarizer import (
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
 from src.state_manager import get_last_sync_time, save_sync_time
+from src.stance_guard import guard_stance_subjects
 from src.tag_index import GENERATED_TAG, TagIndex
 from src.tagger import BaseTagger, get_tagger
 from src.vocabulary import VocabularyIndex, find_alias_misses
@@ -1577,6 +1578,11 @@ class Transcriber:
                 summary = self._canonicalize_aliases(
                     summary, transcript_text, known_terms
                 )
+                # Aliases first (that step may rewrite the whole summary),
+                # then the deterministic stance-subject guard on the final text.
+                summary["summary"] = guard_stance_subjects(
+                    summary.get("summary", ""), self.vocabulary
+                )
                 logger.info(f"✓ Summary generated: {summary.get('title', 'N/A')}")
             except APIBillingError as exc:
                 self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
@@ -1614,11 +1620,12 @@ Brak podsumowania AI. Możliwe przyczyny:
             and self._ai_disabled_reason is None
         ):
             try:
-                existing_tags = self.tag_index.existing_tags()
+                existing_tags = self.tag_index.existing_tags_ranked()
                 generated_tags = self.tagger.generate_tags(
                     transcript=transcript_text,
                     summary_markdown=summary.get("summary", ""),
                     existing_tags=existing_tags,
+                    known_entities=self.vocabulary.canonical_terms_block(),
                 )
                 for tag in generated_tags:
                     if tag not in tags:

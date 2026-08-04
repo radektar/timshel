@@ -207,6 +207,90 @@ def test_summary_or_excerpt_without_summary_block(vault):
     assert corpus and corpus[0].summary_md.strip() == "just some body text here"
 
 
+class TestSynthesisView:
+    """What the synthesis prompt sees when a summary exceeds the budget.
+
+    Scoring must stay on summary_md (byte-identical to the validated
+    behaviour); only the model's view is re-prioritised.
+    """
+
+    def _write_long_note(self, vault, name="long", summary_words=320):
+        """A note whose summary overruns the budget inside 'Kluczowe punkty'.
+
+        Shaped like a real long note: a big Podsumowanie, a long Kluczowe
+        punkty, then the short connective sections the blind cut never reaches.
+        """
+        summary = (
+            "## Podsumowanie\n\n"
+            + ("Treść. " * summary_words)
+            + "\n## Kluczowe punkty\n\n"
+            + ("- punkt do omówienia\n" * 13)
+            + "\n## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ dobry kierunek\n"
+            + "\n## Wątki otwarte\n\n- czy da się taniej?\n"
+            + "\n## Cytaty\n\n"
+            + ('> "cytat do wyciecia"\n' * 6)
+            + "\n## Lista działań (To-do)\n\n- [ ] zrobić rzecz\n"
+        )
+        (vault / f"{name}.md").write_text(
+            f'---\ntitle: "{name}"\ndate: 2026-06-20\ntags: []\n---\n\n'
+            + summary
+            + "\n## Transkrypcja\nfoo bar\n",
+            encoding="utf-8",
+        )
+        return load_corpus(vault)[0]
+
+    def test_short_summary_is_untouched(self, vault):
+        _write_note(vault, "short", "2026-06-20", summary="alpha beta")
+        note = load_corpus(vault)[0]
+        assert note.synthesis_md == note.summary_md
+
+    def test_long_summary_keeps_stances_and_open_threads(self, vault):
+        note = self._write_long_note(vault)
+        budget = config.MAX_SYNTHESIS_NOTE_CHARS * 2
+
+        assert len(note.synthesis_md) <= budget
+        # The blind prefix cut never reaches the stance — this is the loss.
+        assert "Fundacja Ziemi" not in note.summary_md
+        # Priority order keeps the connective sections instead.
+        assert "Fundacja Ziemi" in note.synthesis_md
+        assert "## Wątki otwarte" in note.synthesis_md
+        # Quotes give way first — per-note detail, not cross-note signal.
+        # (A small trailing section may still fit once quotes are out; the
+        # budget is filled by priority, not left unused.)
+        assert "## Cytaty" not in note.synthesis_md
+
+    def test_sections_stay_in_document_order(self, vault):
+        view = self._write_long_note(vault).synthesis_md
+
+        assert view.index("## Podsumowanie") < view.index("## Stanowiska")
+        assert view.index("## Stanowiska") < view.index("## Wątki otwarte")
+
+    def test_scoring_text_is_unchanged_by_the_new_view(self, vault):
+        """The regression guard: summary_md must keep the old blind cut."""
+        note = self._write_long_note(vault)
+        budget = config.MAX_SYNTHESIS_NOTE_CHARS * 2
+
+        assert len(note.summary_md) == budget
+        assert note.summary_md.startswith("## Podsumowanie")
+
+    def test_oversized_lead_section_is_clipped_not_dropped(self, vault):
+        """A Podsumowanie bigger than the whole budget still shows up."""
+        note = self._write_long_note(vault, summary_words=600)
+        budget = config.MAX_SYNTHESIS_NOTE_CHARS * 2
+
+        assert len(note.synthesis_md) <= budget
+        assert note.synthesis_md.startswith("## Podsumowanie")
+
+    def test_transcript_only_note_falls_back_to_excerpt(self, vault):
+        (vault / "raw.md").write_text(
+            '---\ntitle: "raw"\ndate: 2026-06-20\ntags: []\n---\n\n'
+            "## Transkrypcja\n" + ("slowo " * 3000),
+            encoding="utf-8",
+        )
+        note = load_corpus(vault)[0]
+        assert note.synthesis_md == note.summary_md
+
+
 def test_bm25_ranks_lexically_related_first():
     window = [
         _note("W", "2026-06-20", summary="alembik destylacja temperatura chlodzenie")
@@ -707,3 +791,22 @@ def test_tag_bridge_ignores_notes_sharing_only_the_app_tag(vault):
     # claims to have bridged.
     assert "tag" in cs.channel_map["real"]  # a genuinely shared tag still bridges
     assert "tag" not in cs.channel_map.get("app_only", set())
+
+
+def test_synthesis_view_clips_a_giant_preamble(vault):
+    """A note whose text starts before any heading must still fit the budget.
+
+    The preamble was counted against the budget but emitted in full, so such a
+    note blew the per-note bound by its own length — and the prompt's char
+    budget is measured on summary_md, so nothing downstream caught it.
+    """
+    (vault / "preamble.md").write_text(
+        '---\ntitle: "p"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        + ("tekst bez naglowka. " * 600)
+        + "\n## Podsumowanie\n\nKrótkie.\n"
+        + "\n## Transkrypcja\nfoo\n",
+        encoding="utf-8",
+    )
+    note = load_corpus(vault)[0]
+
+    assert len(note.synthesis_md) <= config.MAX_SYNTHESIS_NOTE_CHARS * 2

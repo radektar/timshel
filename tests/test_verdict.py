@@ -99,6 +99,87 @@ def test_fuller_text_reads_file_and_falls_back(tmp_path):
     assert vd._fuller_text(note_missing, 4000) == "FALLBACK"
 
 
+def test_fuller_text_contains_everything_synthesis_could_quote(tmp_path):
+    """Containment: the verifier must see whatever the synthesis prompt saw.
+
+    synthesis_md lifts Stanowiska out of the MIDDLE of a long summary. With a
+    plain head/tail excerpt of the body, that line falls into the verifier's
+    blind gap — and a quote it cannot find is judged FABRICATED, so a real
+    connection gets dropped. This fires in the H1 build, where tester_mode
+    turns the verdict pass on.
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    # Sizes matter and are load-bearing, so they are asserted below:
+    # Podsumowanie fits the synthesis budget (2400) on its own, but the whole
+    # summary block must exceed the VERIFIER's window (VERDICT_MAX_NOTE_CHARS
+    # = 4000) — otherwise the old head/tail excerpt would have seen the stance
+    # anyway and this test would pass against the un-fixed code.
+    summary = (
+        "## Podsumowanie\n\n"
+        + ("Treść podsumowania. " * 100)
+        + "\n## Kluczowe punkty\n\n"
+        + ("- punkt do omówienia\n" * 120)
+        + "\n## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ STANCE-NEEDLE\n"
+    )
+    assert len(summary) > config.VERDICT_MAX_NOTE_CHARS
+    md = tmp_path / "long.md"
+    md.write_text(
+        '---\ntitle: "long"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        + summary
+        + "\n## Transkrypcja\n"
+        + ("slowo " * 4000),
+        encoding="utf-8",
+    )
+
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert "STANCE-NEEDLE" in note.synthesis_md  # synthesis sees it...
+    assert "STANCE-NEEDLE" in fuller  # ...so the verifier must too
+    assert "slowo" in fuller  # transcript still there (anti-circularity)
+
+    # Pin the failure this test exists for: the pre-fix implementation (a plain
+    # head/tail excerpt of the whole body) must NOT see the stance — otherwise
+    # the assertions above would hold with or without the fix.
+    from src.connections.candidate_assembly import _body_after_frontmatter, _excerpt
+
+    pre_fix = _excerpt(
+        _body_after_frontmatter(md.read_text(encoding="utf-8")).strip(),
+        config.VERDICT_MAX_NOTE_CHARS,
+    )
+    assert "STANCE-NEEDLE" not in pre_fix
+
+    # And the fix must not trade the bound away: the summary side is
+    # synthesis_md, so it stays capped however long the note's summary is.
+    assert len(fuller) <= len(note.synthesis_md) + 4 * config.VERDICT_MAX_NOTE_CHARS
+
+
+def test_fuller_text_stays_bounded_for_a_huge_summary_block(tmp_path):
+    """A hand-written/imported note must not dominate the verdict prompt.
+
+    _build_user_prompt has no total cap, so an unbounded per-note text is a
+    silent cost blow-up (and a context overflow fails open — no verification
+    at all, no error).
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    md = tmp_path / "huge.md"
+    md.write_text(
+        '---\ntitle: "huge"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        "## Podsumowanie\n\n"
+        + ("bardzo dlugi blok. " * 10000)
+        + "\n## Transkrypcja\nkrotka transkrypcja.\n",
+        encoding="utf-8",
+    )
+
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert len(note.synthesis_md) <= config.MAX_SYNTHESIS_NOTE_CHARS * 2
+    assert len(fuller) < 20_000  # was ~200k when the raw block was spliced in
+
+
 def test_get_verifier_gated_by_config(monkeypatch):
     monkeypatch.setattr(config, "VERDICT_ENABLED", False)
     assert vd.get_verifier() is None
@@ -258,3 +339,28 @@ def test_synthesis_empty_still_records_metrics(digest_env, monkeypatch):
     assert metrics[-1]["digest"] == ""
     assert metrics[-1]["verdict_model"] == ""  # verdict never ran
     assert metrics[-1]["verdict_dropped"] == 0
+
+
+def test_fuller_text_containment_holds_for_transcript_only_notes(tmp_path):
+    """Containment for a note with no summary block is DERIVED, not built in.
+
+    Such a note's synthesis view is itself an excerpt of the transcript, so
+    _fuller_text returns the wider excerpt instead of prepending it. That only
+    contains the narrower one because VERDICT_MAX_NOTE_CHARS exceeds
+    MAX_SYNTHESIS_NOTE_CHARS — a relation nothing else pins.
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    md = tmp_path / "raw.md"
+    md.write_text(
+        '---\ntitle: "raw"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        "## Transkrypcja\nHEAD-NEEDLE " + ("slowo " * 2000) + " TAIL-NEEDLE\n",
+        encoding="utf-8",
+    )
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert config.VERDICT_MAX_NOTE_CHARS > config.MAX_SYNTHESIS_NOTE_CHARS + 20
+    for chunk in note.synthesis_md.split("\n...\n"):
+        assert chunk.strip() in fuller
+    assert "HEAD-NEEDLE" in fuller and "TAIL-NEEDLE" in fuller

@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
+import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,27 +21,166 @@ load_env_file()
 
 from src.config import config
 from src.logger import logger
+from src.summarizer import APIBillingError
 from src.tag_index import TagIndex
 from src.tagger import BaseTagger, get_tagger
+from src.vocabulary import VocabularyIndex
 
 
 @dataclass
 class MarkdownSections:
     """Structured representation of markdown parts."""
 
-    frontmatter_lines: List[str]
     body: str
+
+
+# Frontmatter tags, in both styles Obsidian round-trips: inline
+# ``tags: [a, b]`` and the block list its property editor writes
+# (``tags:`` followed by indented ``- item`` lines).
+_INLINE_TAGS_RE = re.compile(r"^tags:[ \t]*\[(.*)\][ \t]*$", re.MULTILINE)
+_BLOCK_TAGS_RE = re.compile(r"^tags:[ \t]*\n((?:[ \t]*-[ \t]+.*\n)+)", re.MULTILINE)
+# Any tags key at all, including forms the two above cannot rewrite. Used to
+# tell "no tags key" (safe to add one) from "a tags key we don't understand"
+# (must not touch — a second key would be a YAML duplicate).
+_ANY_TAGS_KEY_RE = re.compile(r"^tags:", re.MULTILINE)
+
+
+def _frontmatter_span(text: str) -> Optional[Tuple[int, int]]:
+    """Character span of the frontmatter block, or None when there is none."""
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    return (0, end + 4) if end != -1 else None
+
+
+def parse_tags(text: str) -> List[str]:
+    """Tags declared in the frontmatter, in either style ([] when none).
+
+    Block style matters: Obsidian's property editor rewrites ``tags:`` as an
+    indented list, and a parser that only understands the inline form reads
+    those notes as untagged.
+    """
+    span = _frontmatter_span(text)
+    if not span:
+        return []
+    front = text[span[0] : span[1]]
+    inline = _INLINE_TAGS_RE.search(front)
+    if inline:
+        return [
+            t.strip().strip('"').strip("'")
+            for t in inline.group(1).split(",")
+            if t.strip()
+        ]
+    block = _BLOCK_TAGS_RE.search(front)
+    if block:
+        return [
+            line.strip()[1:].strip().strip('"').strip("'")
+            for line in block.group(1).splitlines()
+            if line.strip()
+        ]
+    return []
+
+
+def is_rewritable(text: str) -> bool:
+    """True when :func:`replace_tags` can safely update this note's tags.
+
+    Same decision as ``replace_tags(...) is not None``, without needing the
+    tags — so the caller can skip a note before paying the tagger for output
+    it would then throw away.
+    """
+    span = _frontmatter_span(text)
+    if not span:
+        return False
+    front = text[span[0] : span[1]]
+    if _BLOCK_TAGS_RE.search(front) or _INLINE_TAGS_RE.search(front):
+        return True
+    # No tags key at all → we may add one. A key we can't parse → hands off.
+    return not _ANY_TAGS_KEY_RE.search(front)
+
+
+def replace_tags(text: str, tags: List[str]) -> Optional[str]:
+    """*text* with only its tags replaced — byte-identical everywhere else.
+
+    Substitution on the original string, never a re-assembly from parsed
+    parts: the old rewriter rebuilt the note and silently injected a blank
+    line after the frontmatter, dropped the trailing newline, and (for block
+    style) left the previous list items dangling under the new inline line,
+    producing invalid YAML. The note's own style is preserved, so a vault
+    edited in Obsidian keeps its formatting.
+    """
+    span = _frontmatter_span(text)
+    if not span:
+        return None
+    head, front, tail = text[: span[0]], text[span[0] : span[1]], text[span[1] :]
+
+    block = _BLOCK_TAGS_RE.search(front)
+    if block:
+        indent_match = re.match(r"[ \t]*", block.group(1))
+        indent = indent_match.group(0) if indent_match else "  "
+        rendered = "tags:\n" + "".join(f"{indent}- {tag}\n" for tag in tags)
+        return head + front[: block.start()] + rendered + front[block.end() :] + tail
+
+    inline = _INLINE_TAGS_RE.search(front)
+    if inline:
+        rendered = "tags: [" + ", ".join(tags) + "]"
+        return head + front[: inline.start()] + rendered + front[inline.end() :] + tail
+
+    # A tags key we cannot rewrite (bare `tags:`, a scalar `tags: notatka`,
+    # `tags: null`, `tags: ""`): skip. Appending a second `tags:` line would
+    # put a DUPLICATE key in the mapping — invalid YAML, with the user's own
+    # value silently orphaned. A skipped note is recoverable; a corrupted one
+    # is not.
+    if _ANY_TAGS_KEY_RE.search(front):
+        return None
+
+    # Genuinely no tags key: add one rather than skip — we already paid for
+    # the tags by the time we get here.
+    closing = front.rfind("---")
+    rendered = "tags: [" + ", ".join(tags) + "]\n"
+    return head + front[:closing] + rendered + front[closing:] + tail
 
 
 class TranscriptRetagger:
     """Retag existing markdown transcripts using ClaudeTagger."""
 
-    def __init__(self, root_dir: Path) -> None:
-        """Initialize retagger state."""
+    def __init__(
+        self,
+        root_dir: Path,
+        force: bool = False,
+        only: Optional[str] = None,
+        dry_run: bool = False,
+        stamp: str = "",
+    ) -> None:
+        """Initialize retagger state.
+
+        Args:
+            root_dir: vault directory to walk.
+            force: regenerate even when the existing tags are already
+                sanitized. Needed after a tagger-prompt change — otherwise
+                every note is skipped as "already fine" and the corpus keeps
+                its old tags.
+            only: process only notes whose filename contains this substring.
+            dry_run: report ``old tags -> new tags`` per note and write
+                nothing. Costs the same API calls; changes no files.
+            stamp: backup-folder name (defaults to the current timestamp).
+        """
         self.root_dir = root_dir
+        self.force = force
+        self.only = only
+        self.dry_run = dry_run
+        self.backup_dir = (
+            Path(root_dir)
+            / config.SIDECAR_DIR_NAME
+            / "retag-backup"
+            / (stamp or datetime.now().strftime("%Y%m%d-%H%M%S"))
+        )
         self.tag_index = TagIndex(root_dir=self.root_dir)
+        self.vocabulary = VocabularyIndex(root_dir=self.root_dir)
         self.tagger: BaseTagger = self._require_tagger()
-        self.existing_tags: List[str] = self.tag_index.existing_tags()
+        self.existing_tags: List[str] = self.tag_index.existing_tags_ranked()
+        # Built once: the glossary is a whole-vault scan, and it does not
+        # change meaningfully while this run is in flight.
+        self.known_entities: str = self.vocabulary.canonical_terms_block()
         self.updated = 0
         self.skipped = 0
 
@@ -52,9 +194,19 @@ class TranscriptRetagger:
         return tagger
 
     def run(self) -> None:
-        """Process all markdown files within root directory."""
+        """Process the vault's TOP-LEVEL notes.
+
+        Non-recursive, matching ``connections.candidate_assembly.load_corpus``:
+        the subfolders hold generated digests, recall notes and — in
+        ``.timshel/resummarize-backup`` — pre-migration copies of notes. A
+        recursive walk rewrote those backups on a real run: it burns API calls
+        on files nothing reads, and a backup that gets rewritten is no longer a
+        backup.
+        """
         logger.info("Starting retagging for directory: %s", self.root_dir)
-        for md_path in sorted(self.root_dir.rglob("*.md")):
+        for md_path in sorted(self.root_dir.glob("*.md")):
+            if self.only and self.only.lower() not in md_path.name.lower():
+                continue
             self._process_file(md_path)
 
         logger.info(
@@ -78,8 +230,8 @@ class TranscriptRetagger:
             self.skipped += 1
             return
 
-        current_tags = self._extract_tags(sections.frontmatter_lines)
-        if current_tags:
+        current_tags = parse_tags(content)
+        if current_tags and not self.force:
             custom_tags = [tag for tag in current_tags if tag != "transcription"]
             if custom_tags:
                 needs_regeneration = any(
@@ -93,6 +245,19 @@ class TranscriptRetagger:
         summary_markdown, transcript_text = self._extract_sections(sections.body)
         if not summary_markdown or not transcript_text:
             logger.debug("Skipping %s (missing summary or transcript).", md_path.name)
+            self.skipped += 1
+            return
+
+        # Decide writability BEFORE paying for the tags: a note whose `tags:`
+        # key we cannot rewrite is skipped either way, so calling the tagger
+        # first would burn one request per note on every future run and
+        # produce nothing. Name the note — this is the list to fix by hand.
+        if not is_rewritable(content):
+            logger.warning(
+                "Skipping %s — its `tags:` field is in a form this script "
+                "cannot rewrite safely (fix it by hand in Obsidian).",
+                md_path.name,
+            )
             self.skipped += 1
             return
 
@@ -118,11 +283,33 @@ class TranscriptRetagger:
             if tag not in merged_tags:
                 merged_tags.append(tag)
 
-        self._write_updated_file(md_path, sections, merged_tags)
-        self.updated += 1
+        updated_content = replace_tags(content, merged_tags)
+        if updated_content is None:  # pragma: no cover — is_rewritable gates this
+            logger.warning("Skipping %s (tags field not rewritable).", md_path.name)
+            self.skipped += 1
+            return
 
-        # Update in-memory existing tags for future calls
+        # Grow the reusable-tag pool before the dry-run branch: a preview that
+        # offered a different vocabulary than the real run would predict
+        # different tags than the run it is previewing.
         self.existing_tags.extend(merged_tags[1:])
+
+        if self.dry_run:
+            logger.info(
+                "DRY-RUN %s: %s -> %s",
+                md_path.name,
+                ", ".join(current_tags) or "—",
+                ", ".join(merged_tags),
+            )
+            self.updated += 1
+            return
+
+        # Count what actually reached disk — "Aborted after N notes" is read as
+        # a recovery instruction, so it must not include failed writes.
+        if self._write_updated_file(md_path, content, updated_content):
+            self.updated += 1
+        else:
+            self.skipped += 1
 
     def _split_frontmatter(self, content: str) -> MarkdownSections | None:
         """Split content into frontmatter lines and body."""
@@ -132,28 +319,9 @@ class TranscriptRetagger:
 
         for idx in range(1, len(lines)):
             if lines[idx].strip() == "---":
-                frontmatter_lines = lines[1:idx]
                 body = "\n".join(lines[idx + 1 :])
-                return MarkdownSections(frontmatter_lines=frontmatter_lines, body=body)
+                return MarkdownSections(body=body)
         return None
-
-    def _extract_tags(self, frontmatter_lines: List[str]) -> List[str]:
-        """Extract tags array from frontmatter lines."""
-        for line in frontmatter_lines:
-            stripped = line.strip()
-            if stripped.startswith("tags:"):
-                tags_value = stripped.split(":", 1)[1].strip()
-                if tags_value.startswith("[") and tags_value.endswith("]"):
-                    inner = tags_value[1:-1]
-                else:
-                    inner = tags_value
-                tags = [
-                    tag.strip().strip('"').strip("'")
-                    for tag in inner.split(",")
-                    if tag.strip()
-                ]
-                return tags or []
-        return []
 
     def _extract_sections(self, body: str) -> Tuple[str, str]:
         """Extract summary markdown and transcript text sections."""
@@ -173,57 +341,102 @@ class TranscriptRetagger:
                 transcript=transcript,
                 summary_markdown=summary,
                 existing_tags=self.existing_tags,
+                known_entities=self.known_entities,
             )
+        except APIBillingError:
+            # Permanent (auth / credits / retired model): every remaining note
+            # would fail the same way. Abort instead of walking the whole vault
+            # logging one error per note and reporting "finished".
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.error("Tag generation failed: %s", exc, exc_info=True)
             return []
 
-    def _write_updated_file(
-        self,
-        md_path: Path,
-        sections: MarkdownSections,
-        tags: List[str],
-    ) -> None:
-        """Rewrite markdown file with updated tags."""
-        updated_frontmatter = self._render_frontmatter(sections.frontmatter_lines, tags)
-        new_content = "---\n" + "\n".join(updated_frontmatter) + "\n---\n\n" + sections.body
+    def _write_updated_file(self, md_path: Path, original: str, updated: str) -> bool:
+        """Back the note up, then write the updated text. True when written."""
         try:
-            md_path.write_text(new_content, encoding="utf-8")
+            self._backup(md_path, original)
+        except OSError as err:
+            logger.error("Skipping %s — could not back it up: %s", md_path, err)
+            return False
+        try:
+            md_path.write_text(updated, encoding="utf-8")
             logger.info("Updated tags for %s", md_path.name)
+            return True
         except OSError as err:
             logger.error("Failed to write %s: %s", md_path, err)
+            return False
 
-    def _render_frontmatter(
-        self,
-        frontmatter_lines: List[str],
-        tags: List[str],
-    ) -> List[str]:
-        """Render new frontmatter lines with updated tags."""
-        rendered = frontmatter_lines.copy()
-        tags_line = f"tags: [{', '.join(tags)}]"
-        for idx, line in enumerate(rendered):
-            if line.strip().startswith("tags:"):
-                rendered[idx] = tags_line
-                break
-        else:
-            rendered.append(tags_line)
-        return rendered
+    def _backup(self, md_path: Path, original: str) -> None:
+        """Copy the note into a timestamped backup dir before rewriting it.
+
+        write_text truncates first, so an interrupted run would otherwise lose
+        a note outright, and a bad prompt change would be unrecoverable across
+        the whole vault. Mirrors scripts/resummarize_vault.py.
+        """
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        target = self.backup_dir / md_path.name
+        if target.exists():
+            # First write wins. The stamp has second resolution, so two runs
+            # can share a folder — overwriting would replace the true original
+            # with the previous run's output, which is the one thing a backup
+            # must never do.
+            return
+        target.write_text(original, encoding="utf-8")
 
 
 def main() -> int:
     """Entry point for retagger CLI."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "regenerate tags even when the current ones are already sanitized "
+            "(required to roll a tagger-prompt change over the corpus)"
+        ),
+    )
+    parser.add_argument(
+        "--only",
+        metavar="SUBSTR",
+        help="process only notes whose filename contains SUBSTR",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "print 'old tags -> new tags' per note and write nothing "
+            "(still calls the API, so it costs the same)"
+        ),
+    )
+    args = parser.parse_args()
+
     config.ensure_directories()
 
     try:
-        retagger = TranscriptRetagger(root_dir=config.TRANSCRIBE_DIR)
+        retagger = TranscriptRetagger(
+            root_dir=config.TRANSCRIBE_DIR,
+            force=args.force,
+            only=args.only,
+            dry_run=args.dry_run,
+        )
     except RuntimeError as err:
         logger.error("Cannot run retagger: %s", err)
         return 1
 
-    retagger.run()
+    try:
+        retagger.run()
+    except APIBillingError as err:
+        # Auth / credits / retired model: nothing left to try. Report it the
+        # same way as a startup failure instead of dumping a traceback.
+        logger.error(
+            "Aborted after %s notes — Claude API unavailable: %s",
+            retagger.updated,
+            err,
+        )
+        return 1
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
