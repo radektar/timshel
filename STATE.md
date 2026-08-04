@@ -48,10 +48,25 @@ transkrypcja head+tail zamiast samego ogona.
    backup przed każdym zapisem, ma `--dry-run` i przerywa przy błędzie
    rozliczeniowym.
 
-Znalezione przy okazji, NIE naprawiane (osobny wątek): 3 notatki mają
-niepoprawny YAML sprzed tej sesji — `title:` z zagnieżdżonymi cudzysłowami
-(`title: "Planowanie rozwoju narzędzia "Impact Chat""`) psuje frontmatter.
-Backup vaulta sprzed retagu: `scratchpad/vault-backup-20260804-095539`.
+**Poprawa vaulta (za zgodą, 2026-08-04).** Wyczyszczone stanowiska w istniejącym
+korpusie: 77 notatek, 132 podmioty zdjęte z nawiasów, 266 zmienionych linii —
+wszystkie w sekcjach Stanowisk, kanał sprzeczności bit w bit ten sam (75 notatek,
+164 stanowiska, identyczne podmioty i polaryzacje). Naprawione 3 notatki
+z niepoprawnym YAML-em (`title:` z zagnieżdżonymi cudzysłowami → apostrofy
+YAML-owe). Vault: 185 notatek, 0 błędnych YAML-i.
+
+**Drugie źródło trucizny — znalezione przy weryfikacji efektu.** Po czyszczeniu
+w prompcie whispera dalej siedziała nazwa pliku notatki:
+`VocabularyIndex._harvest_vault` skanował vault rekurencyjnie, więc zbierał
+**wygenerowane digesty**, a digest składa się z linków `[[nazwa-pliku]]`.
+Zmierzone: 73 takie wikilinki z „Timshel Digests", 2 z „Timshel Recall".
+Ta sama reguła co przy `signal_tags` — metadana pisana przez apkę nie jest
+sygnałem użytkownika. Harvest chodzi teraz po top-levelu (jak `load_corpus`).
+Słownik: 310 → 196 (po czyszczeniu stanowisk) → **76** (po naprawie harvestu);
+termy w kształcie nazw plików 33 → 1.
+
+Backupy: `scratchpad/vault-backup-20260804-095539` (sprzed retagu),
+`vault-backup-stance-20260804-113227` (sprzed czyszczenia stanowisk).
 
 ## Konektor Voice Memos — ingest v2 faza 1 (PR #97, MERGE 2026-07-30)
 
@@ -466,10 +481,12 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 
 ## Następny krok
 
-0. **PR #99 czeka na merge** — kod gotowy, 1428 testów zielonych, mypy czysty,
-   dwie rundy review. Do rozważenia przy okazji: czyszczenie starych stanowisk
-   w korpusie (deterministyczne, $0 — guard bez API) i 3 notatki z zepsutym
-   `title:`; oba wymagają Twojej zgody, bo dotykają vaulta.
+0. **PR #99 czeka na merge** — kod gotowy, 1442 testy zielone, mypy czysty,
+   cztery rundy review (ostatnia czysta), vault wyczyszczony i zweryfikowany.
+   Otwarte drobiazgi z listy nice-to-have, świadomie NIE wzięte: jeden term
+   w kształcie ścieżki został w słowniku (wikilink do notatki w innym folderze
+   vaulta z notatki top-level) — filtr na linki-do-notatek to nowa heurystyka,
+   więc do decyzji osobno.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Protokół A — DOMKNIĘTY 2026-07-18** (drugi Mac, DMG `06d99e9c…`):
    instalacja ✓, wizard+folder ✓, download ✓, import tekstów ✓, audio PL/EN
