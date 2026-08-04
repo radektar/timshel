@@ -44,6 +44,29 @@ przy **tym samym prompcie taggera**, więc różnicę zrobiło samo pełne wejś
 **Zostało do decyzji:** 14 notatek w paśmie 33–95% pokrycia (10–30k znaków) —
 przepisanie ich to <$0,30, ale to poszerzenie zatwierdzonego zakresu.
 
+**Dług nazwany w review, świadomie NIE brany (decyzja 2026-08-04).** Cztery
+rzeczy zmierzone i odłożone — żadna nie blokuje H1:
+
+1. *Cap jest w znakach, ograniczenie w tokenach.* Zmierzone przez `count_tokens`
+   na realnym transkrypcie: **2,54 znaku/token** dla polskiej mowy, czyli 400k
+   znaków ≈ **157k tokenów** (komentarz w `config.py` mówi ~143k — nieaktualne).
+   Z promptem i 8k outputu ~168k ze 200k, więc bufor to ~16% na współczynniku.
+   Gdyby transkrypt wypadł gęstszy niż 2,12 znaku/token, API zwróci 400
+   („prompt is too long"); `_is_permanent_api_error` tego nie klasyfikuje, więc
+   leci fallback summary BEZ `summary_coverage` — czyli dokładnie ta cicha
+   degradacja, którą ten PR likwiduje. Lek: cap 350k albo złapanie overflow
+   i retry mniejszym oknem.
+2. *`resummarize_vault.py` nigdy nie zapisze `summary_coverage`* — z założenia
+   przepisuje frontmatter bajt w bajt. To ścieżka naprawy korpusu, więc
+   gwarancja uczciwości ma tam dziurę (dziś nieszkodliwą: wszystko < 400k).
+3. *Komentarz przy capie OpenAI jest nieprawdziwy* — „GPT-4.1 tops out at 128k"
+   dotyczy GPT-4o; GPT-4.1 ma 1M kontekstu. Sam cap 250k nieszkodliwy.
+4. *Ekonomika per-nota przestała być płaska.* 3h nagranie to ~157k tokenów
+   wejścia ≈ **$0,16**, a `_canonicalize_aliases` przy trafieniu aliasu wysyła
+   cały transkrypt drugi raz → ~$0,31/nota. Model kosztowy w vaultcie mówi
+   „płaski", ale to dotyczyło digestu, nie podsumowań — do uzgodnienia przy
+   ofercie.
+
 ## Wejście do insightów: tagi-encje + guard stanowisk (PR #99, MERGE 2026-08-04)
 
 Punkt wyjścia: ocena mechaniki tagowania i podsumowania na realnej nocie
