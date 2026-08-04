@@ -1,7 +1,57 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-07-30 · Faza: kod → test
+Data: 2026-08-04 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Wejście do insightów: tagi-encje + guard stanowisk (PR #99, 2026-08-04)
+
+Punkt wyjścia: ocena mechaniki tagowania i podsumowania na realnej nocie
+(„26-07-30 Koalicja Tech to the Rescue"). Diagnoza: digest dostaje z notatki
+tylko **trzy sygnały** — tagi, sekcję `## Stanowiska` i pierwsze 2400 znaków
+podsumowania — i wszystkie trzy były osłabione u źródła.
+
+**Tagi.** Reguła promptu „maks. 2 słowa" strukturalnie zakazywała
+wielowyrazowych nazw własnych, więc `tech-to-the-rescue` nie miał jak powstać;
+tagger nie widział też glosariusza, mimo że glosariusz JEST listą encji vaulta.
+Nowy prompt (encje > konkretne tematy > jeden szeroki tag, negatywne przykłady
+z realnej wpadki, reuse uzasadniony pasmem df), `known_entities` z
+`VocabularyIndex.canonical_terms_block()`, `existing_tags_ranked()` wg df,
+dyrektywa językowa. Efekt po retagu 180 notatek: pasmo punktujące w digeście
+84 → 94 tagi z df≥2, a jego skład przeszedł z papki procesowej na encje
+(`impact-chat` 20×, `tech-to-the-rescue` 14×, `malinche` 9×, `8-moons` 6×).
+
+**Stanowiska — pętla trucizny domknięta.** Każdy `[[Subject]]` jest zbierany
+przez `vocabulary.py` jako term POTWIERDZONY, więc śmieciowy podmiot
+uwiarygodniał sam siebie: audyt na 95 notatkach pokazał **128 ze 178** podmiotów
+do wyczyszczenia (skala over-bracketowania Haiku jest większa niż „bywa"
+z ryzyk poniżej). Nowy `src/stance_guard.py` — deterministyczny, $0 — zdejmuje
+same nawiasy; linia stanowiska przeżywa, więc kanał sprzeczności nie traci nic.
+Kluczowa decyzja: **wyjątek tylko dla termów CURATED** (`vocabulary.json`) —
+wyjątek na cały glosariusz chroniłby dokładnie tę truciznę, którą guard usuwa.
+
+**Podsumowanie → synteza.** `NoteRef.synthesis_md`: przy przekroczeniu budżetu
+sekcje wg priorytetu zamiast ślepego cięcia; scoring dalej czyta `summary_md`
+bajt w bajt. Do tego tytuł cięty na granicy słowa (tytuł = nazwa pliku) i
+transkrypcja head+tail zamiast samego ogona.
+
+**Runda review (3 recenzentów) złapała dwie rzeczy warte zapamiętania:**
+1. `synthesis_md` wyciąga Stanowiska ze środka podsumowania, a `verdict`
+   czytał head/tail — cytat trafiał w martwą strefę weryfikatora i **prawdziwe
+   połączenie leciało jako „zmyślone"**. Odpalałoby się to dokładnie w buildzie
+   H1 (`tester_mode` włącza `VERDICT_ENABLED`). `_fuller_text` dostaje teraz
+   całą sekcję podsumowania + transkrypcję.
+2. Skrypt retagu składał notatkę od nowa: przy każdym przebiegu dokładał pustą
+   linię, gubił końcowy newline, a przy blokowych tagach zostawiał wiszące
+   pozycje listy (**niepoprawny YAML**). Zdążyło to dotknąć 180 notatek —
+   naprawione w miejscu z backupu (0 różnic poza linią tagów, 0 błędnych YAML-i
+   z tej przyczyny). Skrypt zapisuje teraz przez podmianę w oryginale, robi
+   backup przed każdym zapisem, ma `--dry-run` i przerywa przy błędzie
+   rozliczeniowym.
+
+Znalezione przy okazji, NIE naprawiane (osobny wątek): 3 notatki mają
+niepoprawny YAML sprzed tej sesji — `title:` z zagnieżdżonymi cudzysłowami
+(`title: "Planowanie rozwoju narzędzia "Impact Chat""`) psuje frontmatter.
+Backup vaulta sprzed retagu: `scratchpad/vault-backup-20260804-095539`.
 
 ## Konektor Voice Memos — ingest v2 faza 1 (PR #97, MERGE 2026-07-30)
 
@@ -416,6 +466,10 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
 
 ## Następny krok
 
+0. **PR #99 czeka na merge** — kod gotowy, 1428 testów zielonych, mypy czysty,
+   dwie rundy review. Do rozważenia przy okazji: czyszczenie starych stanowisk
+   w korpusie (deterministyczne, $0 — guard bez API) i 3 notatki z zepsutym
+   `title:`; oba wymagają Twojej zgody, bo dotykają vaulta.
 1. ~~review + merge PR #66~~ — ZROBIONE (merge `4beac40`).
 2. **Protokół A — DOMKNIĘTY 2026-07-18** (drugi Mac, DMG `06d99e9c…`):
    instalacja ✓, wizard+folder ✓, download ✓, import tekstów ✓, audio PL/EN
@@ -449,8 +503,14 @@ pozycjonowania PRO), nie bramką.
   już kill-trigger** (patrz kryterium wyżej), tylko sygnał diagnostyczny:
   zero sprzeczności przez 3 tyg. uruchamia diagnozę toru strukturalnego
   (0/4 slotów) i rozmowę o pozycjonowaniu PRO, nie zamknięcie hipotezy.
-- Haiku bywa za hojny w Stanowiskach (procesy/koncepty jako encje) — szum,
-  nie bloker; docelowe lekarstwo to structured-output (B2).
+- Haiku jest za hojny w Stanowiskach (procesy/koncepty jako encje) — **zmierzone
+  2026-08-04: 128/178 podmiotów to nie encje**, więc nie „bywa". Od PR #99 tnie
+  to deterministyczny `stance_guard` ($0, zdejmuje nawiasy, stanowisko zostaje);
+  logi `stance-subject de-bracketed` są sygnałem dryfu. Structured-output (B2)
+  dalej jest lekarstwem docelowym, ale nie jest już warunkiem czystego sygnału.
+- Stary korpus wciąż niesie śmieciowe wikilinki w Stanowiskach (guard działa na
+  nowych notatkach i przez `resummarize_vault.py`) — glosariusz i kanał encji
+  będą je widzieć do czasu przebudowy korpusu.
 - Słownik uczy się tylko z wikilinków/encji — aliasy przekrętów wymagają
   ręcznego wpisu w vocabulary.json do czasu B1.
 - P3 wdrożone (PR #64) POZA aliasem (patrz Ostatnia decyzja). Dług mypy:
