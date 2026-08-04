@@ -108,8 +108,10 @@ class TestClaudeSummarizer:
         assert "⚡" in result["summary"]
         assert "📝" in result["summary"]
 
-    def test_generate_long_transcript_truncation(self, summarizer, mock_anthropic):
-        """Test that long transcripts are truncated."""
+    def test_generate_long_transcript_truncation(
+        self, summarizer, mock_anthropic, monkeypatch
+    ):
+        """Past the cap, head AND tail survive the window."""
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = (
@@ -118,6 +120,7 @@ class TestClaudeSummarizer:
             "## Lista działań (To-do)\n\n- Task 1"
         )
         mock_anthropic.messages.create.return_value = mock_response
+        monkeypatch.setattr(config, "MAX_SUMMARY_TRANSCRIPT_CHARS", 10_000)
 
         # A long transcript with distinct opening and closing material.
         long_transcript = "POCZATEK AGENDY. " + "A" * 20000 + " KONIEC DECYZJE."
@@ -134,6 +137,53 @@ class TestClaudeSummarizer:
         # carries the decisions. Keeping only the tail lost the former.
         assert "POCZATEK AGENDY" in prompt_text
         assert "KONIEC DECYZJE" in prompt_text
+
+    def test_meeting_length_transcript_is_read_in_full(
+        self, summarizer, mock_anthropic
+    ):
+        """The regression this cap exists for.
+
+        Measured on a real 3h11m meeting (182k chars): at the old 10k cap the
+        summarizer read 5.5% of the recording — the last ten minutes — and the
+        summary named none of the modules, numbers or decisions the meeting was
+        about. The middle must now reach the model.
+        """
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = (
+            "TITLE: Test\n\nSUMMARY: ## Podsumowanie\n\nTest\n\n"
+            "## Lista działań (To-do)\n\n- Task 1"
+        )
+        mock_anthropic.messages.create.return_value = mock_response
+
+        transcript = (
+            "POCZATEK AGENDY. "
+            + "A" * 90_000
+            + " SRODEK: model myta i planer tygodniowy. "
+            + "B" * 90_000
+            + " KONIEC DECYZJE."
+        )
+        assert len(transcript) > 180_000  # a real 3h meeting, in chars
+        summarizer.generate(transcript)
+
+        prompt_text = mock_anthropic.messages.create.call_args[1]["messages"][0][
+            "content"
+        ]
+        assert "SRODEK: model myta i planer tygodniowy." in prompt_text
+        assert "\n[...]\n" not in prompt_text  # no window applied at all
+
+    def test_request_has_headroom_for_a_long_meeting(self, summarizer, mock_anthropic):
+        """A full-length transcript needs a bigger answer and a longer wait."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = "TITLE: T\n\nSUMMARY: ## Podsumowanie\n\nX"
+        mock_anthropic.messages.create.return_value = mock_response
+
+        summarizer.generate("krótka transkrypcja")
+
+        kwargs = mock_anthropic.messages.create.call_args[1]
+        assert kwargs["max_tokens"] >= 8192
+        assert kwargs["timeout"] >= 180.0
 
     def test_generate_api_error_fallback(self, summarizer, mock_anthropic):
         """Test fallback when API call fails."""
@@ -705,3 +755,45 @@ class TestTranscriptTruncation:
 
         text = "krótka transkrypcja"
         assert _truncate_transcript(text, 10_000) == text
+
+
+class TestTranscriptCoverage:
+    """How much of the recording the summary actually describes."""
+
+    def test_full_when_it_fits(self):
+        from src.summarizer import transcript_coverage
+
+        assert transcript_coverage("x" * 5_000, 10_000) == 1.0
+        assert transcript_coverage("x" * 10_000, 10_000) == 1.0
+        assert transcript_coverage("", 10_000) == 1.0  # no division by zero
+
+    def test_fraction_when_windowed(self):
+        from src.summarizer import transcript_coverage
+
+        # The measured case: 182k chars of meeting read through a 10k window.
+        assert transcript_coverage("x" * 182_000, 10_000) == pytest.approx(
+            0.055, abs=1e-3
+        )
+
+    def test_cap_is_configurable_and_provider_specific(self, monkeypatch):
+        """OpenAI is the migration path and has a smaller context window."""
+        from src.summarizer import OpenAISummarizer
+
+        monkeypatch.setattr(config, "MAX_SUMMARY_TRANSCRIPT_CHARS", 400_000)
+        monkeypatch.setattr(config, "MAX_SUMMARY_TRANSCRIPT_CHARS_OPENAI", 250_000)
+
+        with patch("src.summarizer.build_anthropic_client"):
+            claude = ClaudeSummarizer(api_key="k", model="claude-test")
+        assert claude.transcript_cap == 400_000
+
+        with patch.object(OpenAISummarizer, "__init__", lambda self: None):
+            openai_summarizer = OpenAISummarizer()
+        assert openai_summarizer.transcript_cap == 250_000
+
+    def test_cap_reads_live_config(self, monkeypatch):
+        """A settings hot-reload must move the cap, not a captured copy."""
+        with patch("src.summarizer.build_anthropic_client"):
+            summarizer = ClaudeSummarizer(api_key="k", model="claude-test")
+
+        monkeypatch.setattr(config, "MAX_SUMMARY_TRANSCRIPT_CHARS", 12_345)
+        assert summarizer.transcript_cap == 12_345

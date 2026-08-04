@@ -23,6 +23,7 @@ from src.summarizer import (
     _is_permanent_api_error,
     get_summarizer,
     is_fallback_summary,
+    transcript_coverage,
 )
 from src.markdown_generator import MarkdownGenerator
 from src.app_status import AppStatus
@@ -1146,6 +1147,36 @@ class Transcriber:
 
         return any(marker in stderr for marker in self._COREML_FAIL_MARKERS)
 
+    def _summary_coverage(
+        self, transcript_text: str, summarized_by_llm: bool
+    ) -> Optional[float]:
+        """Fraction of the recording the summary describes, or None when full.
+
+        Measured on a real 3h11m meeting: the summarizer read the last 5.5% of
+        it and produced a summary that named none of the material the meeting
+        was actually about. The cap is now high enough that this is rare, but
+        "rare" is not "never" — so a partial summary says so in the note
+        instead of passing for a complete one.
+
+        None (no frontmatter key) means there is no window to warn about: the
+        whole transcript was read, or no LLM summary exists at all (empty
+        recording, AI disabled, fallback summary) — a fallback note describes
+        nothing, so a coverage number would be a lie of a different kind.
+
+        A summarizer that cannot state its cap also yields None. This flag is a
+        cosmetic honesty marker; it must never be the reason a transcription
+        fails to be written.
+        """
+        if not summarized_by_llm or not self.summarizer:
+            return None
+        cap = getattr(self.summarizer, "transcript_cap", None)
+        if not isinstance(cap, int) or cap <= 0:
+            return None
+        coverage = transcript_coverage(transcript_text, cap)
+        if coverage >= 1.0:
+            return None
+        return round(coverage, 3)
+
     def _canonicalize_aliases(
         self, summary: dict, transcript_text: str, known_terms: str
     ) -> dict:
@@ -1562,6 +1593,7 @@ class Transcriber:
             transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
 
         summary = None
+        summarized_by_llm = False
         if empty_transcript:
             summary = {
                 "title": fallback_title,
@@ -1575,6 +1607,7 @@ class Transcriber:
                     transcript_text,
                     known_terms_block=known_terms,
                 )
+                summarized_by_llm = True
                 summary = self._canonicalize_aliases(
                     summary, transcript_text, known_terms
                 )
@@ -1641,6 +1674,12 @@ Brak podsumowania AI. Możliwe przyczyny:
             "transcribed_on": get_hostname(),
             "previous_version": previous_version or "",
         }
+        # Honesty about scope: only written when the summarizer read a window
+        # rather than the whole recording, so the 99% of notes that fit stay
+        # clean and the rare over-long one cannot pass as a full summary.
+        coverage = self._summary_coverage(transcript_text, summarized_by_llm)
+        if coverage is not None:
+            frontmatter["summary_coverage"] = coverage
         frontmatter.update(extra_frontmatter or {})
 
         logger.info("📄 Creating markdown document...")

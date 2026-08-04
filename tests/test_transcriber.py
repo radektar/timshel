@@ -2227,3 +2227,57 @@ def test_filehandler_uses_utf8_encoding():
         "setup_logger.FileHandler musi używać encoding='utf-8' "
         "żeby emoji w logach nie gubiły linii w py2app environment."
     )
+
+
+class TestSummaryCoverage:
+    """``summary_coverage`` is an honesty flag, not telemetry."""
+
+    class _Summarizer(BaseSummarizer):
+        def __init__(self, cap: int) -> None:
+            self._cap = cap
+
+        @property
+        def transcript_cap(self) -> int:
+            return self._cap
+
+        def generate(self, transcript, known_terms_block="", correction=""):
+            return {"title": "T", "summary": "## Podsumowanie\n\nX"}
+
+    def test_absent_when_the_whole_recording_was_read(self, transcriber):
+        transcriber.summarizer = self._Summarizer(cap=400_000)
+
+        assert transcriber._summary_coverage("x" * 182_000, True) is None
+
+    def test_reported_when_windowed(self, transcriber):
+        """The measured case: 182k chars of meeting through a 10k window."""
+        transcriber.summarizer = self._Summarizer(cap=10_000)
+
+        assert transcriber._summary_coverage("x" * 182_000, True) == 0.055
+
+    def test_absent_for_a_fallback_summary(self, transcriber):
+        """A fallback note describes nothing — a coverage number would imply
+        it described 5% of the recording, which is a different lie."""
+        transcriber.summarizer = self._Summarizer(cap=10_000)
+
+        assert transcriber._summary_coverage("x" * 182_000, False) is None
+
+    def test_absent_without_a_summarizer(self, transcriber):
+        transcriber.summarizer = None
+
+        assert transcriber._summary_coverage("x" * 182_000, True) is None
+
+    def test_summarizer_without_a_cap_yields_no_claim(self, transcriber):
+        """The flag must never be the reason a transcription fails to write.
+
+        Reaching for ``transcript_cap`` on a summarizer that doesn't expose one
+        raised inside note assembly and took the whole note down with it — a
+        cosmetic frontmatter field killing the actual product.
+        """
+
+        class _NoCap:
+            def generate(self, transcript, known_terms_block="", correction=""):
+                return {"title": "T", "summary": "X"}
+
+        transcriber.summarizer = _NoCap()
+
+        assert transcriber._summary_coverage("x" * 182_000, True) is None

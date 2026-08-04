@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     from mutagen import File as MutagenFile
@@ -141,7 +141,7 @@ class MarkdownGenerator:
         metadata: Dict[str, str],
         output_dir: Path,
         tags: Optional[List[str]] = None,
-        extra_frontmatter: Optional[Dict[str, str]] = None,
+        extra_frontmatter: Optional[Dict[str, Any]] = None,
         output_filename: Optional[str] = None,
     ) -> Path:
         """Create markdown document from transcript and metadata.
@@ -190,6 +190,15 @@ class MarkdownGenerator:
             if extra_frontmatter.get("origin"):
                 provenance_line += f"\norigin: {extra_frontmatter['origin']}"
 
+        # Written ONLY when the summarizer read a window instead of the whole
+        # recording, so the ordinary note's frontmatter stays byte-identical
+        # and the key's presence is itself the warning.
+        coverage_line = ""
+        if extra_frontmatter.get("summary_coverage") is not None:
+            coverage_line = (
+                f"\nsummary_coverage: {extra_frontmatter['summary_coverage']}"
+            )
+
         # Fill template. Values are substituted VERBATIM — str.format() never
         # re-parses substituted values, only the (code-owned) template — so no
         # escaping is needed. The old brace-doubling "escape" here actively
@@ -207,6 +216,7 @@ class MarkdownGenerator:
             language=extra_frontmatter.get("language", ""),
             previous_version_line=previous_version_line,
             provenance_line=provenance_line,
+            coverage_line=coverage_line,
             duration=metadata["duration_formatted"],
             tags=tags_str,
             summary=summary.get("summary", "Brak podsumowania."),

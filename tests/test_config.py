@@ -105,7 +105,11 @@ def test_config_tagging_defaults(monkeypatch):
     assert cfg.MAX_TAGS_PER_NOTE == 6
     assert cfg.MAX_EXISTING_TAGS_IN_PROMPT == 150
     assert cfg.MAX_TAGGER_SUMMARY_CHARS == 3000
-    assert cfg.MAX_TAGGER_TRANSCRIPT_CHARS == 1500
+    # head+tail, so the tagger reads 8000 chars of a long recording.
+    assert cfg.MAX_TAGGER_TRANSCRIPT_CHARS == 4000
+    # A 3h meeting is ~182k chars; the summarizer must read it whole.
+    assert cfg.MAX_SUMMARY_TRANSCRIPT_CHARS == 400_000
+    assert cfg.MAX_SUMMARY_TRANSCRIPT_CHARS_OPENAI == 250_000
 
 
 def test_config_disables_tagging_when_summarization_off(monkeypatch):

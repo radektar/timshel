@@ -157,3 +157,41 @@ def test_imported_note_is_indexed_for_dedup(transcriber, tmp_path):
     doc = parse(src)
     fp = text_fingerprint(doc.text, doc.source_name)
     assert transcriber.vault_index.lookup(fp) is not None
+
+
+def test_coverage_key_reaches_the_note(transcriber, tmp_path, monkeypatch):
+    """Wiring: computed in the transcriber, rendered by the template.
+
+    The frontmatter template only renders keys it knows by name — an unknown
+    key in ``extra_frontmatter`` is silently dropped. So the flag is asserted
+    end-to-end on a real note, not just at either end.
+    """
+    from src.summarizer import BaseSummarizer
+
+    class _Windowed(BaseSummarizer):
+        @property
+        def transcript_cap(self) -> int:
+            return 40
+
+        def generate(self, transcript, known_terms_block="", correction=""):
+            return {"title": "Ucięte", "summary": "## Podsumowanie\n\nX"}
+
+    transcriber.summarizer = _Windowed()
+
+    src = tmp_path / "dluga.txt"
+    src.write_text("z" * 400, encoding="utf-8")
+    assert transcriber.import_text_file(src) is True
+
+    body = _vault_notes(transcriber)[0].read_text(encoding="utf-8")
+    assert "summary_coverage: 0.1" in body
+
+
+def test_no_coverage_key_on_an_ordinary_note(transcriber, tmp_path):
+    """The fallback path (no summarizer) must not claim a coverage figure."""
+    src = tmp_path / "zwykla.txt"
+    src.write_text("Krótka notatka o niczym.", encoding="utf-8")
+
+    assert transcriber.import_text_file(src) is True
+    assert "summary_coverage" not in _vault_notes(transcriber)[0].read_text(
+        encoding="utf-8"
+    )
