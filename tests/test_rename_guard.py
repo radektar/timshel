@@ -28,6 +28,9 @@ _ALLOWLIST = {
     # skip the old ``.malinche`` sidecar when walking a migrated vault.
     "connections/candidate_assembly.py",
     "menu_app.py",
+    # Same back-compat marker, same reason: the glossary must not harvest a
+    # stray pre-rename digest sitting at the vault's top level.
+    "vocabulary.py",
 }
 
 _MALINCHE = re.compile(r"malinche", re.IGNORECASE)

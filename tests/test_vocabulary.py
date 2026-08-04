@@ -210,3 +210,56 @@ class TestFindAliasHits:
     def test_disabled_switch_reports_nothing(self, idx, monkeypatch):
         monkeypatch.setattr(config, "VOCABULARY_ENABLED", False)
         assert idx.find_alias_hits("Strategia TekTutoreski rośnie.") == []
+
+
+class TestHarvestScope:
+    """What the app writes about itself is never a glossary term."""
+
+    def test_digest_subfolder_is_not_harvested(self, vault):
+        """A digest is made of [[note basename]] links.
+
+        Harvesting it put 73 note FILENAMES into a real vault's glossary —
+        which then biased whisper's decoding prompt and the summarizer's
+        KNOWN TERMS block toward filenames.
+        """
+        _note(vault, "real.md", "Rozmowa o [[Impact Chat]] i planach.")
+        digests = vault / config.DIGEST_DIR_NAME
+        digests.mkdir()
+        (digests / "2026-06-25 Synthesis.md").write_text(
+            "---\ntype: timshel-digest\n---\n\n"
+            "Łączy [[26-06-03 - Przygotowania do Eight Moons - okna]] "
+            "z [[26-07-01 - Zmiana nazwy projektu]].\n",
+            encoding="utf-8",
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert not [t for t in terms if t.startswith("26-")]
+
+    def test_sidecar_backups_are_not_harvested(self, vault):
+        """.timshel holds pre-migration COPIES — harvesting them double-counts
+        every term and resurrects ones the vault has since dropped."""
+        _note(vault, "real.md", "Notatka o [[Impact Chat]].")
+        backup = vault / ".timshel" / "resummarize-backup" / "20260707"
+        backup.mkdir(parents=True)
+        (backup / "old.md").write_text(
+            "Stara kopia o [[Nieaktualny Term]].\n", encoding="utf-8"
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert "nieaktualny term" not in terms
+
+    def test_stray_top_level_digest_is_skipped(self, vault):
+        _note(vault, "real.md", "Notatka o [[Impact Chat]].")
+        (vault / "stray.md").write_text(
+            "---\ntype: timshel-digest\n---\n\nŁączy [[26-06-03 - Cos tam]].\n",
+            encoding="utf-8",
+        )
+
+        terms = VocabularyIndex(vault).build()
+
+        assert "impact chat" in terms
+        assert not [t for t in terms if t.startswith("26-")]

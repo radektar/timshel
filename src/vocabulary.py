@@ -29,6 +29,14 @@ Harvesting stops at the ``## Transkrypcja`` / ``## Transcript`` heading of
 each note: the raw transcript below it is exactly where the mangled forms
 live, and a glossary that learns "TekTutoreski" would defeat its purpose.
 
+It also stops at the vault's TOP LEVEL. The subfolders hold what the app
+itself wrote — digests, recall notes, pre-migration backups — and a digest is
+made of ``[[note basename]]`` links, so harvesting it fed the glossary 73 note
+FILENAMES (measured on a real vault), which then biased whisper's decoding and
+the summarizer's KNOWN TERMS block. Same rule as everywhere else in this
+codebase: metadata the app writes about itself is never a signal from the
+user.
+
 The vocabulary GROWS with the vault: every new note's wikilinks widen the
 glossary used for the next recording. That flywheel — a personal dictionary
 no generic transcriber has — is a core product value, not an implementation
@@ -50,6 +58,11 @@ from src.logger import logger
 # Everything below this heading is raw transcript — never harvest from it.
 _TRANSCRIPT_HEADING_RE = re.compile(
     r"^##\s+(Transkrypcja|Transcript)\s*$", re.MULTILINE
+)
+# A generated digest, by frontmatter type (the pre-rename marker included, as
+# in candidate_assembly.load_corpus).
+_DIGEST_TYPE_RE = re.compile(
+    r"^type:\s*(timshel-digest|malinche-digest)\s*$", re.MULTILINE
 )
 
 # Terms shorter than this (display form) are dropped as noise.
@@ -131,16 +144,26 @@ class VocabularyIndex:
                     term.aliases.append(alias)
 
     def _harvest_vault(self) -> None:
-        """Layers 2+3: wikilink targets and recurring capitalised runs."""
+        """Layers 2+3: wikilink targets and recurring capitalised runs.
+
+        Top-level notes only, matching
+        :func:`src.connections.candidate_assembly.load_corpus`. See the module
+        docstring: the subfolders are the app's own output, and harvesting them
+        turned note filenames into glossary terms.
+        """
         root = self.root_dir
         if not root or not root.exists():
             logger.debug("VocabularyIndex root missing: %s", root)
             return
-        for md_path in root.rglob("*.md"):
+        for md_path in sorted(root.glob("*.md")):
             try:
                 text = md_path.read_text(encoding="utf-8")
             except OSError as exc:
                 logger.warning("Could not read %s for vocabulary: %s", md_path, exc)
+                continue
+            if _DIGEST_TYPE_RE.search(text[:400]):
+                # A stray digest at top level (a migrated vault can hold one)
+                # would poison exactly the same way as one in the subfolder.
                 continue
             self._harvest_note(text)
 
@@ -303,9 +326,9 @@ def strip_quotes_section(summary_md: str) -> str:
     if match is None:
         return summary_md
     head = summary_md[: match.start()]
-    rest = summary_md[match.start():]
+    rest = summary_md[match.start() :]
     next_section = re.search(r"\n##\s+(?!#)", rest[3:])
-    tail = rest[3 + next_section.start():] if next_section else ""
+    tail = rest[3 + next_section.start() :] if next_section else ""
     return head + tail
 
 
