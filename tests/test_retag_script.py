@@ -96,7 +96,7 @@ def test_only_filters_by_filename(retagger, tmp_path):
 
 
 def test_tagger_gets_glossary_and_ranked_tags(retagger, tmp_path):
-    """Same inputs as the production path (transcriber._summarize_and_render)."""
+    """Same inputs as the production path (Transcriber._finalize_note)."""
     _note(tmp_path / "a.md")
 
     runner = retagger(force=True)
@@ -107,3 +107,96 @@ def test_tagger_gets_glossary_and_ranked_tags(retagger, tmp_path):
     assert "known_entities" in kwargs
     assert expected_tags == runner.tag_index.existing_tags_ranked()
     assert kwargs["existing_tags"][: len(expected_tags)] == expected_tags
+
+
+class TestByteFaithfulRewrite:
+    """The rewriter runs over the user's whole vault — it must not deform notes."""
+
+    def test_only_the_tags_line_changes(self, retagger, retag_module, tmp_path):
+        """The old rewriter re-assembled the note: it injected a blank line
+        after the frontmatter and dropped the trailing newline, on EVERY run."""
+        note = tmp_path / "a.md"
+        _note(note)
+        before = note.read_text(encoding="utf-8")
+
+        retagger(force=True).run()
+        after = note.read_text(encoding="utf-8")
+
+        assert after != before
+        assert after.endswith("\n") and not after.endswith("\n\n\n")
+        expected = retag_module.replace_tags(before, ["transcription", "nowy-tag"])
+        assert after == expected
+        # Everything outside the tags line is byte-identical.
+        diff = [
+            (a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b
+        ]
+        assert len(diff) == 1 and diff[0][0].startswith("tags:")
+
+    def test_rewrite_is_idempotent(self, retagger, tmp_path):
+        """Re-running must not accumulate blank lines."""
+        _note(tmp_path / "a.md")
+        retagger(force=True).run()
+        once = (tmp_path / "a.md").read_text(encoding="utf-8")
+        retagger(force=True).run()
+        twice = (tmp_path / "a.md").read_text(encoding="utf-8")
+
+        assert once == twice
+
+    def test_block_style_tags_are_preserved(self, retagger, retag_module, tmp_path):
+        """Obsidian's property editor writes a block list; rewriting it as an
+        inline line left the old items dangling — invalid YAML in the vault."""
+        note = tmp_path / "block.md"
+        note.write_text(
+            "---\ntitle: n\ndate: 2026-06-20\ntags:\n  - transcription\n  - stary\n---\n\n"
+            "## Podsumowanie\n\nTreść.\n\n## Transkrypcja\nTranskrypcja.\n",
+            encoding="utf-8",
+        )
+
+        assert retag_module.parse_tags(note.read_text(encoding="utf-8")) == [
+            "transcription",
+            "stary",
+        ]
+
+        retagger(force=True).run()
+        after = note.read_text(encoding="utf-8")
+
+        assert "tags:\n  - transcription\n  - nowy-tag\n---" in after
+        assert "tags: [" not in after
+        assert "  - stary" not in after
+
+    def test_dry_run_writes_nothing(self, retagger, tmp_path):
+        _note(tmp_path / "a.md")
+        before = (tmp_path / "a.md").read_text(encoding="utf-8")
+
+        runner = retagger(force=True, dry_run=True)
+        runner.run()
+
+        assert runner.updated == 1
+        assert (tmp_path / "a.md").read_text(encoding="utf-8") == before
+        assert not runner.backup_dir.exists()
+
+    def test_original_is_backed_up_before_the_write(self, retagger, tmp_path):
+        _note(tmp_path / "a.md")
+        before = (tmp_path / "a.md").read_text(encoding="utf-8")
+
+        runner = retagger(force=True)
+        runner.run()
+
+        assert (runner.backup_dir / "a.md").read_text(encoding="utf-8") == before
+
+    def test_billing_error_aborts_instead_of_walking_the_vault(
+        self, retagger, retag_module, tmp_path
+    ):
+        """A dead key must stop the run, not log one error per note and
+        report 'finished'."""
+        for name in ("a.md", "b.md"):
+            _note(tmp_path / name)
+        runner = retagger(force=True)
+        runner.tagger.generate_tags.side_effect = retag_module.APIBillingError(
+            "no credits"
+        )
+
+        with pytest.raises(retag_module.APIBillingError):
+            runner.run()
+
+        assert runner.tagger.generate_tags.call_count == 1

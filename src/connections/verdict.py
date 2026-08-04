@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from src.config import config
 from src.connections.candidate_assembly import (
+    _TRANSCRIPT_MARKER,
     NoteRef,
     _body_after_frontmatter,
     _excerpt,
@@ -114,6 +115,14 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
     circular. We take the whole body after the frontmatter (summary AND
     transcript) and bound it head/tail. Falls back to the summary only when the
     file can't be re-read.
+
+    CONTAINMENT: whatever synthesis could see, the verifier must also see.
+    Synthesis reads ``synthesis_md``, which lifts Stanowiska / Wątki otwarte
+    out of the MIDDLE of a long summary — a plain head/tail excerpt of the body
+    can drop exactly those lines into the blind gap, and a quote the verifier
+    cannot find is judged FABRICATED and the connection is dropped. So the
+    summary block goes in whole (it is small and already bounded by the
+    summarizer), and the transcript fills whatever budget is left.
     """
     try:
         full = note.md_path.read_text(encoding="utf-8")
@@ -122,7 +131,19 @@ def _fuller_text(note: NoteRef, max_chars: int) -> str:
             "verdict: cannot re-read %s (%s); using summary", note.md_path, exc
         )
         return note.summary_md
-    return _excerpt(_body_after_frontmatter(full).strip(), max_chars)
+
+    body = _body_after_frontmatter(full).strip()
+    if _TRANSCRIPT_MARKER not in body:
+        return _excerpt(body, max_chars)
+
+    summary_block, marker, transcript = body.partition(_TRANSCRIPT_MARKER)
+    summary_block = summary_block.strip()
+    if not summary_block:
+        return _excerpt(body, max_chars)
+
+    # _excerpt keeps head+tail of max_chars each, so the transcript's own
+    # budget is unchanged; only the summary is now guaranteed complete.
+    return f"{summary_block}\n\n{marker}{_excerpt(transcript, max_chars)}"
 
 
 def _build_user_prompt(

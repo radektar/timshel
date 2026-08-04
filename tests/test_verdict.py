@@ -99,6 +99,44 @@ def test_fuller_text_reads_file_and_falls_back(tmp_path):
     assert vd._fuller_text(note_missing, 4000) == "FALLBACK"
 
 
+def test_fuller_text_contains_everything_synthesis_could_quote(tmp_path):
+    """Containment: the verifier must see whatever the synthesis prompt saw.
+
+    synthesis_md lifts Stanowiska out of the MIDDLE of a long summary. With a
+    plain head/tail excerpt of the body, that line falls into the verifier's
+    blind gap — and a quote it cannot find is judged FABRICATED, so a real
+    connection gets dropped. This fires in the H1 build, where tester_mode
+    turns the verdict pass on.
+    """
+    from src.connections.candidate_assembly import load_corpus
+
+    # Podsumowanie fits the 2400-char budget on its own; the two together do
+    # not — so the blind prefix cut ends inside Kluczowe punkty and never
+    # reaches the stance, while the priority view keeps it.
+    summary = (
+        "## Podsumowanie\n\n"
+        + ("Treść podsumowania. " * 110)
+        + "\n## Kluczowe punkty\n\n"
+        + ("- punkt do omówienia\n" * 20)
+        + "\n## Stanowiska\n\n- [[Fundacja Ziemi]] ✅ STANCE-NEEDLE\n"
+    )
+    md = tmp_path / "long.md"
+    md.write_text(
+        '---\ntitle: "long"\ndate: 2026-06-20\ntags: []\n---\n\n'
+        + summary
+        + "\n## Transkrypcja\n"
+        + ("slowo " * 4000),
+        encoding="utf-8",
+    )
+
+    note = load_corpus(tmp_path)[0]
+    fuller = vd._fuller_text(note, config.VERDICT_MAX_NOTE_CHARS)
+
+    assert "STANCE-NEEDLE" in note.synthesis_md  # synthesis sees it...
+    assert "STANCE-NEEDLE" in fuller  # ...so the verifier must too
+    assert "slowo" in fuller  # transcript still there (anti-circularity)
+
+
 def test_get_verifier_gated_by_config(monkeypatch):
     monkeypatch.setattr(config, "VERDICT_ENABLED", False)
     assert vd.get_verifier() is None

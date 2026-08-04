@@ -65,9 +65,23 @@ _PARTICLES = {
     "on",
     "a",
     "an",
+    # Name particles. Without these, "Maria de la Cruz" reads as "a lowercase
+    # content word follows" and gets de-bracketed — and a person's name is
+    # reachable by the entity channel ONLY via its wikilink (capitalised-run
+    # harvesting skips lowercase connectors), so that loses it entirely.
     "de",
+    "del",
+    "della",
+    "di",
+    "da",
+    "du",
+    "el",
+    "la",
+    "le",
     "van",
     "von",
+    "der",
+    "den",
 }
 
 # Single words that are generic by definition — no recording is "about" them.

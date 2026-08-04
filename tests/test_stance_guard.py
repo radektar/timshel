@@ -64,6 +64,8 @@ class TestJunkDetection:
             "TekTutoreski",  # mangled proper name (internal capital)
             "TTTR",  # acronym
             "Digitakt",
+            "Maria de la Cruz",  # name particles are not content words
+            "Ludwig van Beethoven",
         ],
     )
     def test_keeps_named_entities(self, subject):

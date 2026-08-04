@@ -273,7 +273,10 @@ def _synthesis_view(summary_md: str, budget: int) -> str:
     if not matches:
         return summary_md[:budget]
 
-    preamble = summary_md[: matches[0].start()]
+    # Clipped, not just counted: a note that opens with a wall of text before
+    # its first heading (hand-written or imported) would otherwise be emitted
+    # in full and blow the budget by its own length.
+    preamble = summary_md[: matches[0].start()][:budget]
     blocks: List[tuple] = []
     for idx, match in enumerate(matches):
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(summary_md)

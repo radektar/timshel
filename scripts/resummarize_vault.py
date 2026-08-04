@@ -284,7 +284,7 @@ def main() -> int:
                 result = retry
                 misses = find_alias_misses(new_summary, vocab)
 
-        # Parity with the production path (transcriber._summarize_and_render):
+        # Parity with the production path (Transcriber._finalize_note):
         # aliases first, then the deterministic stance-subject guard, so the
         # rebuilt corpus carries the same clean wikilinks as new notes.
         new_summary = guard_stance_subjects(new_summary, vocab)

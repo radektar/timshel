@@ -169,9 +169,11 @@ def _truncate_transcript(transcript: str, max_chars: int = 10000) -> str:
     """
     if len(transcript) <= max_chars:
         return transcript
-    head_chars = max_chars * 3 // 10
-    tail_chars = max_chars - head_chars
-    return f"{transcript[:head_chars]}\n[...]\n{transcript[-tail_chars:]}"
+    separator = "\n[...]\n"
+    budget = max_chars - len(separator)  # the marker is part of the bound
+    head_chars = budget * 3 // 10
+    tail_chars = budget - head_chars
+    return f"{transcript[:head_chars]}{separator}{transcript[-tail_chars:]}"
 
 
 class APIBillingError(Exception):

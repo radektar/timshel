@@ -59,7 +59,9 @@ class ClaudeTagger(BaseTagger):
             logger.debug("LLM tagging disabled; skipping tag generation.")
             return []
 
-        summary_snippet = self._truncate(summary_markdown, config.MAX_TAGGER_SUMMARY_CHARS)
+        summary_snippet = self._truncate(
+            summary_markdown, config.MAX_TAGGER_SUMMARY_CHARS
+        )
         transcript_snippet = self._build_transcript_snippet(
             transcript,
             config.MAX_TAGGER_TRANSCRIPT_CHARS,
@@ -73,7 +75,9 @@ class ClaudeTagger(BaseTagger):
         )
 
         try:
-            logger.debug("Calling Claude API for tag generation (model: %s)", self.model)
+            logger.debug(
+                "Calling Claude API for tag generation (model: %s)", self.model
+            )
             # Low temperature: tag choice is near-mechanical (name what is
             # there, reuse an existing tag when it fits). Reasoning models
             # (Opus 4.x) reject `temperature` — omit it there, as in the
@@ -282,9 +286,7 @@ def get_tagger() -> Optional[BaseTagger]:
         return None
 
     try:
-        return ClaudeTagger(
-            api_key=config.LLM_API_KEY, model=resolve_model("tags")
-        )
+        return ClaudeTagger(api_key=config.LLM_API_KEY, model=resolve_model("tags"))
     except ImportError:
         logger.error(
             "anthropic package not installed. Install via `pip install anthropic`."
@@ -293,4 +295,3 @@ def get_tagger() -> Optional[BaseTagger]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to initialize ClaudeTagger: %s", exc)
         return None
-
