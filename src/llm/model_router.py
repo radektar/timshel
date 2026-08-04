@@ -8,6 +8,12 @@ pipeline (summary / tags / synthesis / judge). A stage reads its own
 This keeps the model choice for the *synthesis* stage (the differentiating,
 quality-sensitive step) independent from the cheap summary/tag stages, and
 lets an eval pick the winner (Opus 4.8 vs Sonnet 4.6) without touching code.
+
+``"judge"`` is declared but has no production consumer: the alias judge
+(:func:`src.vocabulary.find_alias_misses`) and the stance-subject guard
+(:mod:`src.stance_guard`) are both deterministic, and the e2e quality judge
+pins its own model in the test file. The stage stays reserved for the day a
+real LLM judge lands in the pipeline.
 """
 
 from __future__ import annotations

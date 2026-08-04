@@ -213,6 +213,7 @@ def main() -> int:
         OpenAISummarizer,
         is_fallback_summary,
     )
+    from src.stance_guard import guard_stance_subjects  # noqa: E402
     from src.vocabulary import VocabularyIndex, find_alias_misses  # noqa: E402
 
     load_env_file()  # OPENAI_API_KEY / ANTHROPIC_API_KEY from .env
@@ -282,6 +283,11 @@ def main() -> int:
                 new_summary = retry_summary
                 result = retry
                 misses = find_alias_misses(new_summary, vocab)
+
+        # Parity with the production path (transcriber._summarize_and_render):
+        # aliases first, then the deterministic stance-subject guard, so the
+        # rebuilt corpus carries the same clean wikilinks as new notes.
+        new_summary = guard_stance_subjects(new_summary, vocab)
 
         rebuilt = rebuild_note(frontmatter, new_summary, transcript_block)
         has_stances = "## Stanowiska" in new_summary or "## Stances" in new_summary

@@ -1,6 +1,7 @@
 """Utilities for indexing existing tags from markdown files."""
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 import re
@@ -22,6 +23,9 @@ class TagIndex:
 
     root_dir: Optional[Path] = None
     _index: Optional[Dict[str, str]] = None
+    # How many notes carry each normalized tag. Filled by build_index; drives
+    # existing_tags_ranked so the prompt cap keeps the *reusable* tags.
+    _df: Counter = field(default_factory=Counter)
 
     def __post_init__(self) -> None:
         """Set default root directory."""
@@ -77,6 +81,7 @@ class TagIndex:
             return self._index
 
         self._index = {}
+        self._df = Counter()
         root = self.root_dir
         if not root or not root.exists():
             logger.debug("TagIndex root directory missing: %s", root)
@@ -100,6 +105,7 @@ class TagIndex:
                                 inner = tags_value[1:-1]
                             else:
                                 inner = tags_value
+                            seen_here: Set[str] = set()
                             for raw_tag in inner.split(","):
                                 cleaned = raw_tag.strip().strip('"').strip("'")
                                 if not cleaned:
@@ -109,6 +115,10 @@ class TagIndex:
                                     continue
                                 normalized = sanitized
                                 self._index.setdefault(normalized, sanitized)
+                                # Document frequency: notes, not occurrences.
+                                if normalized not in seen_here:
+                                    seen_here.add(normalized)
+                                    self._df[normalized] += 1
                             break
                         if stripped == "---" and frontmatter_started:
                             # End of frontmatter
@@ -125,6 +135,23 @@ class TagIndex:
     def existing_tags(self, force_refresh: bool = False) -> List[str]:
         """Return original tags from index."""
         return list(self.build_index(force_refresh).values())
+
+    def existing_tags_ranked(self, force_refresh: bool = False) -> List[str]:
+        """Existing tags ordered by document frequency, most-used first.
+
+        The tagger prompt is capped (``MAX_EXISTING_TAGS_IN_PROMPT``), and in
+        scan order that cap keeps whichever tags ``rglob`` happened to reach
+        first. Frequency order makes the cap keep the tags that can actually
+        connect notes: connection scoring only counts a tag inside the
+        ``2 <= df < ubiquity_cut`` band (``src/connections/candidate_assembly.py``),
+        so a one-off tag is worth nothing downstream and a reused one is worth
+        the most.
+        """
+        index = self.build_index(force_refresh)
+        return sorted(
+            index.values(),
+            key=lambda tag: (-self._df[tag], tag),
+        )
 
     def existing_normalized(self, force_refresh: bool = False) -> Set[str]:
         """Return normalized tags from index."""

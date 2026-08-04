@@ -108,6 +108,26 @@ class TestViews:
         block = VocabularyIndex(vault).known_terms_block()
         assert "- Tech to the Rescue (aliases: TTTR)" in block
 
+    def test_canonical_terms_block_omits_aliases(self, vault):
+        """The tagger runs on canonicalised text — aliases are noise there."""
+        malinche = vault / ".timshel"
+        malinche.mkdir()
+        (malinche / "vocabulary.json").write_text(
+            json.dumps(
+                {"terms": [{"canonical": "Tech to the Rescue", "aliases": ["TTTR"]}]}
+            ),
+            encoding="utf-8",
+        )
+        block = VocabularyIndex(vault).canonical_terms_block()
+        assert "- Tech to the Rescue" in block
+        assert "TTTR" not in block
+        assert "aliases" not in block
+
+    def test_canonical_terms_block_honours_master_switch(self, vault, monkeypatch):
+        _note(vault, "a.md", "Notatka o [[Haetta]].")
+        monkeypatch.setattr(config, "VOCABULARY_ENABLED", False)
+        assert VocabularyIndex(vault).canonical_terms_block() == ""
+
     def test_whisper_prompt_includes_acronym_alias_and_respects_cap(
         self, vault, monkeypatch
     ):

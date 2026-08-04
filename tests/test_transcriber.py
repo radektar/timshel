@@ -785,6 +785,114 @@ def test_postprocess_transcript_passes_tags(monkeypatch, tmp_path, transcriber):
     assert kwargs["tags"][0] == "transcription"
 
 
+def test_tagger_receives_glossary_and_ranked_tags(monkeypatch, tmp_path, transcriber):
+    """The tagger must see the vault's entities and its most-reused tags.
+
+    Both are what makes a tag connectable downstream: an entity name is the
+    thing notes actually share, and only a *recurring* tag scores in the
+    digest's connectable window.
+    """
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, ENABLE_LLM_TAGGING=True
+    )
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcript_file = output_dir / "sample.txt"
+    transcript_file.write_text("Rozmowa o Tech to the Rescue.")
+
+    transcriber.summarizer = None
+    transcriber._ai_disabled_reason = None
+    transcriber.tagger = MagicMock()
+    transcriber.tagger.generate_tags.return_value = ["tech-to-the-rescue"]
+    transcriber.vocabulary = MagicMock()
+    transcriber.vocabulary.canonical_terms_block.return_value = "- Tech to the Rescue"
+    transcriber.tag_index = MagicMock()
+    transcriber.tag_index.existing_tags_ranked.return_value = ["sauna", "rzadki"]
+
+    mock_md_gen = MagicMock(spec=MarkdownGenerator)
+    mock_md_gen.extract_audio_metadata.return_value = {
+        "source_file": "sample.mp3",
+        "extension": ".mp3",
+        "recording_datetime": datetime.now(),
+        "duration_seconds": 60,
+        "duration_formatted": "00:01:00",
+    }
+    mock_md_gen.create_markdown_document.return_value = output_dir / "sample.md"
+    transcriber.markdown_generator = mock_md_gen
+
+    transcriber._postprocess_transcript(
+        audio_file, transcript_file, fingerprint="sha256:test"
+    )
+
+    _, kwargs = transcriber.tagger.generate_tags.call_args
+    assert kwargs["known_entities"] == "- Tech to the Rescue"
+    assert kwargs["existing_tags"] == ["sauna", "rzadki"]
+    transcriber.tag_index.existing_tags_ranked.assert_called_once()
+
+
+def test_junk_stance_subject_debracketed_before_write(
+    monkeypatch, tmp_path, transcriber
+):
+    """The note that reaches disk must not carry a junk [[wikilink]].
+
+    A bracketed concept would be harvested as a confirmed glossary term and as
+    an entity key, so the guard runs on the production path — after alias
+    canonicalisation, before rendering.
+    """
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, TRANSCRIBE_DIR=output_dir, ENABLE_LLM_TAGGING=False
+    )
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcript_file = output_dir / "sample.txt"
+    transcript_file.write_text("Rozmowa o assessmencie i o Fundacji Ziemi.")
+
+    summary_md = (
+        "## Podsumowanie\n\nTreść\n\n"
+        "## Stanowiska\n\n"
+        "- [[Assessment]] ✅ to połowa wartości\n"
+        "- [[Fundacja Ziemi]] ❌ nie tym razem\n"
+    )
+    transcriber.summarizer = MagicMock()
+    transcriber.summarizer.generate.return_value = {
+        "title": "Tytuł",
+        "summary": summary_md,
+    }
+    transcriber._ai_disabled_reason = None
+    transcriber.vocabulary = MagicMock()
+    transcriber.vocabulary.known_terms_block.return_value = ""
+    transcriber.vocabulary.find_alias_hits.return_value = []
+    transcriber.vocabulary.build.return_value = {}
+
+    mock_md_gen = MagicMock(spec=MarkdownGenerator)
+    mock_md_gen.extract_audio_metadata.return_value = {
+        "source_file": "sample.mp3",
+        "extension": ".mp3",
+        "recording_datetime": datetime.now(),
+        "duration_seconds": 60,
+        "duration_formatted": "00:01:00",
+    }
+    mock_md_gen.create_markdown_document.return_value = output_dir / "sample.md"
+    transcriber.markdown_generator = mock_md_gen
+
+    transcriber._postprocess_transcript(
+        audio_file, transcript_file, fingerprint="sha256:test"
+    )
+
+    _, kwargs = mock_md_gen.create_markdown_document.call_args
+    written = kwargs["summary"]["summary"]
+    assert "- Assessment ✅ to połowa wartości" in written
+    assert "[[Assessment]]" not in written
+    # The real entity keeps its link.
+    assert "[[Fundacja Ziemi]]" in written
+
+
 def test_process_recorder_no_recorder(transcriber):
     """Test process_recorder when no recorder is found."""
     with patch.object(transcriber, "find_recorders", return_value=[]):

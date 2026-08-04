@@ -24,7 +24,7 @@ from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from src.config import config
 from src.connections.dismissals import DismissalStore
@@ -93,6 +93,17 @@ class NoteRef:
     norm_tags: Set[str]
     summary_md: str  # summary block, or a head/tail excerpt when none exists
     fingerprint: str
+    # What the synthesis PROMPT shows for this note. Equal to summary_md when
+    # the summary fits the budget; otherwise the same budget filled by section
+    # priority instead of a blind prefix cut (see _synthesis_view). Kept as a
+    # separate field on purpose: every scoring path (bm25, doc-freq, bridges,
+    # graph) keeps reading summary_md, so ranking stays byte-identical to the
+    # validated behaviour and only the model's view improves.
+    synthesis_md: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.synthesis_md:
+            self.synthesis_md = self.summary_md
 
 
 def note_key(note: NoteRef) -> str:
@@ -195,6 +206,105 @@ def _summary_or_excerpt(full: str, max_chars: int) -> str:
     return _excerpt(body, max_chars)
 
 
+def _summary_views(full: str, max_chars: int) -> Tuple[str, str]:
+    """``(summary_md, synthesis_md)`` for one note.
+
+    The first is the scoring text — unchanged, blind-cut, byte-identical to
+    what every ranking channel has always seen. The second is the prompt text:
+    the same budget, filled by section priority. They differ only for notes
+    whose summary exceeds the budget.
+    """
+    summary_md = _summary_or_excerpt(full, max_chars)
+    body = _body_after_frontmatter(full)
+    pre = body.partition(_TRANSCRIPT_MARKER)[0] if _TRANSCRIPT_MARKER in body else ""
+    if not pre.strip():
+        # No summary block (transcript-only note): nothing to prioritise.
+        return summary_md, summary_md
+    return summary_md, _synthesis_view(pre.strip(), max_chars * 2)
+
+
+# Section priority for the synthesis view. A blind prefix cut drops whatever
+# sits at the end of a long summary — in practice Cytaty and Lista działań, but
+# on a long note also Wątki otwarte and part of Stanowiska, which are exactly
+# the connective material (a stance is how a contradiction is found at all).
+# Quotes and to-dos are the cheapest to lose: they are per-note detail, not
+# cross-note signal.
+_SECTION_SPLIT_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+_SECTION_RANKS = (
+    ("podsumowanie", 0),
+    ("summary", 0),
+    ("stanowiska", 1),
+    ("stances", 1),
+    ("wątki otwarte", 2),
+    ("watki otwarte", 2),
+    ("open threads", 2),
+    ("kluczowe punkty", 3),
+    ("key points", 3),
+    ("cytaty", 5),
+    ("quotes", 5),
+    ("lista działań", 6),
+    ("lista dzialan", 6),
+    ("action items", 6),
+)
+_DEFAULT_SECTION_RANK = 4  # an unrecognised section outranks quotes/to-dos
+
+
+def _section_rank(heading: str) -> int:
+    key = heading.strip().casefold()
+    for name, rank in _SECTION_RANKS:
+        if key.startswith(name):
+            return rank
+    return _DEFAULT_SECTION_RANK
+
+
+def _synthesis_view(summary_md: str, budget: int) -> str:
+    """The note as the synthesis prompt should see it, within *budget* chars.
+
+    Under budget: unchanged. Over budget: keep whole sections by priority
+    (summary → stances → open threads → key points → other → quotes → to-dos)
+    and re-emit the survivors in their original order, so the note still reads
+    as a note. A section that does not fit is skipped, not cut — a half
+    sentence is worse than an absent section.
+    """
+    if len(summary_md) <= budget:
+        return summary_md
+
+    matches = list(_SECTION_SPLIT_RE.finditer(summary_md))
+    if not matches:
+        return summary_md[:budget]
+
+    preamble = summary_md[: matches[0].start()]
+    blocks: List[tuple] = []
+    for idx, match in enumerate(matches):
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(summary_md)
+        blocks.append(
+            (idx, _section_rank(match.group(1)), summary_md[match.start() : end])
+        )
+
+    ordered = sorted(blocks, key=lambda b: (b[1], b[0]))
+    kept: List[tuple] = []
+    used = len(preamble)
+
+    # The top-priority section always survives — clipped if it alone overruns.
+    # A note with no summary at all would be worse than a clipped one.
+    first_order, _, first_text = ordered[0]
+    if used + len(first_text) > budget:
+        kept.append((first_order, first_text[: max(0, budget - used)]))
+        used = budget
+    else:
+        kept.append((first_order, first_text))
+        used += len(first_text)
+
+    for order, _rank, text in ordered[1:]:
+        if used + len(text) > budget:
+            continue
+        kept.append((order, text))
+        used += len(text)
+
+    kept.sort()
+    return (preamble + "".join(text for _, text in kept)).strip()
+
+
 @lru_cache(maxsize=8192)
 def _tokenize(text: str) -> List[str]:
     # Cached: called by bm25, bridges, doc-freq and the graph channel — several
@@ -255,6 +365,7 @@ def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
         if as_of and (not note_date or note_date > as_of):
             continue
         tags = _parse_tags(fm.get("tags", ""))
+        summary_md, synthesis_md = _summary_views(full, note_chars)
         notes.append(
             NoteRef(
                 md_path=md_path,
@@ -263,8 +374,9 @@ def load_corpus(vault_dir: Path, as_of: Optional[str] = None) -> List[NoteRef]:
                 date=note_date,
                 tags=tags,
                 norm_tags={TagIndex.normalize_tag(t) for t in tags if t},
-                summary_md=_summary_or_excerpt(full, note_chars),
+                summary_md=summary_md,
                 fingerprint=fm.get("fingerprint", ""),
+                synthesis_md=synthesis_md,
             )
         )
     return notes

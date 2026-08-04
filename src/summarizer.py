@@ -7,6 +7,7 @@ from typing import Dict, Optional, Tuple
 
 from src.config import config
 from src.llm.client import build_anthropic_client
+from src.llm.model_router import resolve_model
 from src.logger import logger
 
 
@@ -140,6 +141,39 @@ def detect_language(text: str) -> Optional[str]:
     return None
 
 
+def _truncate_title(title: str, max_len: int) -> str:
+    """Shorten *title* to *max_len* chars without cutting mid-word.
+
+    The title becomes the note's FILENAME, so a hard slice leaves a stub like
+    "…platforma oceny i rekomenda..." on disk and in every link to the note.
+    Mirrors :meth:`src.transcriber.Transcriber._extract_fallback_title`.
+    """
+    text = (title or "").strip()
+    if len(text) <= max_len:
+        return text
+    room = max(1, max_len - 3)
+    truncated = text[:room].rsplit(" ", 1)[0].rstrip()
+    if not truncated:  # a single word longer than the budget
+        truncated = text[:room]
+    return truncated + "..."
+
+
+def _truncate_transcript(transcript: str, max_chars: int = 10000) -> str:
+    """Keep the head AND the tail of an over-long transcript.
+
+    Tail-weighted on purpose: endings carry decisions and next steps, which is
+    what the summary is mostly made of. But keeping ONLY the tail dropped the
+    opening — agenda, participants, why the meeting is happening — and the
+    tagger (which reads head+tail) was seeing material the summarizer never
+    got. Both sides now see the same shape of the recording.
+    """
+    if len(transcript) <= max_chars:
+        return transcript
+    head_chars = max_chars * 3 // 10
+    tail_chars = max_chars - head_chars
+    return f"{transcript[:head_chars]}\n[...]\n{transcript[-tail_chars:]}"
+
+
 class APIBillingError(Exception):
     """Claude API credit_balance exhausted (HTTP 400 invalid_request_error)."""
 
@@ -258,14 +292,13 @@ class ClaudeSummarizer(BaseSummarizer):
             return self._fallback_summary()
 
         # Truncate transcript if too long (Claude has token limits)
-        # Keep last 10000 characters to preserve context
         max_transcript_length = 10000
         if len(transcript) > max_transcript_length:
             logger.debug(
                 f"Transcript too long ({len(transcript)} chars), "
-                f"truncating to last {max_transcript_length} chars"
+                f"keeping head + tail within {max_transcript_length} chars"
             )
-            transcript = transcript[-max_transcript_length:]
+            transcript = _truncate_transcript(transcript, max_transcript_length)
 
         prompt = self._build_prompt(transcript, known_terms_block, correction)
 
@@ -302,8 +335,7 @@ class ClaudeSummarizer(BaseSummarizer):
             title, summary = self._parse_response(response_text)
 
             # Ensure title is within limits
-            if len(title) > self.title_max_length:
-                title = title[: self.title_max_length - 3] + "..."
+            title = _truncate_title(title, self.title_max_length)
 
             return {"title": title.strip(), "summary": summary.strip()}
 
@@ -469,6 +501,14 @@ Produce:
      mianownik — write [[Fundacja Ziemi]] even if the recording says
      "Fundacji Ziemi"). Never bracket generic nouns ("pomysł", "spotkanie"),
      processes ("proces doboru mentorów") or abstract concepts.
+   - The bracket test is NAMED ENTITY: something with a proper name you could
+     look up — a person, company, organisation, product, project or place.
+     An activity or a concept is NOT one, however important it is to the
+     recording. NEVER write [[Assessment]], [[Automatyzacja rekomendacji]],
+     [[Onboarding]] or [[proces doboru mentorów]].
+   - If the stance is genuinely about something unnamed, keep the line and
+     write the subject WITHOUT brackets — the brackets are reserved for named
+     entities, and a wrong one pollutes the vault's index of names.
    - Only about subjects the recording ACTUALLY discusses. Never add a stance
      line for a glossary term the speaker did not mention (no "(nie dotyczy)"
      placeholder lines).
@@ -489,6 +529,9 @@ Produce:
    - One bullet each, staying close to the speaker's wording. Do NOT derive
      or invent questions the speaker did not ask. No open threads → omit the
      section entirely, heading included.
+   - Unresolved AT THE END of the recording. A question the speaker answers or
+     settles later in the same recording is NOT an open thread — if it ended in
+     a decision, it belongs in Key points, not here.
 
    ## Quotes
    - 0–5 VERBATIM fragments from the transcript (not paraphrases), grouped by topic
@@ -556,13 +599,13 @@ Transcript:
             # Try to extract first line as title, rest as summary
             parts = response_text.split("\n\n", 1)
             if len(parts) >= 2:
-                title = parts[0].strip()[: self.title_max_length]
+                title = _truncate_title(parts[0].strip(), self.title_max_length)
                 summary = parts[1].strip()
                 # Ensure summary has markdown structure if missing
                 if not summary.startswith("##"):
                     summary = f"## Podsumowanie\n\n{summary[:self.max_words * 6]}"
             elif parts:
-                title = parts[0].strip()[: self.title_max_length]
+                title = _truncate_title(parts[0].strip(), self.title_max_length)
                 summary = f"## Podsumowanie\n\n{parts[0].strip()[:self.max_words * 6]}"
 
         # Ensure summary has basic markdown structure if completely missing
@@ -604,7 +647,11 @@ Brak podsumowania.
         if transcript:
             # Extract first sentence or first 50 chars as title
             first_line = transcript.split("\n")[0].strip()
-            title = first_line[: self.title_max_length] if first_line else "Nagranie"
+            title = (
+                _truncate_title(first_line, self.title_max_length)
+                if first_line
+                else "Nagranie"
+            )
             # Use first 200 chars as summary with markdown structure
             summary_text = transcript[:200].strip() + "..."
             summary = f"""## Podsumowanie
@@ -694,7 +741,7 @@ class OpenAISummarizer(ClaudeSummarizer):
 
         max_transcript_length = 10000
         if len(transcript) > max_transcript_length:
-            transcript = transcript[-max_transcript_length:]
+            transcript = _truncate_transcript(transcript, max_transcript_length)
 
         prompt = self._build_prompt(transcript, known_terms_block, correction)
         try:
@@ -711,8 +758,7 @@ class OpenAISummarizer(ClaudeSummarizer):
             logger.debug("OpenAI call completed in %.2fs", time.time() - start_time)
             text = response.choices[0].message.content or ""
             title, summary = self._parse_response(text)
-            if len(title) > self.title_max_length:
-                title = title[: self.title_max_length - 3] + "..."
+            title = _truncate_title(title, self.title_max_length)
             return {"title": title.strip(), "summary": summary.strip()}
         except Exception as e:  # noqa: BLE001 — return fallback, script skips it
             logger.error("OpenAI API error: %s", e, exc_info=True)
@@ -737,7 +783,9 @@ def get_summarizer() -> Optional[BaseSummarizer]:
             return None
 
         try:
-            return ClaudeSummarizer(api_key=config.LLM_API_KEY, model=config.LLM_MODEL)
+            return ClaudeSummarizer(
+                api_key=config.LLM_API_KEY, model=resolve_model("summary")
+            )
         except ImportError:
             logger.error(
                 "anthropic package not installed. "

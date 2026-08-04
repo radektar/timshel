@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,6 +21,7 @@ from src.config import config
 from src.logger import logger
 from src.tag_index import TagIndex
 from src.tagger import BaseTagger, get_tagger
+from src.vocabulary import VocabularyIndex
 
 
 @dataclass
@@ -33,12 +35,32 @@ class MarkdownSections:
 class TranscriptRetagger:
     """Retag existing markdown transcripts using ClaudeTagger."""
 
-    def __init__(self, root_dir: Path) -> None:
-        """Initialize retagger state."""
+    def __init__(
+        self,
+        root_dir: Path,
+        force: bool = False,
+        only: Optional[str] = None,
+    ) -> None:
+        """Initialize retagger state.
+
+        Args:
+            root_dir: vault directory to walk.
+            force: regenerate even when the existing tags are already
+                sanitized. Needed after a tagger-prompt change — otherwise
+                every note is skipped as "already fine" and the corpus keeps
+                its old tags.
+            only: process only notes whose filename contains this substring.
+        """
         self.root_dir = root_dir
+        self.force = force
+        self.only = only
         self.tag_index = TagIndex(root_dir=self.root_dir)
+        self.vocabulary = VocabularyIndex(root_dir=self.root_dir)
         self.tagger: BaseTagger = self._require_tagger()
-        self.existing_tags: List[str] = self.tag_index.existing_tags()
+        self.existing_tags: List[str] = self.tag_index.existing_tags_ranked()
+        # Built once: the glossary is a whole-vault scan, and it does not
+        # change meaningfully while this run is in flight.
+        self.known_entities: str = self.vocabulary.canonical_terms_block()
         self.updated = 0
         self.skipped = 0
 
@@ -52,9 +74,19 @@ class TranscriptRetagger:
         return tagger
 
     def run(self) -> None:
-        """Process all markdown files within root directory."""
+        """Process the vault's TOP-LEVEL notes.
+
+        Non-recursive, matching ``connections.candidate_assembly.load_corpus``:
+        the subfolders hold generated digests, recall notes and — in
+        ``.timshel/resummarize-backup`` — pre-migration copies of notes. A
+        recursive walk rewrote those backups on a real run: it burns API calls
+        on files nothing reads, and a backup that gets rewritten is no longer a
+        backup.
+        """
         logger.info("Starting retagging for directory: %s", self.root_dir)
-        for md_path in sorted(self.root_dir.rglob("*.md")):
+        for md_path in sorted(self.root_dir.glob("*.md")):
+            if self.only and self.only.lower() not in md_path.name.lower():
+                continue
             self._process_file(md_path)
 
         logger.info(
@@ -79,7 +111,7 @@ class TranscriptRetagger:
             return
 
         current_tags = self._extract_tags(sections.frontmatter_lines)
-        if current_tags:
+        if current_tags and not self.force:
             custom_tags = [tag for tag in current_tags if tag != "transcription"]
             if custom_tags:
                 needs_regeneration = any(
@@ -173,6 +205,7 @@ class TranscriptRetagger:
                 transcript=transcript,
                 summary_markdown=summary,
                 existing_tags=self.existing_tags,
+                known_entities=self.known_entities,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Tag generation failed: %s", exc, exc_info=True)
@@ -212,10 +245,30 @@ class TranscriptRetagger:
 
 def main() -> int:
     """Entry point for retagger CLI."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "regenerate tags even when the current ones are already sanitized "
+            "(required to roll a tagger-prompt change over the corpus)"
+        ),
+    )
+    parser.add_argument(
+        "--only",
+        metavar="SUBSTR",
+        help="process only notes whose filename contains SUBSTR",
+    )
+    args = parser.parse_args()
+
     config.ensure_directories()
 
     try:
-        retagger = TranscriptRetagger(root_dir=config.TRANSCRIBE_DIR)
+        retagger = TranscriptRetagger(
+            root_dir=config.TRANSCRIBE_DIR,
+            force=args.force,
+            only=args.only,
+        )
     except RuntimeError as err:
         logger.error("Cannot run retagger: %s", err)
         return 1

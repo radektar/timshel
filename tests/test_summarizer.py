@@ -119,8 +119,8 @@ class TestClaudeSummarizer:
         )
         mock_anthropic.messages.create.return_value = mock_response
 
-        # Create very long transcript
-        long_transcript = "A" * 20000
+        # A long transcript with distinct opening and closing material.
+        long_transcript = "POCZATEK AGENDY. " + "A" * 20000 + " KONIEC DECYZJE."
         result = summarizer.generate(long_transcript)
 
         # Should still succeed
@@ -130,6 +130,10 @@ class TestClaudeSummarizer:
         call_args = mock_anthropic.messages.create.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert len(prompt_text) < len(long_transcript)
+        # Head AND tail survive: the opening frames the meeting, the ending
+        # carries the decisions. Keeping only the tail lost the former.
+        assert "POCZATEK AGENDY" in prompt_text
+        assert "KONIEC DECYZJE" in prompt_text
 
     def test_generate_api_error_fallback(self, summarizer, mock_anthropic):
         """Test fallback when API call fails."""
@@ -436,6 +440,22 @@ class TestPromptConnectionSections:
         assert "EXPLICITLY voices" in prompt
         assert "Do NOT derive" in prompt
 
+    def test_open_threads_exclude_questions_resolved_in_recording(self, prompt):
+        """Observed: a question the speakers settled on the call was still
+        listed as open. The section is about what is unresolved AT THE END."""
+        assert "Unresolved AT THE END of the recording" in prompt
+        assert "settles later in the same recording is NOT an open thread" in prompt
+
+    def test_bracket_test_is_named_entity(self, prompt):
+        """Haiku brackets processes and concepts despite the generic rule, so
+        the prompt names the test AND the observed failures. The deterministic
+        net under this is src/stance_guard.py."""
+        assert "The bracket test is NAMED ENTITY" in prompt
+        assert "[[Assessment]]" in prompt
+        assert "[[Automatyzacja rekomendacji]]" in prompt
+        # The escape hatch the downstream parser already supports.
+        assert "write the subject WITHOUT brackets" in prompt
+
     def test_vocabulary_preservation_rule_present(self, prompt):
         """Distinctive terms stay verbatim — BM25/bridge channels depend on it."""
         assert "VOCABULARY" in prompt
@@ -617,3 +637,54 @@ class TestDetectLanguage:
         from src.summarizer import detect_language
 
         assert detect_language("Spotkanie zakończyło się sukcesem") == "pl"
+
+
+class TestTitleTruncation:
+    """The title becomes the note's filename — never cut it mid-word."""
+
+    def test_cuts_on_word_boundary(self):
+        from src.summarizer import _truncate_title
+
+        # The real note that exposed this: the hard cut left "rekomenda..." in
+        # the filename.
+        title = "Koalicja Tech to the Rescue — platforma oceny i rekomendacji programów"
+        out = _truncate_title(title, 60)
+
+        assert len(out) <= 60
+        assert out.endswith("...")
+        assert not out[:-3].endswith(" ")
+        assert out == "Koalicja Tech to the Rescue — platforma oceny i..."
+        assert "rekomenda..." not in out
+
+    def test_short_title_untouched(self):
+        from src.summarizer import _truncate_title
+
+        assert _truncate_title("Krótki tytuł", 60) == "Krótki tytuł"
+
+    def test_exact_length_is_not_truncated(self):
+        from src.summarizer import _truncate_title
+
+        title = "x" * 60
+        assert _truncate_title(title, 60) == title
+
+    def test_single_long_word_still_fits(self):
+        from src.summarizer import _truncate_title
+
+        out = _truncate_title("x" * 100, 20)
+        assert len(out) <= 20
+        assert out.endswith("...")
+
+    def test_parse_fallback_title_is_word_bounded(self):
+        """The fallback parse path cut hard too — it shares the helper now."""
+        with patch("src.summarizer.build_anthropic_client"):
+            summarizer = ClaudeSummarizer(api_key="k", model="m")
+
+        long_first_line = (
+            "Bardzo długi tytuł spotkania o platformie oceny i rekomendacji programów"
+        )
+        title, _ = summarizer._parse_response(
+            f"{long_first_line}\n\nTreść podsumowania"
+        )
+
+        assert len(title) <= summarizer.title_max_length
+        assert not title[:-3].endswith(" ")

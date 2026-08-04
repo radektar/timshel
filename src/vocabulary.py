@@ -211,6 +211,25 @@ class VocabularyIndex:
                 lines.append(f"- {term.canonical}")
         return "\n".join(lines)
 
+    def canonical_terms_block(self) -> str:
+        """Prompt-block lines for the tagger ("" when empty/disabled).
+
+        Canonical spellings only, one per line — no aliases. The tagger runs on
+        an already-canonicalised summary (see
+        :meth:`src.transcriber.Transcriber._canonicalize_aliases`), so alias
+        forms are pure noise there, whereas the summarizer needs them to do the
+        canonicalising in the first place. This block is the tagger's candidate
+        list of *entities worth tagging* — the glossary already is the vault's
+        entity index.
+        """
+        if not config.VOCABULARY_ENABLED:
+            return ""
+        lines = [
+            f"- {term.canonical}"
+            for term in self.ranked_terms()[: config.VOCABULARY_MAX_PROMPT_TERMS]
+        ]
+        return "\n".join(lines)
+
     def whisper_prompt(self) -> str:
         """Comma-joined glossary for whisper-cli ``--prompt`` ("" when off).
 
