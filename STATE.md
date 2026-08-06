@@ -73,12 +73,21 @@ Weryfikacja E2E na prawdziwym `whisper-cli`, nie na mockach: jeden przebieg,
 fallback osobno `use gpu = 0`, też jeden przebieg. Testy **1550**, flake8 + mypy
 + black czyste.
 
-**Świadomie NIE brane:** (a) retry po **timeoucie** zawieszonego GPU — zawis nadal
-kończy nagranie bez próby `-ng`; komentarz w kodzie mówi to wprost, zmiana
-zachowania to osobna decyzja. (b) Konstruktor `Transcriber` loguje na INFO
-fragment klucza API (`key len=108 head='sk-ant-api03-q'`) do
-`~/Library/Logs/olympus_transcriber.log` — kod sprzed tego PR-a, ale to plik,
-który testerzy wysyłają w zgłoszeniach. **Do decyzji.**
+**Dwa wątki wyprowadzone z tej sesji (2026-08-06):**
+(a) **Zawieszony GPU → BACKLOG.** Zawis (GPU milknie, zamiast zgłosić błąd)
+nadal kończy nagranie dopiero na `TRANSCRIPTION_TIMEOUT` = 60 min, bez próby
+`-ng`. Świadomie nie w tym PR: retry po globalnym timeoucie nie odróżnia
+„zawisł" od „mieli wolno" i wróciłby do podwajania. Założenia rozwiązania
+(detekcja **braku postępu** zamiast całkowitego czasu, karencja na kompilację
+Core ML, fallback bez zapisu werdyktu) spisane w
+`Docs/future/gpu-stall-detection.md`.
+(b) **Fragment klucza API w logu → ZROBIONE.** `_fingerprint_key` drukował
+`head='sk-ant-api03-q'` do `olympus_transcriber.log`, który `Export feedback`
+pakuje do zipa dla testerów. Teraz echo tylko **rozpoznanego, jawnego prefiksu**
+(`prefix=sk-ant-api03-`) + `tail` czterech znaków, które konsola Anthropica sama
+pokazuje; przy nieznanym prefiksie nie pokazujemy nawet ogona — cudzy klucz albo
+hasło też jest sekretem. Flagi diagnostyczne (whitespace, placeholder, zły
+prefiks) bez zmian.
 
 ## Warstwa kosztowa: metering per nota, budżet godzin, deep-scan (PR #101 + #103, MERGE 2026-08-06)
 

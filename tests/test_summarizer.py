@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.summarizer import (
+    _fingerprint_key,
     APIBillingError,
     BaseSummarizer,
     ClaudeSummarizer,
@@ -842,3 +843,39 @@ class TestUsageSentinel:
         summarizer.generate("Notatka.")
         summarizer.generate("   ")
         assert summarizer.last_usage is None
+
+
+class TestKeyFingerprint:
+    """The startup log line must never carry secret material.
+
+    It lands in ``olympus_transcriber.log``, which "Export feedback" zips up
+    for testers to mail out. It used to print ``head=key[:14]`` — the public
+    prefix plus a character of the secret.
+    """
+
+    def test_no_secret_material_beyond_the_console_tail(self):
+        key = "sk-ant-api03-" + "SECRETBODY" * 9 + "hwAA"
+        line = _fingerprint_key(key)
+
+        assert "SECRET" not in line
+        assert "prefix=sk-ant-api03-" in line
+        assert "tail='hwAA'" in line  # the four characters the console shows
+        assert f"len={len(key)}" in line
+
+    def test_unrecognised_key_echoes_no_prefix_at_all(self):
+        """Whatever was pasted by mistake is secret too — another provider's
+        key, a password. Only a *known* public prefix may be echoed."""
+        line = _fingerprint_key("sk-proj-SOMEOTHERPROVIDERKEY1234")
+
+        assert "sk-proj" not in line
+        assert "SOMEOTHER" not in line
+        assert "1234" not in line  # not even the tail: it isn't ours to show
+        assert "prefix=<unexpected>" in line
+        assert "UNEXPECTED_PREFIX" in line
+
+    def test_flags_still_catch_a_broken_key(self):
+        assert "SURROUNDING_WHITESPACE" in _fingerprint_key(" sk-ant-api03-abcdefgh ")
+        assert "INNER_WHITESPACE" in _fingerprint_key("sk-ant-api03-abcd\nefgh")
+        assert "PLACEHOLDER_CHAR" in _fingerprint_key("sk-ant-api03-abcd—efgh")
+        assert _fingerprint_key(None) == "<none>"
+        assert _fingerprint_key("") == "<none>"
