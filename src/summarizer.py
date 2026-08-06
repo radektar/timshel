@@ -3,7 +3,7 @@
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from src.config import config
 from src.llm.client import build_anthropic_client
@@ -293,6 +293,10 @@ class ClaudeSummarizer(BaseSummarizer):
         )
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
+        # Token usage of the LAST call, for the per-note cost ledger. Callers
+        # must snapshot it right after each ``generate`` — the alias-correction
+        # retry is a second call on the same instance and overwrites it.
+        self.last_usage: Any = None
 
     def generate(
         self, transcript: str, known_terms_block: str = "", correction: str = ""
@@ -312,6 +316,10 @@ class ClaudeSummarizer(BaseSummarizer):
         Raises:
             Exception: If API call fails
         """
+        # Cleared up front so a call that never reaches the API (empty input,
+        # swallowed error → fallback summary) cannot leave the PREVIOUS note's
+        # token counts here for the cost ledger to bill to this one.
+        self.last_usage = None
         if not transcript or not transcript.strip():
             logger.warning("Empty transcript provided, using fallback")
             return self._fallback_summary()
@@ -359,6 +367,8 @@ class ClaudeSummarizer(BaseSummarizer):
 
             elapsed = time.time() - start_time
             logger.debug(f"Claude API call completed in {elapsed:.2f}s")
+
+            self.last_usage = getattr(message, "usage", None)
 
             # Extract response
             response_text = message.content[0].text if message.content else ""
@@ -761,6 +771,7 @@ class OpenAISummarizer(ClaudeSummarizer):
             )
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.last_usage: Any = None
         logger.info("🔑 OpenAI client built — model=%s", model)
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
@@ -790,6 +801,7 @@ class OpenAISummarizer(ClaudeSummarizer):
         prompt = self._build_prompt(transcript, known_terms_block, correction)
         try:
             start_time = time.time()
+            self.last_usage = None
             response = self.client.chat.completions.create(
                 model=self.model,
                 # 8192: a 4:43 recording's v2 summary hit the 2048 ceiling and
@@ -801,6 +813,7 @@ class OpenAISummarizer(ClaudeSummarizer):
                 messages=[{"role": "user", "content": prompt}],
             )
             logger.debug("OpenAI call completed in %.2fs", time.time() - start_time)
+            self.last_usage = getattr(response, "usage", None)
             text = response.choices[0].message.content or ""
             title, summary = self._parse_response(text)
             title = _truncate_title(title, self.title_max_length)

@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
 from src.config import config as default_config
 from src.config.config import Config
@@ -41,6 +41,21 @@ from src.volume_utils import find_matching_volumes
 
 # whisper-cli with -pp prints "whisper_print_progress_callback: progress =  NN%".
 _PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
+
+
+class NoteMeter(NamedTuple):
+    """What a note's paid calls are attributed to in the cost ledger.
+
+    ``note`` is the fingerprint, not the filename: it joins the summary, alias
+    retry and tag rows of one note without writing its title into the ledger.
+    """
+
+    note: str
+    source_type: str
+    duration_seconds: Optional[int]
+    # Retranscribes reuse the fingerprint, so without this a v2 note's spend is
+    # indistinguishable from v1's in any per-note cost analysis.
+    version: int = 1
 
 
 def send_notification(title: str, message: str, subtitle: str = "") -> None:
@@ -400,6 +415,7 @@ class Transcriber:
                     "Startuje pobieranie w tle..."
                 )
                 import threading
+
                 from src.setup.downloader import DependencyDownloader
 
                 def _bg_download_encoder() -> None:
@@ -1177,8 +1193,67 @@ class Transcriber:
             return None
         return round(coverage, 3)
 
+    def _record_llm_usage(self, call: str, client: object, meter: "NoteMeter") -> None:
+        """Log one paid call to the per-note cost ledger. Best-effort.
+
+        Reads ``last_usage`` off the summarizer/tagger right after its call —
+        the alias retry runs on the same summarizer instance and overwrites it,
+        which is why every call site records before the next one starts.
+        """
+        usage = getattr(client, "last_usage", None)
+        if usage is None:
+            # No API call happened (empty input, or an error swallowed into a
+            # fallback summary). Billing this note would charge it the previous
+            # note's tokens — the client instance is long-lived.
+            return
+        try:
+            from src.connections.insight_metrics import record_note_llm_call
+
+            record_note_llm_call(
+                call=call,
+                note=meter.note,
+                model=str(getattr(client, "model", "")),
+                usage=usage,
+                source_type=meter.source_type,
+                duration_seconds=meter.duration_seconds,
+                version=meter.version,
+            )
+        except Exception as exc:  # noqa: BLE001 - instrument, never a blocker
+            logger.debug("note-llm metering skipped: %s", exc)
+
+    def _count_ai_hours(self, duration_seconds: Optional[int]) -> None:
+        """Add this note's audio to the monthly AI budget; notify once at 80%.
+
+        Only recordings that actually got an AI summary count — local
+        transcription is free and unlimited, and the weekly digest is a flat
+        cost outside this budget.
+        """
+        try:
+            from src import usage_ledger
+
+            usage = usage_ledger.add_ai_seconds(duration_seconds)
+            budget = int(getattr(self.config, "AI_HOURS_BUDGET", 0) or 0)
+            if budget <= 0 or usage.notified_80:
+                return
+            if usage.budget_fraction(budget) < 0.8:
+                return
+            send_notification(
+                "Timshel",
+                f"AI use this month: {usage_ledger.format_hours(usage.ai_seconds)}"
+                f" of {budget}h.",
+                "Transcription stays unlimited.",
+            )
+            usage_ledger.mark_notified_80()
+        except Exception as exc:  # noqa: BLE001 - budget display, never a blocker
+            logger.debug("AI-hours accounting skipped: %s", exc)
+
     def _canonicalize_aliases(
-        self, summary: dict, transcript_text: str, known_terms: str
+        self,
+        summary: dict,
+        transcript_text: str,
+        known_terms: str,
+        *,
+        meter: Optional["NoteMeter"] = None,
     ) -> dict:
         """Judge the summary for un-canonicalised aliases; ONE corrective retry.
 
@@ -1203,6 +1278,10 @@ class Transcriber:
                 known_terms_block=known_terms,
                 correction=correction,
             )
+            if meter is not None:
+                # Its own row, not folded into the summary: this retry fires on
+                # roughly 40% of meetings and doubles that note's summary spend.
+                self._record_llm_usage("alias_retry", self.summarizer, meter)
         except APIBillingError as exc:
             # Keep the first (good) summary; disable AI for subsequent notes.
             self._disable_ai(_is_permanent_api_error(exc) or "billing", exc)
@@ -1567,7 +1646,7 @@ class Transcriber:
     def _finalize_note(
         self,
         transcript_text: str,
-        metadata: Dict[str, str],
+        metadata: Dict[str, Any],
         fingerprint: str,
         *,
         version: int = 1,
@@ -1592,6 +1671,19 @@ class Transcriber:
             logger.info("Pusty transkrypt — generuję markdown-placeholder")
             transcript_text = "(Brak rozpoznawalnej mowy w nagraniu)"
 
+        duration_seconds = metadata.get("duration_seconds")
+        meter = NoteMeter(
+            note=fingerprint,
+            source_type=(extra_frontmatter or {}).get("source_type") or "recorder",
+            version=int(version),
+            duration_seconds=(
+                int(duration_seconds)
+                if isinstance(duration_seconds, (int, float))
+                and not isinstance(duration_seconds, bool)
+                else None
+            ),
+        )
+
         summary = None
         summarized_by_llm = False
         if empty_transcript:
@@ -1608,8 +1700,9 @@ class Transcriber:
                     known_terms_block=known_terms,
                 )
                 summarized_by_llm = True
+                self._record_llm_usage("summary", self.summarizer, meter)
                 summary = self._canonicalize_aliases(
-                    summary, transcript_text, known_terms
+                    summary, transcript_text, known_terms, meter=meter
                 )
                 # Aliases first (that step may rewrite the whole summary),
                 # then the deterministic stance-subject guard on the final text.
@@ -1660,6 +1753,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                     existing_tags=existing_tags,
                     known_entities=self.vocabulary.canonical_terms_block(),
                 )
+                self._record_llm_usage("tags", self.tagger, meter)
                 for tag in generated_tags:
                     if tag not in tags:
                         tags.append(tag)
@@ -1693,6 +1787,16 @@ Brak podsumowania AI. Możliwe przyczyny:
             output_filename=output_filename,
         )
         logger.info(f"✓ Markdown document created: {md_path.name}")
+        # Budget accounting LAST, and only for a note that really got an AI
+        # summary. Rendering can fail (vault unmounted, disk full) and the
+        # periodic scan then retries the whole tail every 30s — counting before
+        # the note exists would burn a 30h budget in minutes on one recording.
+        # Cost rows stay where they are: that spend was real either way.
+        # A retranscribe (version 2+) charges the recording's hours again.
+        # Deliberate: the second summary is a second real API call. The rows
+        # carry ``version`` so a cost analysis can separate the two.
+        if summarized_by_llm and not is_fallback_summary(summary.get("summary", "")):
+            self._count_ai_hours(meter.duration_seconds)
         return md_path
 
     def _find_existing_markdown_for_audio(self, audio_file: Path) -> Optional[Path]:

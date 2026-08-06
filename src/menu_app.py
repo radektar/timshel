@@ -205,6 +205,14 @@ class TimshelMenuApp(rumps.App):
             callback=self._open_latest_digest,
         )
         self.menu.add(self.digest_item)
+        # Informational only (no callback => greyed out): how much of the
+        # monthly AI budget this month has used. Local transcription is not
+        # counted and nothing is blocked when it runs out — see
+        # src/usage_ledger.py.
+        self.ai_usage_item = rumps.MenuItem("AI this month: —")
+        self.ai_usage_item.set_callback(None)
+        self.menu.add(self.ai_usage_item)
+        self._ai_usage_key: tuple = ()
         self.menu.add(rumps.separator)
 
         # Group 2 — feeding the vault (input).
@@ -1103,6 +1111,7 @@ class TimshelMenuApp(rumps.App):
         Współdzielona ścieżka między onboardingiem a manualnym przeglądem.
         """
         from pathlib import Path
+
         from src.config.defaults import defaults as _defaults
         from src.volume_identity import get_volume_uuid
 
@@ -1551,6 +1560,8 @@ class TimshelMenuApp(rumps.App):
             self._update_icon(AppStatus.DOWNLOADING)
             return
 
+        self._refresh_ai_usage()
+
         state = self.transcriber.state
         status_str = state.get_status_string()
         self.status_item.title = f"Status: {status_str}"
@@ -1871,6 +1882,37 @@ class TimshelMenuApp(rumps.App):
             send_notification("Timshel", top.resolved_label(), top.rationale)
         else:
             send_notification("Timshel", "New synthesis digest ready", digest_name)
+
+    def _refresh_ai_usage(self) -> None:
+        """Update the "AI this month" line — only when the ledger file changed.
+
+        The status timer runs every 2s; re-reading (and re-rendering) a JSON
+        file at that rate for a number that moves a few times a day would be
+        pure waste, so an mtime check gates the work.
+        """
+        try:
+            from src import usage_ledger
+
+            path = usage_ledger.ledger_path()
+            mtime = path.stat().st_mtime if path and path.exists() else 0.0
+            # The month belongs in the key: the ledger resets lazily ON READ,
+            # and nothing writes the file on the 1st until a note is finalized.
+            # Keyed on mtime alone, a long-running menu bar app would keep
+            # showing last month's total indefinitely.
+            key = (mtime, usage_ledger.current_month())
+            if key == self._ai_usage_key:
+                return
+            self._ai_usage_key = key
+            usage = usage_ledger.read_usage()
+            budget = int(getattr(config, "AI_HOURS_BUDGET", 0) or 0)
+            used = usage_ledger.format_hours(usage.ai_seconds)
+            self.ai_usage_item.title = (
+                f"AI this month: {used} / {budget}h"
+                if budget
+                else f"AI this month: {used}"
+            )
+        except Exception as exc:  # pragma: no cover - cosmetic
+            logger.debug("could not refresh AI usage line: %s", exc)
 
     def _refresh_insights_badge(self) -> None:
         """Show the count of connections in the latest digest on the menu item."""

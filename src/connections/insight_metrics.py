@@ -270,6 +270,72 @@ def record_digest_metrics(
         return False
 
 
+def record_note_llm_call(
+    *,
+    call: str,
+    note: str,
+    model: str,
+    usage: object,
+    source_type: Optional[str] = None,
+    duration_seconds: Optional[int] = None,
+    version: int = 1,
+    path: Optional[Path] = None,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Append one row per LLM call made for a single note. Never raises.
+
+    The per-note ledger the digest instrument never had: summaries and tags are
+    the highest-volume paid path, and their cost is **linear in recording
+    hours**, so a flat per-note assumption misprices every long meeting. Each
+    row pairs the spend with the audio length that caused it, which is what the
+    monthly-hours limit has to be calibrated against.
+
+    ``call`` is one of ``summary`` / ``alias_retry`` / ``tags``. The alias
+    correction retry gets its OWN row rather than being folded into the summary
+    — it fires on roughly 40% of meetings and doubles that note's summary cost,
+    so merging the two would hide the very non-linearity worth measuring.
+
+    Rows carry ``kind: "note-llm"``; digest rows have no ``kind`` field, so
+    existing readers (which use ``.get``) are unaffected.
+    """
+    if not getattr(config, "INSIGHT_METRICS_ENABLED", True):
+        return False
+    try:
+        out = Path(path) if path is not None else metrics_log_path()
+        if out is None:
+            logger.warning("note-llm metrics dropped: no log path (config?)")
+            return False
+        tokens = usage_tokens(usage)
+        record: Dict[str, object] = {
+            "v": METRICS_SCHEMA_VERSION,
+            "ts": (now or datetime.now()).isoformat(timespec="seconds"),
+            "kind": "note-llm",
+            "call": str(call),
+            "note": str(note),
+            "source_type": source_type or "",
+            "duration_seconds": (
+                int(duration_seconds) if duration_seconds is not None else None
+            ),
+            "version": int(version),
+            "model": model,
+            "cost_usd": estimate_cost_usd(
+                model,
+                tokens["input_tokens"],
+                tokens["output_tokens"],
+                cache_read_tokens=tokens["cache_read_tokens"],
+                cache_write_tokens=tokens["cache_write_tokens"],
+            ),
+            **tokens,
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return True
+    except Exception as exc:  # noqa: BLE001 - instrument, never blocks a note
+        logger.warning("could not record note-llm metrics: %s", exc)
+        return False
+
+
 def record_gate_skip(
     *,
     window: int,

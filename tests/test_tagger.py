@@ -26,7 +26,8 @@ def _patch_anthropic(monkeypatch, response_text: str) -> dict:
         def create(self, *_, **kwargs):
             captured.update(kwargs)
             chunk = type("Chunk", (), {"text": self._text})()
-            return type("Message", (), {"content": [chunk]})()
+            usage = type("Usage", (), {"input_tokens": 1200, "output_tokens": 40})()
+            return type("Message", (), {"content": [chunk], "usage": usage})()
 
     class FakeClient:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -234,3 +235,46 @@ class TestTaggerRequestParams:
         tagger.generate_tags("Transkrypcja", "## Podsumowanie", [])
 
         assert "temperature" not in captured
+
+
+def test_last_usage_captured_for_cost_ledger(monkeypatch):
+    """Per-note metering reads token counts off the tagger after each call."""
+    _patch_anthropic(monkeypatch, '["projekt-x"]')
+    monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", True)
+    tagger = ClaudeTagger(api_key="test", model="claude-haiku-4-5-20251001")
+    assert tagger.last_usage is None
+    tagger.generate_tags(
+        transcript="tekst",
+        summary_markdown="## Podsumowanie\n\ntekst",
+        existing_tags=[],
+    )
+    assert tagger.last_usage is not None
+    assert tagger.last_usage.input_tokens == 1200
+    assert tagger.last_usage.output_tokens == 40
+
+
+def test_swallowed_api_error_clears_usage(monkeypatch):
+    """Same contract as the summarizer: a failed call must not leave the
+    previous note's tokens behind for the cost ledger to bill."""
+    _patch_anthropic(monkeypatch, '["projekt-x"]')
+    monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", True)
+    tagger = ClaudeTagger(api_key="test", model="claude-haiku-4-5-20251001")
+    tagger.generate_tags("Pierwsza", "Podsumowanie", [])
+    assert tagger.last_usage is not None
+
+    def _boom(*_a, **_kw):
+        raise ConnectionError("no route")
+
+    tagger.client.messages.create = _boom
+    assert tagger.generate_tags("Druga", "Podsumowanie", []) == []
+    assert tagger.last_usage is None
+
+
+def test_disabled_tagging_clears_usage(monkeypatch):
+    _patch_anthropic(monkeypatch, '["x"]')
+    monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", True)
+    tagger = ClaudeTagger(api_key="test", model="claude-haiku-4-5-20251001")
+    tagger.generate_tags("Pierwsza", "Podsumowanie", [])
+    monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", False)
+    assert tagger.generate_tags("Druga", "Podsumowanie", []) == []
+    assert tagger.last_usage is None

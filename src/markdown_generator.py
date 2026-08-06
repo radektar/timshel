@@ -1,6 +1,8 @@
 """Markdown document generator for transcriptions."""
 
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +17,10 @@ except ImportError:
 from src.config import config
 from src.logger import logger
 from src.tag_index import GENERATED_TAG
+
+# ffmpeg prints "  Duration: 01:23:45.67, start: ..." to stderr for any input
+# it can demux, including the DSS/DS2 mutagen cannot read.
+_FFMPEG_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2})")
 
 
 class MarkdownGenerator:
@@ -76,6 +82,24 @@ class MarkdownGenerator:
             except (ID3NoHeaderError, Exception) as e:
                 logger.debug(f"Could not extract metadata from {audio_file.name}: {e}")
         
+        # mutagen has no DSS/DS2 parser (1.47: MP3/MP4/FLAC/WAVE/... only),
+        # and those are the Olympus dictaphone's own formats — the most common
+        # input this product has. Without a fallback the AI-hours ledger reads
+        # zero for exactly those users. ffmpeg already decodes them for
+        # whisper, so ask it.
+        if metadata["duration_seconds"] is None:
+            duration_sec = self._duration_via_ffmpeg(audio_file)
+            if duration_sec is not None:
+                metadata["duration_seconds"] = duration_sec
+                metadata["duration_formatted"] = self._format_duration(duration_sec)
+            else:
+                # Loud on purpose: a silently missing duration understates the
+                # usage measurement the pricing tier is calibrated on.
+                logger.warning(
+                    "No duration for %s — it will not count towards AI hours",
+                    audio_file.name,
+                )
+
         # Fallback to file modification time
         if metadata["recording_datetime"] is None:
             try:
@@ -87,6 +111,46 @@ class MarkdownGenerator:
         
         return metadata
     
+    @staticmethod
+    def _duration_via_ffmpeg(audio_file: Path) -> Optional[int]:
+        """Read duration from ffmpeg's stream report. None when unavailable.
+
+        Uses ``ffmpeg -i`` (which prints ``Duration: HH:MM:SS.ms`` to stderr
+        and exits non-zero without an output file) rather than ffprobe: only
+        the ffmpeg binary is guaranteed present — runtime_deps installs it,
+        ffprobe is not shipped.
+        """
+        ffmpeg = getattr(config, "FFMPEG_PATH", None)
+        if not ffmpeg or not Path(str(ffmpeg)).exists():
+            # Same fallback as _convert_to_wav: the configured path may point
+            # at a bundled binary that has not been downloaded yet, while a
+            # system ffmpeg is on PATH. Without this the DSS user whose
+            # transcription works still counts zero hours.
+            ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None
+        try:
+            proc = subprocess.run(
+                # -nostdin: the daemon can inherit a TTY, and ffmpeg reading
+                # from it would hang until the timeout.
+                [str(ffmpeg), "-hide_banner", "-nostdin", "-i", str(audio_file)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug(
+                "ffmpeg duration probe failed for %s: %s", audio_file.name, exc
+            )
+            return None
+        match = _FFMPEG_DURATION_RE.search(proc.stderr or "")
+        if not match:
+            return None
+        hours, minutes, seconds = (int(match.group(i)) for i in (1, 2, 3))
+        total = hours * 3600 + minutes * 60 + seconds
+        return total if total > 0 else None
+
     def _extract_date_from_tags(self, tags) -> Optional[str]:
         """Extract date from audio file tags.
         

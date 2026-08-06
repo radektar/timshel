@@ -608,6 +608,17 @@ class TestPromptKnownTerms:
         assert captured["block"] == "- Haetta"
         assert captured["correction"] == "fix"
 
+    def test_last_usage_captured_for_cost_ledger(self, summarizer):
+        """Per-note metering reads token counts off the summarizer after a call."""
+        usage = MagicMock(input_tokens=140_000, output_tokens=2_000)
+        summarizer.client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="TITLE: T\n\nSUMMARY: ## Podsumowanie\n\nX")],
+            usage=usage,
+        )
+        assert summarizer.last_usage is None
+        summarizer.generate("Notatka.")
+        assert summarizer.last_usage is usage
+
     def test_generate_uses_low_temperature(self, summarizer):
         """Canonicalisation/format adherence are near-mechanical — temp is low."""
         summarizer.client.messages.create.return_value = MagicMock(
@@ -797,3 +808,37 @@ class TestTranscriptCoverage:
 
         monkeypatch.setattr(config, "MAX_SUMMARY_TRANSCRIPT_CHARS", 12_345)
         assert summarizer.transcript_cap == 12_345
+
+
+class TestUsageSentinel:
+    """``last_usage`` must mean "this call happened", never "some earlier call
+    did" — the summarizer instance is long-lived, so a stale value would bill
+    one note the tokens of another."""
+
+    @pytest.fixture
+    def summarizer(self):
+        with patch("src.summarizer.build_anthropic_client"):
+            return ClaudeSummarizer(api_key="k", model="claude-haiku-4-5-20251001")
+
+    def test_swallowed_api_error_clears_usage(self, summarizer):
+        """A network blip returns a fallback summary — with NO usage."""
+        summarizer.client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="TITLE: T\n\nSUMMARY: ## Podsumowanie\n\nX")],
+            usage=MagicMock(input_tokens=120_000, output_tokens=2_000),
+        )
+        summarizer.generate("Pierwsza notatka.")
+        assert summarizer.last_usage is not None
+
+        summarizer.client.messages.create.side_effect = ConnectionError("no route")
+        result = summarizer.generate("Druga notatka.")
+        assert "Brak podsumowania" in result["summary"] or result["summary"]
+        assert summarizer.last_usage is None
+
+    def test_empty_transcript_clears_usage(self, summarizer):
+        summarizer.client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="TITLE: T\n\nSUMMARY: ## Podsumowanie\n\nX")],
+            usage=MagicMock(input_tokens=1_000, output_tokens=100),
+        )
+        summarizer.generate("Notatka.")
+        summarizer.generate("   ")
+        assert summarizer.last_usage is None
