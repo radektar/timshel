@@ -608,6 +608,17 @@ class TestPromptKnownTerms:
         assert captured["block"] == "- Haetta"
         assert captured["correction"] == "fix"
 
+    def test_last_usage_captured_for_cost_ledger(self, summarizer):
+        """Per-note metering reads token counts off the summarizer after a call."""
+        usage = MagicMock(input_tokens=140_000, output_tokens=2_000)
+        summarizer.client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="TITLE: T\n\nSUMMARY: ## Podsumowanie\n\nX")],
+            usage=usage,
+        )
+        assert summarizer.last_usage is None
+        summarizer.generate("Notatka.")
+        assert summarizer.last_usage is usage
+
     def test_generate_uses_low_temperature(self, summarizer):
         """Canonicalisation/format adherence are near-mechanical — temp is low."""
         summarizer.client.messages.create.return_value = MagicMock(

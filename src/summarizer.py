@@ -3,7 +3,7 @@
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from src.config import config
 from src.llm.client import build_anthropic_client
@@ -293,6 +293,10 @@ class ClaudeSummarizer(BaseSummarizer):
         )
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
+        # Token usage of the LAST call, for the per-note cost ledger. Callers
+        # must snapshot it right after each ``generate`` — the alias-correction
+        # retry is a second call on the same instance and overwrites it.
+        self.last_usage: Any = None
 
     def generate(
         self, transcript: str, known_terms_block: str = "", correction: str = ""
@@ -359,6 +363,8 @@ class ClaudeSummarizer(BaseSummarizer):
 
             elapsed = time.time() - start_time
             logger.debug(f"Claude API call completed in {elapsed:.2f}s")
+
+            self.last_usage = getattr(message, "usage", None)
 
             # Extract response
             response_text = message.content[0].text if message.content else ""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from src.config import config
 from src.llm.client import build_anthropic_client
@@ -46,6 +46,8 @@ class ClaudeTagger(BaseTagger):
         """Initialize Claude client."""
         self.client = build_anthropic_client(api_key)
         self.model = model
+        # Token usage of the LAST call, for the per-note cost ledger.
+        self.last_usage: Any = None
 
     def generate_tags(
         self,
@@ -102,6 +104,7 @@ class ClaudeTagger(BaseTagger):
                 ],
                 **extra,
             )
+            self.last_usage = getattr(message, "usage", None)
             response_text = message.content[0].text if message.content else ""
             return self._parse_tags_response(response_text)
         except Exception as exc:  # noqa: BLE001

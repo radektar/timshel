@@ -195,3 +195,97 @@ def test_build_record_onboarding_fields_roundtrip():
         window_fallback=True,
     )
     assert row["onboarding"] is True and row["window_fallback"] is True
+
+
+# --- per-note LLM rows (summary / alias retry / tags) -----------------------
+
+
+def test_note_llm_row_shape(tmp_path, monkeypatch):
+    from src.config import config
+
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    out = tmp_path / "metrics.jsonl"
+    assert im.record_note_llm_call(
+        call="summary",
+        note="fp-abc",
+        model="claude-haiku-4-5-20251001",
+        usage=_Usage(i=120_000, o=1_000),
+        source_type="voice-memo",
+        duration_seconds=1800,
+        path=out,
+    )
+    row = _lines(out)[-1]
+    assert row["kind"] == "note-llm"
+    assert row["call"] == "summary"
+    assert row["note"] == "fp-abc"
+    assert row["source_type"] == "voice-memo"
+    assert row["duration_seconds"] == 1800
+    assert row["model"] == "claude-haiku-4-5-20251001"
+    assert row["input_tokens"] == 120_000
+    assert row["output_tokens"] == 1_000
+    # 120k in @ $1/M + 1k out @ $5/M = $0.125
+    assert row["cost_usd"] == 0.125
+    assert row["v"] == im.METRICS_SCHEMA_VERSION
+
+
+def test_note_llm_row_allows_missing_duration(tmp_path, monkeypatch):
+    """Text imports have no audio — the row must still be written."""
+    from src.config import config
+
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    out = tmp_path / "metrics.jsonl"
+    im.record_note_llm_call(
+        call="tags",
+        note="fp-1",
+        model="claude-haiku-4-5-20251001",
+        usage=None,
+        source_type="import",
+        duration_seconds=None,
+        path=out,
+    )
+    row = _lines(out)[-1]
+    assert row["duration_seconds"] is None
+    assert row["input_tokens"] == 0
+    assert row["cost_usd"] == 0.0
+
+
+def test_note_llm_respects_metrics_flag(tmp_path, monkeypatch):
+    from src.config import config
+
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", False)
+    out = tmp_path / "metrics.jsonl"
+    assert not im.record_note_llm_call(
+        call="summary",
+        note="fp",
+        model="m",
+        usage=None,
+        path=out,
+    )
+    assert not out.exists()
+
+
+def test_note_llm_never_raises(monkeypatch):
+    from src.config import config
+
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    monkeypatch.setattr(im, "metrics_log_path", lambda: None)
+    assert not im.record_note_llm_call(call="summary", note="n", model="m", usage=None)
+
+
+def test_retry_and_summary_rows_coexist_for_one_note(tmp_path, monkeypatch):
+    """The alias retry is its own row, joined to the summary by ``note``."""
+    from src.config import config
+
+    monkeypatch.setattr(config, "INSIGHT_METRICS_ENABLED", True)
+    out = tmp_path / "metrics.jsonl"
+    for call in ("summary", "alias_retry", "tags"):
+        im.record_note_llm_call(
+            call=call,
+            note="fp-same",
+            model="claude-haiku-4-5-20251001",
+            usage=_Usage(i=1000, o=100),
+            path=out,
+        )
+    rows = _lines(out)
+    assert [r["call"] for r in rows] == ["summary", "alias_retry", "tags"]
+    assert {r["note"] for r in rows} == {"fp-same"}

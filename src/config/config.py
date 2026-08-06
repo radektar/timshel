@@ -2,15 +2,15 @@
 
 import os
 import shutil
-from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Optional, TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from src.config.config import Config
 
-from src.config.settings import UserSettings
 from src.config.defaults import defaults
+from src.config.settings import UserSettings
 
 
 @dataclass
@@ -61,6 +61,7 @@ class Config:
     DIGEST_LOCK_FILE: Path = None  # Lock serialising connection-synthesis digest runs
     CONNECTIONS_STATE_FILE: Path = None  # digest scheduler state (own file)
     VOICE_MEMOS_STATE_FILE: Path = None  # Voice Memos connector state (own file)
+    USAGE_LEDGER_FILE: Path = None  # monthly AI-hours / deep-scan ledger
 
     # Apple Voice Memos: iCloud drops iPhone recordings here (stable since
     # Sonoma). Read-only for us — we never touch the CloudRecordings.db beside
@@ -210,6 +211,15 @@ class Config:
     # (with private note basenames) into their vault. The prototype dogfood
     # (magic_digest.py) turns it on for the measured runs.
     INSIGHT_METRICS_ENABLED: bool = False
+    # Monthly AI budget communicated to the user, in HOURS of recording that
+    # got an AI summary. Soft: nothing is blocked when it is exceeded — local
+    # transcription is free and unlimited, and in the beta the hard ceiling is
+    # the per-tester Anthropic workspace cap. Overshoot is a calibration
+    # signal for the 30h tier, not an incident.
+    AI_HOURS_BUDGET: int = 30
+    # Manual "deep scan" runs per calendar month. Also soft in the beta: the
+    # dialog states the count and still lets the run through.
+    DEEP_SCAN_MONTHLY_LIMIT: int = 10
     # Verdict pass: verify proposed connections against fuller note text and
     # drop the ones that do not survive. Off = baseline digest, byte-identical.
     VERDICT_ENABLED: bool = False
@@ -319,6 +329,9 @@ tags: [{tags}]
 
         if self.VOICE_MEMOS_STATE_FILE is None:
             self.VOICE_MEMOS_STATE_FILE = support_dir / "voice_memos_state.json"
+
+        if self.USAGE_LEDGER_FILE is None:
+            self.USAGE_LEDGER_FILE = support_dir / "usage_ledger.json"
 
         if self.VOICE_MEMOS_RECORDINGS_DIR is None:
             self.VOICE_MEMOS_RECORDINGS_DIR = (
