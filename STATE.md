@@ -3,6 +3,83 @@
 Data: 2026-08-06 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
 
+## Core ML nigdy nie działał, a każda nota leciała dwa razy (PR #104, MERGE 2026-08-06)
+
+Punkt wyjścia: log testera — transkrypcja jednego pliku od 09:34 do 10:34, w tym
+dwa pełne przebiegi po 30 min, przedzielone linią „Core ML/Metal failed, falling
+back to CPU". Pytanie brzmiało „czy mechanizm zapamiętywania werdyktu działa";
+odpowiedź: **działał, tylko zapisał werdykt fałszywy, a podwojenie brało się
+z osobnego błędu.**
+
+**Root cause 1 — detektor łapał zdrowie, nie awarię.** `_COREML_FAIL_MARKERS`
+zawierał gołe `"Core ML"`, `"ggml_metal"`, `"tensor API disabled"`. Wszystkie trzy
+whisper.cpp drukuje przy **poprawnym** starcie — `whisper_init_state: Core ML
+model loaded` jest komunikatem SUKCESU. Detektor strumieniowy zabijał więc każdą
+próbę GPU sekundę po starcie i zapisywał na dysk „Metal nie działa na tej
+maszynie". Dowód w logu lokalnym: `Core ML model loaded` i sekundę później
+`⚠️ Core ML/Metal failed` — przy czym prawdziwy błąd w tym przebiegu był zupełnie
+inny (`failed to read audio file`). **Core ML nie był używany na żadnej maszynie
+od momentu wprowadzenia tego detektora.**
+
+**Root cause 2 — podwojenie.** Kontrola retry dostawała na sztywno
+`use_coreml_attempted=True`, mimo że `_run_whisper_transcription` cicho degradował
+do CPU. Przebieg CPU kończył się, jego stderr nadal zawierał `ggml_metal`, więc
+wyglądał na nieudaną próbę GPU → cała transkrypcja od zera.
+
+**Root cause 3 — fallback nic nie wyłączał.** `WHISPER_COREML=0` i
+`GGML_METAL_DISABLE=1` to przełączniki **build-time** whisper.cpp; w środowisku są
+no-opem. „Przebieg CPU" leciał z `use gpu = 1` — stąd identyczny czas obu
+przebiegów. Realne wyłączenie to flaga `-ng`.
+
+**Ustalenie empiryczne, które zmieniło projekt naprawy:** binarka jest zbudowana
+**bez `WHISPER_COREML_ALLOW_FALLBACK`**. Zdjęcie `.mlmodelc` (pierwotnie
+zatwierdzony wariant fallbacku) daje `rc=3` przed pierwszą klatką, niezależnie od
+`-ng`; encoder zawsze idzie przez Core ML, `-ng` przenosi na CPU tylko dekoder.
+Wniosek: **prawdziwego „pure CPU" ta binarka nie ma i mieć nie może**, a awaria
+ładowania encodera jest terminalna — raportowana komunikatem zamiast drugiego
+30-minutowego przebiegu.
+
+**Werdykt trwały przeprojektowany.** Wymaga **dwóch niezależnych awarii** — inny
+boot (`kern.boottime`) **albo** ≥12 h odstępu. Powód pierwszego członu: daemon
+i apka menu to dwa procesy z osobnym `Transcriber`, więc licznik per-proces
+zaliczyłby jedną godzinę ciśnienia na VRAM dwa razy. Powód drugiego: macOS chodzi
+tygodniami (ta maszyna: 9 dni uptime'u), więc sam boot nigdy by nie zbiegł.
+Znacznik czasu stemplowany **tylko przy zliczonej** awarii — stempel przy każdej
+przesuwałby okno w nieskończoność. Udany przebieg GPU kasuje licznik; sygnatura
+`v2:<rozmiar binarki>:<model>:<macOS>` unieważnia stare (fałszywe) werdykty, więc
+każda instalacja przepróbuje GPU raz.
+
+**Pętla review: 4 rundy (4 → 5 → 3 → 3 znaleziska), każda poprawka przypięta
+testem zweryfikowanym mutacyjnie.** Warte zapamiętania:
+1. *Markery pokrywały tylko awarie inicjalizacji.* GPU umierające w połowie
+   3-godzinnego biegu (martwy command buffer, pipeline kompilowany leniwie) nie
+   dostawało fallbacku. Marker `"failed with status"` celowo szeroki — łapie
+   wariant ERROR i INFO tej samej awarii; obie ścieżki w ggml kończą się
+   `return GGML_STATUS_FAILED`.
+2. *Moja własna poprawka progu przestrzeliła dwa razy z rzędu* — najpierw per
+   proces (za czuła), potem per boot (za leniwa). Dopiero boot **lub** cooldown
+   trafia w intencję.
+3. *`UnicodeDecodeError` z uszkodzonego sidecara wywracał KAŻDĄ udaną
+   transkrypcję na GPU* — odczyt werdyktu wołany spoza `try`; `JSONDecodeError`
+   nie jest nadzbiorem. Lek: `ValueError`.
+4. *Nowa logika nie była przybita niczym* — recenzent usuwał całe gałęzie i suita
+   zostawała zielona. Stąd reguła utrwalona w tej sesji: **każde znalezisko
+   zamykamy testem, który sprawdzamy mutacją**, nie samą poprawką.
+5. *Własny test-strażnik repo złapał mnie* na `subprocess.run(text=True)` bez
+   `encoding="utf-8"` (pułapka py2app z ASCII locale).
+
+Weryfikacja E2E na prawdziwym `whisper-cli`, nie na mockach: jeden przebieg,
+`use gpu = 1`, `Core ML model loaded`, encoder 945 ms, poprawna transkrypcja;
+fallback osobno `use gpu = 0`, też jeden przebieg. Testy **1550**, flake8 + mypy
++ black czyste.
+
+**Świadomie NIE brane:** (a) retry po **timeoucie** zawieszonego GPU — zawis nadal
+kończy nagranie bez próby `-ng`; komentarz w kodzie mówi to wprost, zmiana
+zachowania to osobna decyzja. (b) Konstruktor `Transcriber` loguje na INFO
+fragment klucza API (`key len=108 head='sk-ant-api03-q'`) do
+`~/Library/Logs/olympus_transcriber.log` — kod sprzed tego PR-a, ale to plik,
+który testerzy wysyłają w zgłoszeniach. **Do decyzji.**
+
 ## Warstwa kosztowa: metering per nota, budżet godzin, deep-scan (PR #101 + #103, MERGE 2026-08-06)
 
 Punkt wyjścia: decyzje cenowe z 05–06.08 (ADR-y w vaultcie) potrzebowały oparcia
