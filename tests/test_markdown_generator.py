@@ -416,7 +416,11 @@ class TestDurationFallback:
         from src.config import config
         from src.markdown_generator import MarkdownGenerator
 
-        monkeypatch.setattr(config, "FFMPEG_PATH", tmp_path / "ffmpeg")
+        # Must exist: the probe falls back to a system ffmpeg otherwise, and
+        # CI has none — that is what made this pass locally and fail there.
+        fake_ffmpeg = tmp_path / "ffmpeg"
+        fake_ffmpeg.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(config, "FFMPEG_PATH", fake_ffmpeg)
         monkeypatch.setattr(
             subprocess,
             "run",
