@@ -1,7 +1,79 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-08-04 · Faza: kod → test
+Data: 2026-08-06 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Warstwa kosztowa: metering per nota, budżet godzin, deep-scan (PR #101 + #103, MERGE 2026-08-06)
+
+Punkt wyjścia: decyzje cenowe z 05–06.08 (ADR-y w vaultcie) potrzebowały oparcia
+w kodzie, a H1 miało zmierzyć **rozkład godzin/mies.** — liczbę, na której stoi
+limit 30h. Okazało się, że per-nota **nic nie było rozliczane**: instrument
+metryk widział wyłącznie digesty, i to tylko przy `INSIGHT_METRICS_ENABLED`.
+
+**PR #101 — metering + licznik godzin.** Jeden wiersz `kind: "note-llm"` na
+każde płatne wywołanie (`summary` / `alias_retry` / `tags`) w `metrics.jsonl`,
+sparowany z długością nagrania, które je wywołało; retry aliasów ma **własny
+wiersz**, bo odpala się na ~40% spotkań i podwaja koszt podsumowania — sklejenie
+ukryłoby tę nieliniowość. Nowy `src/usage_ledger.py`: miesięczny licznik godzin
+AI (reset kalendarzowy leniwy, przy odczycie), linia w menu „AI this month:
+12h 40m / 30h", powiadomienie przy 80%. Transkrypcja lokalna NIE liczy się
+(darmowa i bez limitu — to jest oferta), digest też nie (płaski koszt poza
+budżetem). **Nic się nie blokuje** po przekroczeniu: przebicie to sygnał
+kalibracyjny, twardym sufitem w becie jest cap workspace'u Anthropic.
+Rozdzielenie: wiersze metryk respektują `INSIGHT_METRICS_ENABLED` (instrument
+testerski, pisze fingerprinty do vaulta), **licznik godzin działa zawsze**
+(funkcja produktu).
+
+**PR #103 — deep-scan + Opus 5.** Ręczny digest był najmniej uczciwą rzeczą
+w apce: uruchamiał się PO CICHU, gdy bramka uznała materiał za wystarczający,
+a pytał tylko gdy nie uznała — scan po dużym backlogu i po niczym wyglądały
+identycznie. Teraz **deep scan**: pyta za każdym razem, mówi ile notatek jest
+nowych (cały backlog, nie przycięte okno), ostrzega gdy to ten sam materiał co
+poprzednio (sygnatura okna sha256, persystowana obok zegara), pokazuje `X/10`
+na miesiąc. Digest przełączony na **Opus 5** (ta sama cena $5/$25 co 4.8; guard
+temperatury `startswith("claude-opus-4")` NIE złapałby opus-5 i wysłałby
+`temperature` → 400).
+
+**Pętla review: 4 rundy, ostatnia CLEAN.** Znaleziska warte zapamiętania:
+1. *Nota, której wywołanie padło, była rozliczana tokenami POPRZEDNIEJ noty.*
+   Summarizer połyka błędy sieciowe i zwraca fallback; `last_usage` zostawało
+   z poprzedniego wywołania, a instancja żyje długo. Offline'owy kwadrans pisał
+   wiersze kosztu za wywołania, które nigdy nie opuściły Maca, i zjadał budżet
+   godzin. Lek: sentinel — `last_usage = None` na wejściu obu `generate*`.
+2. *Nagrania DSS/DS2 liczyły ZERO godzin, po cichu.* mutagen 1.47 nie ma
+   parsera tych formatów — a to własne formaty dyktafonu Olympusa, najczęstsze
+   wejście produktu. Lek: czas z ffmpeg (i tak dekoduje je dla whispera) +
+   WARNING, gdy czasu nie da się odczytać.
+3. *Moja poprawka wyścigu nie naprawiała wyścigu.* Rozdzieliłem pisarzy po
+   PID-zie, a **daemon jest wątkiem w apce menu**, nie procesem — dwaj realni
+   pisarze dzielili PID. Lek: lock modułowy + `mkstemp` sprzątany przy błędzie.
+4. *Sentinel nie miał żadnego testu* — usunięcie obu linii zostawiało suitę
+   zieloną, bo to FAKE'i w testach je czyściły. Zweryfikowane mutacją.
+5. *Licznik deep-scanów naliczał kliknięcia, nie płatne runy* — `force=True`
+   nie omija darmowych bailoutów (brak klucza, breaker, lock daemona, <2 noty),
+   więc tester bez klucza mógł wyklikać 10/10 bez jednego wywołania API. Lek:
+   callback `on_paid` odpalany z `_mark`, czyli wtedy i tylko wtedy, gdy TO
+   wywołanie skonsumowało okno (procesowy `digest_runs` tego nie odróżnia —
+   daemon i CLI też go podbijają).
+6. *Rollback sygnatury okna przez `unsee()`* — `_merge_disk_seen` nie adoptował
+   zegara, więc stale'owy holder publikował run sprzed dwóch digestów. Lek
+   u źródła: merge adoptuje zegar, co zamyka ten sam rollback dla
+   `last_digest_at` — ten był tam PRZED tym PR-em.
+7. *I dwa razy pod rząd zepsułem `mark_ran` własnymi poprawkami*: najpierw
+   adopcja kasowała ścieżkę zapisanego digestu, potem przestawienie kolejności
+   cofało zegar o czas trwania runu. Ostatecznie: **późniejszy zegar + własna
+   ścieżka**, obie własności przypięte testami.
+
+Testy: **1531** (`-m "not slow"`), mypy 102 pliki, CI zielone, zero nowych
+znalezisk flake8. Dokumenty testerskie (`H1-TEST-PROTOCOL.md`,
+`TESTER-BUILD-VERIFY.md`) zsynchronizowane z nową nazwą i przebiegiem.
+
+**Znane, świadomie NIE brane:** (a) `test_connections_scheduler.py` ma dwa
+testy bramki padające przy uruchomieniu razem z `test_verdict.py`/
+`test_magic_digest.py` — **zanieczyszczenie sprzed tych PR-ów**, potwierdzone
+na czystym `main`; pełna suita przechodzi, więc CI tego nie łapie.
+(b) Retranscribe (v2) obciąża budżet godzin drugi raz — świadome: drugie
+podsumowanie to drugie realne wywołanie; wiersze niosą `version`.
 
 ## Podsumowanie czytało 5% nagrania (PR #100, 2026-08-04)
 
@@ -575,6 +647,16 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
    `tag_index` osobnym krokiem. Drugi dług: `Docs/ARCHITECTURE.md` opisuje
    nieistniejący backend (`malinche-backend`, endpointy `/api/v1/tags`,
    bramkowanie licencją) — kod woła Anthropic bezpośrednio.
+0c. **PR #101 + #103 — warstwa kosztowa GOTOWA** (szczegóły w sekcji na górze):
+   metering per nota, miesięczny budżet godzin, deep-scan 10/mc, digest na
+   Opusie 5. Cztery rundy review, ostatnia czysta. **To domyka kod przed
+   wysyłką** — H1 wyprodukuje teraz rozkład godzin/mies., czyli liczbę,
+   na której stoi limit 30h w cenniku.
+   Wąskie gardło jest nadal to samo i NIE jest kodem: świeży DMG (ostatni
+   `1bbee1af` z 29.07, sprzed #97–#103), Gatekeeper realnym kanałem, TCC dla
+   Group Containers na buildzie, klucze per-tester (cap $15/workspace, alert
+   na $10 — beta liczy się w innych cenach niż produkcja: Opus+verdict
+   w tester_mode) i lista 3–5 testerów.
 0b. **PR #100 — podsumowanie czyta całe nagranie** (szczegóły w sekcji na górze).
    Kolejność jest tu istotna: PR #99 naprawił *jak* apka opisuje notatkę, PR #100
    naprawił *co w ogóle widzi*. Uczciwy pomiar H1 zaczyna się dopiero po obu —
@@ -621,6 +703,9 @@ pozycjonowania PRO), nie bramką.
 - Stary korpus wciąż niesie śmieciowe wikilinki w Stanowiskach (guard działa na
   nowych notatkach i przez `resummarize_vault.py`) — glosariusz i kanał encji
   będą je widzieć do czasu przebudowy korpusu.
+- Licznik godzin AI jest miękki i lokalny (edytowalny JSON) — w becie
+  enforcement robi cap workspace'u Anthropic, twardy limit idzie na proxy
+  w kroku 4. Świadome.
 - Nagranie dłuższe niż ~7h dalej dostanie okno head+tail — od PR #100 widać to
   w nocie (`summary_coverage`), więc to ryzyko jest **jawne, nie ciche**.
   Eskalacja, gdyby takie nagrania się pojawiły: map-reduce (chunkowanie),
@@ -660,9 +745,13 @@ pozycjonowania PRO), nie bramką.
 Branch: **`main`** — repo ma od 2026-07-29 **wyłącznie `main`** (skasowane 8
 wchłoniętych/porzuconych branchy; praca landingu żyje w osobnym repo
 `~/CODE/timshel-web`, tam jest rozwinięta dalej). Pracuj od czystego `main` ·
-testy: **1253 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
+testy: **1531 pass** (`./venv312/bin/python -m pytest tests/ -m "not slow" --ignore=tests/integration`);
 mypy zielony (`./venv312/bin/python -m mypy src/`, 99 plików).
-Ostatnie pakiety: PR #89 (seen-window + gate $0) → #90 (onboarding first-digest)
+Ostatnie pakiety: #101 (metering per nota + budżet godzin) → #103 (deep-scan +
+Opus 5). Wcześniej: #97/#98 (Voice Memos + kreator), #99 (tagi-encje, guard
+stanowisk), #100 (pełne wejście podsumowania). Nowe pliki: `src/usage_ledger.py`;
+testy `test_usage_ledger`, `test_note_cost_metering`, `test_deep_scan_dialog`.
+Starsze: PR #89 (seen-window + gate $0) → #90 (onboarding first-digest)
 → #91/#92 (zgody + pomiar) → #93/#94 (higiena sygnału) → #95 (instrukcja testera)
 → #96 (kryterium H1 ujednolicone). Starsze: #62/#64/#65/#66/#67.
 UWAGA: nazwy zmienione — app-support `Timshel`, sidecar `.timshel`, log `timshel.log`,
