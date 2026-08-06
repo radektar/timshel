@@ -496,7 +496,15 @@ class DigestScheduler:
         # settle_after_import landing mid-run carries a later timestamp — and
         # adoption would otherwise wipe the path of the digest we just wrote.
         self._merge_disk_seen()
-        self.last_digest_at = now.isoformat(timespec="seconds")
+        # Stamp AFTER the merge (which adopts a newer disk clock and the path
+        # that came with it) — but never roll the clock back. ``now`` is
+        # captured when the run STARTS, so a write landing mid-run legitimately
+        # carries a later timestamp; taking our own unconditionally would undo
+        # it, and taking theirs unconditionally would erase the path of the
+        # digest we just wrote. Keep the later clock and our own path.
+        stamped = now.isoformat(timespec="seconds")
+        if stamped > (self.last_digest_at or ""):
+            self.last_digest_at = stamped
         if path is not None:
             self.last_digest_path = str(path)
         # A run consumed a window: this vault now HAS digest history (also
