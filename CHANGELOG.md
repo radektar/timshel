@@ -43,9 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and then failed outright — no fallback, no diagnosis. whisper's output is now
   watched as a sign of life (each decoded segment on stdout, roughly one per
   30 s of audio, plus the progress line every 5%): 3 minutes of complete silence
-  ends the run and retries the recording once with the GPU off. Startup keeps a
-  15-minute grace, because the first Core ML run on a machine compiles the
-  encoder without printing anything. A stall records **no** permanent verdict —
+  ends the run and retries the recording once with the GPU off. That window
+  adapts to the machine — a box that has been taking two minutes per window is
+  measured against its own pace, not against an M2 — and the phases that are
+  legitimately silent get their own: 15 minutes for startup, and a wide window
+  for the first Core ML encoder compile, which whisper announces (on `large`
+  that compile can take longer than the whole startup grace). A stall records
+  **no** permanent verdict —
   it can come from a loaded CPU or a sleeping disk as easily as from Metal, so
   the GPU is still tried on the next recording — and if the fallback stalls too,
   the error says that instead of a bare exit code.

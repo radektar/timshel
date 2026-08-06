@@ -55,8 +55,38 @@ Sygnałem jest **brak jakiegokolwiek wyjścia**, nie całkowity czas.
    `_persist_gpu_disabled()` zostaje zarezerwowany dla awarii, które się
    zgłaszają. Gdy GPU już było wyłączone albo fallback też zawisł — błąd z
    komunikatem odróżniającym oba przypadki.
-6. **`WhisperRun`** (podklasa `CompletedProcess`) niesie flagę `stalled`:
-   „ubiliśmy to sami" to informacja, której żaden kod wyjścia nie wyraża.
+6. **`WhisperRun`** (podklasa `CompletedProcess`) niesie flagę `stalled` i
+   zmierzoną ciszę `stalled_after`: „ubiliśmy to sami" to informacja, której
+   żaden kod wyjścia nie wyraża, a komunikat ma cytować pomiar, nie próg.
+
+## Poprawki po review (runda 1)
+
+Review wskazało, że próg 3 min i karencja 15 min były mierzone wyłącznie na
+ciepłym starcie `medium` na M2 — czyli nie na scenariuszach, dla których
+istnieją. Stąd:
+
+- **Okno zastoju skaluje się do tempa biegu**: `max(180 s, 4 × najdłuższa
+  dotychczasowa przerwa)`. Stary próg zabijał krótkie nagranie na wolnej
+  maszynie (`medium`, 2 wątki, bez GPU — okno 30 s audio potrafi tam zająć
+  minuty), która i tak zmieściłaby się w godzinie. Tempo liczone jest już od
+  **pierwszego** segmentu (mierzone od ostatniej linii startowej) — inaczej
+  wolna maszyna ginęła zanim zdążyła się „przedstawić". To wyszło dopiero przy
+  teście: pierwsza wersja adaptacji nie miała z czego się uczyć.
+- **Kompilacja Core ML dostała własne okno** (`_STALL_COMPILE_SECONDS`, 30 min).
+  `large` jest wybieralny w ustawieniach, a pierwsza kompilacja enkodera na
+  starszym sprzęcie potrafi przekroczyć 15 min karencji. Faza jest wykrywana, bo
+  whisper ją oznacza (`loading Core ML model` → `Core ML model loaded`), nie
+  zgadywana.
+- **Zgłoszona awaria Metala wygrywa z zastojem.** Marker mógł przyjść bez
+  końcowego `\n` i dopiero potem proces milkł — wtedy `handle_line` go nie
+  widział, a gałąź zastoju przejmowała bieg i werdykt nigdy nie był zapisany.
+  Teraz zabicie na zastoju najpierw domyka częściową linię, a sprawdzenie
+  markerów jest przed sprawdzeniem zastoju.
+- **Komunikat mówi zmierzoną ciszę** — bieg ubity na karencji milczał 15 min,
+  a błąd twierdził „3 min".
+- **Fallback `-ng` nie rusza enkodera** (Core ML jest zawsze), więc komunikat
+  i QUICKSTART kierują przy podwójnym zastoju także na model/zależności, nie
+  wyłącznie na dysk i pamięć.
 
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 

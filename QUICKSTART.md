@@ -140,14 +140,21 @@ changes — or when you delete that file to force a re-probe.
 A GPU can also wedge without reporting anything. The app watches whisper's
 output — a decoded segment per ~30 s of audio, plus a progress line every 5% —
 and if **nothing** arrives for 3 minutes it kills the run and retries the
-recording once with the GPU off. Startup gets a longer leash (15 minutes),
-because the first Core ML run on a machine compiles the encoder in silence.
+recording once with the GPU off. On a slow machine that window widens
+automatically to the pace the run has been keeping, so an old Mac grinding
+through `medium` is not mistaken for a hung one. Two phases are silent by
+nature and get their own budget: startup (15 minutes) and the first Core ML
+encoder compile for a model on this machine, which whisper announces in the log
+and which can take a while on `large`.
 
 Nothing is recorded permanently here: a stall can come from a loaded CPU or a
 sleeping disk just as easily as from Metal, so the GPU stays enabled for the
-next recording. If the retry with the GPU off stalls too, the log says so — at
-that point look at the machine (disk, memory, a stuck iCloud sync), not at the
-GPU.
+next recording. If the retry with the GPU off stalls too, the message says so.
+Note that `-ng` moves only the decoder to the CPU — the encoder always runs
+through Core ML — so a stall that survives the retry points at the model or its
+Core ML encoder (try a smaller model, or **Settings → Maintenance →
+"Re-download dependencies"**) as much as at the machine (disk, memory, a stuck
+iCloud sync).
 
 Note there is no way to turn Core ML off: `WHISPER_COREML` and
 `GGML_METAL_DISABLE` are whisper.cpp *build* switches and do nothing in the

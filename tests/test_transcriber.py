@@ -1404,10 +1404,15 @@ def _reported_error(transcriber) -> str:
     raise AssertionError("no ERROR state was reported")
 
 
-def _stalled_run(stderr: str = "") -> WhisperRun:
+def _stalled_run(stderr: str = "", stalled_after: float = 180.0) -> WhisperRun:
     """What _run_whisper_streaming returns for a run it killed for silence."""
     return WhisperRun(
-        args=["whisper"], returncode=-9, stdout="", stderr=stderr, stalled=True
+        args=["whisper"],
+        returncode=-9,
+        stdout="",
+        stderr=stderr,
+        stalled=True,
+        stalled_after=stalled_after,
     )
 
 
@@ -1450,6 +1455,75 @@ def test_run_macwhisper_stall_falls_back_to_cpu_for_this_recording_only(
     assert not transcriber._gpu_flag_path().exists()
 
 
+def test_a_metal_error_that_ends_in_silence_is_still_a_metal_error(
+    transcriber, tmp_path, monkeypatch
+):
+    """A GPU that reports an error and *then* wedges must be recorded as a Metal
+    failure, not written off as a stall.
+
+    The marker can arrive without a trailing newline, so it never reaches the
+    line handler and the run ends as a stall. Reading that as "silence, cause
+    unknown" would skip the verdict, and every future recording would pay the
+    stall window plus a doubled run to rediscover the same broken GPU.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._boot_id = lambda: "boot:1"  # type: ignore[assignment]
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
+            return _stalled_run(
+                stderr="ggml_metal_synchronize: error: command buffer 0 failed "
+                "with status 5"  # no trailing newline, then silence
+            )
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 2
+    assert transcriber._gpu_disabled_in_session is True
+    assert transcriber._gpu_flag_path().exists()  # the failure was recorded
+
+
+def test_streaming_handles_a_marker_left_unterminated_by_a_stall(
+    transcriber, tmp_path, monkeypatch
+):
+    """The stall kill must first flush what whisper wrote without a newline —
+    otherwise the marker sits in the buffer and the abort reason is lost."""
+    proc = _FakePipeProc(
+        "ggml_metal_init: error: failed to allocate Metal buffer",  # no newline
+        hold_open=True,
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    with patch("src.transcriber.logger") as mock_logger:
+        result = transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+    assert "failed to allocate Metal buffer" in result.stderr
+    warnings = " ".join(
+        str(call.args[0]) for call in mock_logger.warning.call_args_list
+    )
+    assert "Metal error detected" in warnings
+    assert "killing it as stalled" not in warnings  # not a mystery silence
+
+
 def test_run_macwhisper_stall_with_gpu_off_does_not_run_twice(
     transcriber, tmp_path, monkeypatch
 ):
@@ -1466,13 +1540,18 @@ def test_run_macwhisper_stall_with_gpu_off_does_not_run_twice(
     transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
         return_value=tmp_path / "sample.whisper16k.wav"
     )
-    mock_runner = MagicMock(return_value=_stalled_run())
+    # Killed during startup: silent for the grace window, not the decode one.
+    mock_runner = MagicMock(return_value=_stalled_run(stalled_after=900.0))
     transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
     transcriber._update_state = MagicMock()  # type: ignore[assignment]
 
     assert transcriber._run_macwhisper(audio_file) is None
     assert mock_runner.call_count == 1
-    assert "utknęła" in _reported_error(transcriber)
+    error_msg = _reported_error(transcriber)
+    assert "utknęła" in error_msg
+    # The measured silence, not whichever threshold the code quotes: saying
+    # "3 min" about a 15-minute wait sends the reader looking for the wrong bug.
+    assert "15 min" in error_msg
 
 
 def test_run_macwhisper_reports_a_stall_that_survives_the_fallback(
@@ -1891,6 +1970,148 @@ def test_is_stalled_tightens_once_output_starts(transcriber):
         )
         is True
     )
+
+
+def test_is_stalled_gives_the_coreml_compile_its_own_window(transcriber):
+    """The first Core ML run for a model compiles the encoder in silence, and on
+    `large` that can outlast the grace window — killing a healthy first launch.
+
+    whisper brackets the phase in its output, so it is detected, not guessed at.
+    """
+    assert transcriber._STALL_COMPILE_SECONDS > transcriber._STALL_GRACE_SECONDS
+    silent = transcriber._STALL_GRACE_SECONDS + 60
+
+    assert (
+        transcriber._is_stalled(
+            silent_for=silent, decoding_started=False, coreml_compiling=True
+        )
+        is False
+    )
+    # …and the wide window is not a blank cheque.
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_COMPILE_SECONDS + 1,
+            decoding_started=False,
+            coreml_compiling=True,
+        )
+        is True
+    )
+
+
+def test_is_stalled_scales_the_window_to_a_slow_machine(transcriber):
+    """The 3-minute floor is measured on an M2. An old box on `medium` with the
+    GPU off can legitimately need minutes per 30 s window, and a short memo
+    would be killed inside a run it was going to finish — so the window also
+    scales with the pace this run has actually shown."""
+    slow_gap = transcriber._STALL_SILENCE_SECONDS - 20  # under the floor, but slow
+
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_SILENCE_SECONDS + 60,
+            decoding_started=True,
+            longest_gap=slow_gap,
+        )
+        is False
+    )
+    # A machine that fast never buys extra room: the floor still applies.
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_SILENCE_SECONDS + 1,
+            decoding_started=True,
+            longest_gap=0.5,
+        )
+        is True
+    )
+
+
+def test_streaming_learns_the_pace_and_keeps_a_slow_run_alive(
+    transcriber, tmp_path, monkeypatch
+):
+    """The pace has to be measured from the run itself, not assumed.
+
+    A machine whose segments land just inside the window must widen it, or the
+    first slightly slower window kills the recording.
+    """
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=6,
+        interval=0.25,
+        stream="stdout",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    # Floor below the drip interval: only the learned pace can save this run.
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_streaming_waits_out_the_coreml_compile(transcriber, tmp_path, monkeypatch):
+    """A run silent inside the announced Core ML compile must not be killed on
+    the ordinary grace window."""
+    proc = _FakePipeProc(
+        "whisper_init_state: loading Core ML model from 'ggml-large-encoder.mlmodelc'\n",
+        hold_open=True,
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.1)
+    monkeypatch.setattr(type(transcriber), "_STALL_COMPILE_SECONDS", 30)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.6, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_streaming_leaves_the_compile_window_once_the_model_is_loaded(
+    transcriber, tmp_path, monkeypatch
+):
+    """…and the wide window closes when whisper says the model is loaded — it
+    covers the compile, not the whole run."""
+    proc = _FakePipeProc(
+        "whisper_init_state: loading Core ML model from 'ggml-large-encoder.mlmodelc'\n"
+        "whisper_init_state: Core ML model loaded\n",
+        hold_open=True,
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.3)
+    monkeypatch.setattr(type(transcriber), "_STALL_COMPILE_SECONDS", 5)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    started = time.time()
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.stalled is True
+    # On the *grace* window: if the compile window stayed open, the kill would
+    # land seconds later and every wedge after a warm load would wait it out.
+    assert time.time() - started < 2.0
+
+
+def test_stalled_run_reports_how_long_the_silence_actually_was(
+    transcriber, tmp_path, monkeypatch
+):
+    """The user-facing error quotes the measured silence, not a threshold: a run
+    killed during startup was quiet far longer than the decode window."""
+    proc = _FakePipeProc("whisper_init: loading model\n", hold_open=True)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.5)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.stalled is True
+    # Killed on the grace window, so that is what it must report.
+    assert result.stalled_after >= 0.5
 
 
 def test_streaming_kills_a_wedged_run_long_before_the_timeout(
