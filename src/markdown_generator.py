@@ -1,6 +1,7 @@
 """Markdown document generator for transcriptions."""
 
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -120,14 +121,22 @@ class MarkdownGenerator:
         ffprobe is not shipped.
         """
         ffmpeg = getattr(config, "FFMPEG_PATH", None)
+        if not ffmpeg or not Path(str(ffmpeg)).exists():
+            # Same fallback as _convert_to_wav: the configured path may point
+            # at a bundled binary that has not been downloaded yet, while a
+            # system ffmpeg is on PATH. Without this the DSS user whose
+            # transcription works still counts zero hours.
+            ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             return None
         try:
             proc = subprocess.run(
-                [str(ffmpeg), "-hide_banner", "-i", str(audio_file)],
+                # -nostdin: the daemon can inherit a TTY, and ffmpeg reading
+                # from it would hang until the timeout.
+                [str(ffmpeg), "-hide_banner", "-nostdin", "-i", str(audio_file)],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=15,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:

@@ -368,6 +368,27 @@ class TestCreateMarkdownDocument:
             output_dir.chmod(0o755)
 
 
+_REAL_FFMPEG_PROBE = None
+
+
+@pytest.fixture(autouse=True)
+def _no_ffmpeg_subprocess(monkeypatch):
+    """Keep unit tests off the host's ffmpeg.
+
+    The synthetic fixtures here are not real audio, so mutagen returns no
+    duration and the ffmpeg fallback would shell out for every one of them —
+    an external binary (and a timeout) newly on the unit-test path.
+    """
+    global _REAL_FFMPEG_PROBE
+    from src.markdown_generator import MarkdownGenerator
+
+    if _REAL_FFMPEG_PROBE is None:
+        _REAL_FFMPEG_PROBE = MarkdownGenerator._duration_via_ffmpeg
+    monkeypatch.setattr(
+        MarkdownGenerator, "_duration_via_ffmpeg", staticmethod(lambda _f: None)
+    )
+
+
 class TestDurationFallback:
     """mutagen has no DSS/DS2 parser — the Olympus dictaphone's own formats.
     Without an ffmpeg fallback the AI-hours ledger reads zero for exactly the
@@ -403,7 +424,7 @@ class TestDurationFallback:
                 "P", (), {"stderr": "  Duration: 01:23:45.67, start: 0.0\n"}
             )(),
         )
-        assert MarkdownGenerator._duration_via_ffmpeg(tmp_path / "x.dss") == 5025
+        assert _REAL_FFMPEG_PROBE(tmp_path / "x.dss") == 5025
 
     def test_missing_duration_is_logged_not_silent(self, tmp_path, monkeypatch, caplog):
         import logging
@@ -426,4 +447,5 @@ class TestDurationFallback:
         from src.markdown_generator import MarkdownGenerator
 
         monkeypatch.setattr(config, "FFMPEG_PATH", None)
-        assert MarkdownGenerator._duration_via_ffmpeg(tmp_path / "x.dss") is None
+        monkeypatch.setattr("src.markdown_generator.shutil.which", lambda _n: None)
+        assert _REAL_FFMPEG_PROBE(tmp_path / "x.dss") is None

@@ -18,21 +18,25 @@ subscription proxy exists.
 
 Concurrency
 -----------
-Both the menu app and the daemon finalize notes, so both increment this file.
-Writes are read-fresh → modify → atomic ``os.replace`` via a PID-unique temp
-file, with no lock. Today the note path is additionally serialized by
-``ProcessLock``, but that is not something this module relies on. Two
-increments landing in the same millisecond from different processes can lose
-one — accepted on purpose: counters (unlike the scheduler's seen-set) cannot
-be merged idempotently without an oplog, and a soft budget does not justify
-one. Every function swallows its own errors: a broken ledger must never stop a
-note from being written.
+The daemon is a THREAD inside the menu app, not a separate process, so the two
+writers (a note finalizing, a deep scan being counted) share a PID: a
+per-process temp file would not keep them apart. Read→modify→write is therefore
+serialized by a module-level lock and published with an atomic ``os.replace``
+from a uniquely-named temp file, which is unlinked even when the write fails.
+A separate process (the ``magic_digest`` CLI) can still lose one increment by
+racing the app — accepted on purpose: counters, unlike the scheduler's
+seen-set, cannot be merged idempotently without an oplog, and a soft budget
+does not justify one. What must never happen is a corrupt file, because that
+loses the WHOLE month. Every function swallows its own errors: a broken ledger
+must never stop a note from being written.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +46,10 @@ from src.config import config
 from src.logger import logger
 
 LEDGER_SCHEMA = 1
+
+# Serializes read→modify→write within this process. The daemon runs as a thread
+# beside the menu app, so both writers are in here.
+_LOCK = threading.Lock()
 
 
 @dataclass
@@ -128,12 +136,18 @@ def _write(usage: MonthlyUsage) -> None:
         "notified_80": bool(usage.notified_80),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    # PID in the temp name: a shared one lets two processes interleave their
-    # writes into the same file, so os.replace would publish mangled JSON —
-    # and a corrupt ledger loses the WHOLE month, not one increment.
-    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    # A unique temp file per write, removed even on failure: a shared name lets
+    # two writers interleave into one file and os.replace then publishes
+    # mangled JSON — which costs the whole month, not one increment.
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def add_ai_seconds(
@@ -144,45 +158,48 @@ def add_ai_seconds(
     ``None`` (text imports have no audio) and non-positive values are ignored
     so a note without a duration cannot corrupt the counter.
     """
-    usage = read_usage(now)
     if seconds is None:
-        return usage
+        return read_usage(now)
     try:
         delta = int(seconds)
     except (TypeError, ValueError):
-        return usage
+        return read_usage(now)
     if delta <= 0:
+        return read_usage(now)
+    with _LOCK:
+        usage = read_usage(now)
+        usage.ai_seconds += delta
+        try:
+            _write(usage)
+        except OSError as exc:
+            logger.warning("usage ledger write failed: %s", exc)
         return usage
-    usage.ai_seconds += delta
-    try:
-        _write(usage)
-    except OSError as exc:
-        logger.warning("usage ledger write failed: %s", exc)
-    return usage
 
 
 def increment_deep_scan(now: Optional[datetime] = None) -> MonthlyUsage:
     """Count one manual deep scan. Never raises."""
-    usage = read_usage(now)
-    usage.deep_scans += 1
-    try:
-        _write(usage)
-    except OSError as exc:
-        logger.warning("usage ledger write failed: %s", exc)
-    return usage
+    with _LOCK:
+        usage = read_usage(now)
+        usage.deep_scans += 1
+        try:
+            _write(usage)
+        except OSError as exc:
+            logger.warning("usage ledger write failed: %s", exc)
+        return usage
 
 
 def mark_notified_80(now: Optional[datetime] = None) -> MonthlyUsage:
     """Latch the 80%-of-budget notice so it fires once per month. Never raises."""
-    usage = read_usage(now)
-    if usage.notified_80:
+    with _LOCK:
+        usage = read_usage(now)
+        if usage.notified_80:
+            return usage
+        usage.notified_80 = True
+        try:
+            _write(usage)
+        except OSError as exc:
+            logger.warning("usage ledger write failed: %s", exc)
         return usage
-    usage.notified_80 = True
-    try:
-        _write(usage)
-    except OSError as exc:
-        logger.warning("usage ledger write failed: %s", exc)
-    return usage
 
 
 def format_hours(seconds: int) -> str:

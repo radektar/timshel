@@ -120,18 +120,55 @@ def test_format_hours(seconds, expected):
     assert usage_ledger.format_hours(seconds) == expected
 
 
-def test_temp_file_is_per_process(ledger_file, monkeypatch):
+def test_each_write_uses_its_own_temp_file(ledger_file):
     """A shared temp name lets two writers interleave into one file, and
     os.replace then publishes mangled JSON — losing the whole month, not one
-    increment."""
-    import os
-
+    increment. The daemon is a THREAD beside the menu app, so a PID would not
+    have separated them."""
     seen = []
-    real_replace = os.replace
-    monkeypatch.setattr(
-        usage_ledger.os,
-        "replace",
-        lambda src, dst: (seen.append(str(src)), real_replace(src, dst))[1],
-    )
+    real_replace = usage_ledger.os.replace
+
+    def _spy(src, dst):
+        seen.append(str(src))
+        return real_replace(src, dst)
+
+    usage_ledger.os.replace = _spy
+    try:
+        usage_ledger.add_ai_seconds(60)
+        usage_ledger.add_ai_seconds(60)
+    finally:
+        usage_ledger.os.replace = real_replace
+
+    assert len(set(seen)) == 2  # no shared temp path between writes
+
+
+def test_no_temp_files_left_behind(ledger_file):
     usage_ledger.add_ai_seconds(60)
-    assert str(os.getpid()) in seen[0]
+    assert list(ledger_file.parent.glob("*.tmp")) == []
+
+
+def test_failed_write_leaves_no_litter(ledger_file, monkeypatch):
+    def boom(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(usage_ledger.os, "replace", boom)
+    usage_ledger.add_ai_seconds(60)  # swallowed
+    assert list(ledger_file.parent.glob("*.tmp")) == []
+
+
+def test_concurrent_writers_do_not_lose_the_month(ledger_file):
+    """The real concurrency here is two THREADS in one process: a note
+    finalizing while a deep scan is counted."""
+    import threading
+
+    def add():
+        for _ in range(25):
+            usage_ledger.add_ai_seconds(60)
+
+    threads = [threading.Thread(target=add) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert usage_ledger.read_usage().ai_seconds == 4 * 25 * 60

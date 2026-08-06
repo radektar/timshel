@@ -771,6 +771,7 @@ class OpenAISummarizer(ClaudeSummarizer):
             )
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.last_usage: Any = None
         logger.info("🔑 OpenAI client built — model=%s", model)
         self.max_words = config.SUMMARY_MAX_WORDS
         self.title_max_length = config.TITLE_MAX_LENGTH
@@ -800,6 +801,7 @@ class OpenAISummarizer(ClaudeSummarizer):
         prompt = self._build_prompt(transcript, known_terms_block, correction)
         try:
             start_time = time.time()
+            self.last_usage = None
             response = self.client.chat.completions.create(
                 model=self.model,
                 # 8192: a 4:43 recording's v2 summary hit the 2048 ceiling and
@@ -811,6 +813,7 @@ class OpenAISummarizer(ClaudeSummarizer):
                 messages=[{"role": "user", "content": prompt}],
             )
             logger.debug("OpenAI call completed in %.2fs", time.time() - start_time)
+            self.last_usage = getattr(response, "usage", None)
             text = response.choices[0].message.content or ""
             title, summary = self._parse_response(text)
             title = _truncate_title(title, self.title_max_length)

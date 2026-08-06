@@ -1792,6 +1792,9 @@ Brak podsumowania AI. Możliwe przyczyny:
         # periodic scan then retries the whole tail every 30s — counting before
         # the note exists would burn a 30h budget in minutes on one recording.
         # Cost rows stay where they are: that spend was real either way.
+        # A retranscribe (version 2+) charges the recording's hours again.
+        # Deliberate: the second summary is a second real API call. The rows
+        # carry ``version`` so a cost analysis can separate the two.
         if summarized_by_llm and not is_fallback_summary(summary.get("summary", "")):
             self._count_ai_hours(meter.duration_seconds)
         return md_path
