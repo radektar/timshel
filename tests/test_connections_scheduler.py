@@ -1438,3 +1438,43 @@ def test_onboarding_signature_describes_the_window_not_the_corpus(tmp_path):
 
     assert sched.last_window_sig == window_signature(window)
     assert sched.seen_note_keys == corpus
+
+
+def test_mark_ran_keeps_its_own_digest_path_against_a_newer_disk_clock(tmp_path):
+    """``now`` is captured when the run STARTS, so an unrelated write landing
+    mid-run carries a later timestamp. Adopting it must not erase the path of
+    the digest we just wrote — the regression the adopt-on-merge fix caused."""
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    sched = DigestScheduler(state)
+    run_started = datetime(2026, 8, 6, 10, 0, 0)
+
+    # Another writer (settle_after_import) bumps the clock during our run.
+    other = DigestScheduler(state)
+    other.last_digest_at = datetime(2026, 8, 6, 10, 5, 0).isoformat(timespec="seconds")
+    other._save()
+
+    digest = tmp_path / "Zestawienie.md"
+    sched.mark_ran(run_started, digest, seen_keys={"n1", "n2"})
+
+    assert sched.last_digest_path == str(digest)
+    assert DigestScheduler(state).last_digest_path == str(digest)
+
+
+def test_on_paid_fires_only_when_a_window_was_consumed(tmp_path, monkeypatch):
+    """The manual deep scan bills on this callback; a free bail must be silent."""
+    import src.connections.scheduler as sched_mod
+
+    monkeypatch.setattr(sched_mod.config, "TRANSCRIBE_DIR", tmp_path)
+    monkeypatch.setattr(
+        "src.connections.synthesis.get_synthesizer", lambda *a, **kw: None
+    )
+    sched_mod.reset_scheduler_for_tests()
+
+    paid = []
+    # No synthesizer → the run bails for free before any assembly.
+    assert (
+        sched_mod.run_digest_if_due(force=True, on_paid=lambda: paid.append(1)) is None
+    )
+    assert paid == []

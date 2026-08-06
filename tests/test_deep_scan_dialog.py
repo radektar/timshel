@@ -43,9 +43,12 @@ def _usage(deep_scans=0):
     return SimpleNamespace(deep_scans=deep_scans)
 
 
-def _text(app, monkeypatch, potential, usage, last_sig=None):
+def _text(app, monkeypatch, potential, usage, last_sig=None, digest_runs=3):
     monkeypatch.setattr(
         TimshelMenuApp, "_last_digest_window_sig", staticmethod(lambda: last_sig)
+    )
+    monkeypatch.setattr(
+        TimshelMenuApp, "_digest_runs", staticmethod(lambda: digest_runs)
     )
     return app._deep_scan_dialog_text(potential, usage)
 
@@ -108,11 +111,10 @@ def test_failed_preview_still_produces_a_dialog(app, monkeypatch):
 def _drive(app, monkeypatch, *, answer, potential=None, paid=True):
     """Run the handler synchronously, capturing whether the digest fired.
 
-    ``paid`` models whether the run consumed a window: the scheduler bumps
-    ``digest_runs`` only then, and a free bail leaves it untouched.
+    ``paid`` models whether the run consumed a window: the scheduler fires
+    ``on_paid`` only then, and a free bail never calls it.
     """
     ran = []
-    runs = {"n": 4}
     monkeypatch.setattr(ma, "_run_on_main_thread", lambda fn: fn())
     monkeypatch.setattr(ma.rumps, "alert", lambda *a, **kw: answer)
     monkeypatch.setattr(ma, "send_notification", lambda *a, **kw: None)
@@ -120,12 +122,12 @@ def _drive(app, monkeypatch, *, answer, potential=None, paid=True):
         "src.connections.scheduler.estimate_digest_potential",
         lambda *a, **kw: potential or _potential(),
     )
-    monkeypatch.setattr(TimshelMenuApp, "_digest_runs", staticmethod(lambda: runs["n"]))
+    monkeypatch.setattr(TimshelMenuApp, "_digest_runs", staticmethod(lambda: 3))
 
-    def _fake_run(*_a, **_kw):
+    def _fake_run(*_a, on_paid=None, **_kw):
         ran.append(1)
-        if paid:
-            runs["n"] += 1
+        if paid and on_paid is not None:
+            on_paid()
         return None
 
     monkeypatch.setattr("src.connections.run_digest_if_due", _fake_run)
@@ -193,3 +195,50 @@ def test_dialog_is_shown_even_when_the_gate_would_pass(app, monkeypatch):
     monkeypatch.setattr("threading.Thread", _Thread)
     app._generate_digest_now(None)
     assert len(asked) == 1
+
+
+def test_another_writer_bumping_the_run_counter_does_not_charge_us(app, monkeypatch):
+    """digest_runs is process-wide: the daemon finishing its own digest while
+    ours bails on the lock must not land on the user's bill. Billing keys off
+    on_paid, which only OUR run can fire."""
+    from src import usage_ledger
+
+    monkeypatch.setattr(ma, "_run_on_main_thread", lambda fn: fn())
+    monkeypatch.setattr(ma.rumps, "alert", lambda *a, **kw: 1)
+    monkeypatch.setattr(ma, "send_notification", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "src.connections.scheduler.estimate_digest_potential",
+        lambda *a, **kw: _potential(),
+    )
+    counts = iter([4, 9])  # someone else's digest lands mid-call
+    monkeypatch.setattr(
+        TimshelMenuApp, "_digest_runs", staticmethod(lambda: next(counts, 9))
+    )
+    # Our run bails for free: on_paid is never invoked.
+    monkeypatch.setattr("src.connections.run_digest_if_due", lambda *a, **kw: None)
+
+    class _Thread:
+        def __init__(self, target=None, **_kw):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr("threading.Thread", _Thread)
+    app._generate_digest_now(None)
+    assert usage_ledger.read_usage().deep_scans == 0
+
+
+def test_first_ever_scan_does_not_claim_a_previous_digest(app, monkeypatch):
+    """On a fresh vault unseen_total is the whole corpus and no digest has run
+    — "since your last digest" would invent one."""
+    text = _text(
+        app, monkeypatch, _potential(unseen_total=247), _usage(), digest_runs=0
+    )
+    assert "247 new notes in your vault" in text
+    assert "since your last digest" not in text
+
+
+def test_after_a_digest_the_wording_is_relative_to_it(app, monkeypatch):
+    text = _text(app, monkeypatch, _potential(unseen_total=5), _usage(), digest_runs=3)
+    assert "5 new notes since your last digest" in text
