@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -229,8 +230,8 @@ class Transcriber:
         self._ai_disabled_reason: Optional[str] = None
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
         self._session_failed_fingerprints: set = set()
-        self._coreml_disabled_in_session: bool = False
-        self._load_persisted_coreml_disabled()
+        self._gpu_disabled_in_session: bool = False
+        self._load_persisted_gpu_disabled()
         self._last_run_was_transient_failure: bool = False
         self.vault_index = VaultIndex(self.config.TRANSCRIBE_DIR)
         self.vault_index.load()
@@ -727,14 +728,16 @@ class Transcriber:
     def _run_whisper_transcription(
         self,
         audio_file: Path,
-        use_coreml: bool = True,
+        use_gpu: bool = True,
         source_audio: Optional[Path] = None,
     ) -> subprocess.CompletedProcess:
         """Run whisper.cpp transcription.
 
         Args:
             audio_file: Original recording; its stem names the output TXT.
-            use_coreml: Whether to allow Core ML acceleration (disable for fallback)
+            use_gpu: Whether to allow the Metal backend (off for the fallback).
+                Note this does *not* turn Core ML off — the encoder always runs
+                through Core ML in this build; only the decoder moves to CPU.
             source_audio: Actual audio fed to whisper-cli. Defaults to
                 ``audio_file``; callers pass a converted 16 kHz WAV here so
                 whisper always receives a format it can decode (see
@@ -743,8 +746,8 @@ class Transcriber:
         Returns:
             CompletedProcess from subprocess.run
         """
-        if use_coreml and self._coreml_disabled_in_session:
-            use_coreml = False
+        if use_gpu and self._gpu_disabled_in_session:
+            use_gpu = False
 
         whisper_input = source_audio if source_audio is not None else audio_file
 
@@ -787,31 +790,25 @@ class Transcriber:
             whisper_cmd.extend(["--prompt", glossary])
             logger.debug("Whisper glossary (%d chars): %s", len(glossary), glossary)
 
-        # Set environment for Core ML / Metal control
-        env = None
-        if not use_coreml:
-            # Explicitly disable Core ML / Metal backends to force pure CPU mode.
-            # Using both WHISPER_COREML and GGML_METAL_DISABLE increases
-            # compatibility across whisper.cpp / ggml versions.
-            base_env = dict(os.environ)
-            base_env["WHISPER_COREML"] = "0"
-            base_env["GGML_METAL_DISABLE"] = "1"
-            env = base_env
-            logger.debug(
-                "Core ML / Metal disabled for this attempt "
-                "(WHISPER_COREML=0, GGML_METAL_DISABLE=1)"
-            )
+        # Turn the GPU off for the fallback attempt. This has to be the CLI
+        # flag: WHISPER_COREML / GGML_METAL_DISABLE are build-time switches in
+        # whisper.cpp, so setting them in the environment did nothing at all —
+        # the "CPU retry" used to run with `use gpu = 1`, identical to the
+        # attempt it was supposed to be rescuing.
+        if not use_gpu:
+            whisper_cmd.append("-ng")
+            logger.debug("Metal backend disabled for this attempt (-ng)")
 
         logger.debug(
             f"Running whisper.cpp: model={self.config.WHISPER_MODEL}, "
             f"language={self.config.WHISPER_LANGUAGE}, "
-            f"coreml={'enabled' if use_coreml else 'disabled'}, "
+            f"gpu={'enabled' if use_gpu else 'disabled'}, "
             f"threads={threads}, "
             f"timeout={self.config.TRANSCRIPTION_TIMEOUT}s"
         )
 
         return self._run_whisper_streaming(
-            whisper_cmd, env=env, use_coreml=use_coreml, audio_file=audio_file
+            whisper_cmd, env=None, use_gpu=use_gpu, audio_file=audio_file
         )
 
     @staticmethod
@@ -830,14 +827,14 @@ class Transcriber:
         cmd: List[str],
         *,
         env: Optional[dict],
-        use_coreml: bool,
+        use_gpu: bool,
         audio_file: Path,
     ) -> subprocess.CompletedProcess:
         """Run whisper-cli with live stderr streaming.
 
         Replaces a blocking ``subprocess.run(capture_output=True)`` to fix two
         bugs at once:
-          1. **Early Core ML/Metal abort.** whisper.cpp prints the Metal error
+          1. **Early Metal abort.** whisper.cpp prints the Metal error
              at backend init; the old post-hoc stderr check only saw it after the
              whole run finished, wasting ~10 min before the CPU fallback. We now
              detect the marker live and kill the process within seconds.
@@ -881,7 +878,7 @@ class Transcriber:
         last_logged_pct = -1
         last_heartbeat = time.time()
         started = time.time()
-        coreml_failed = False
+        metal_failed = False
 
         assert proc.stderr is not None  # stderr=PIPE above guarantees it
         stderr_fd = proc.stderr.fileno()
@@ -891,12 +888,12 @@ class Transcriber:
 
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
-            nonlocal coreml_failed, last_logged_pct, last_heartbeat
-            if use_coreml and any(m in line for m in self._COREML_FAIL_MARKERS):
-                coreml_failed = True
+            nonlocal metal_failed, last_logged_pct, last_heartbeat
+            if use_gpu and any(m in line for m in self._METAL_FAIL_MARKERS):
+                metal_failed = True
                 logger.warning(
-                    "⚡ Core ML/Metal error detected after %.0fs — "
-                    "aborting GPU attempt, will retry on CPU",
+                    "⚡ Metal error detected after %.0fs — "
+                    "aborting GPU attempt, will retry with GPU off",
                     time.time() - started,
                 )
                 proc.kill()
@@ -1000,7 +997,7 @@ class Transcriber:
                 self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
-        if coreml_failed and returncode == 0:
+        if metal_failed and returncode == 0:
             # Ensure the caller treats an early-aborted GPU run as a failure
             # so the CPU fallback fires.
             returncode = -1
@@ -1035,42 +1032,165 @@ class Transcriber:
         except (ProcessLookupError, PermissionError, OSError) as error:
             logger.debug("stop(): could not kill whisper process: %s", error)
 
-    def _coreml_flag_path(self) -> Path:
-        """Sidecar file recording that Core ML/Metal failed on this machine."""
+    # Bumped whenever the detector's semantics change: an old verdict was
+    # recorded by a different (here: broken) definition of "Metal failed", so
+    # it must not survive the upgrade — every machine re-probes the GPU once.
+    _GPU_VERDICT_VERSION = 2
+
+    def _gpu_flag_path(self) -> Path:
+        """Sidecar file recording that Metal failed on this machine.
+
+        Filename kept from when the verdict was (mis)labelled "coreml" so no
+        migration is needed — the version in the signature invalidates it.
+        """
         return self.config.STATE_FILE.parent / "coreml_status.json"
 
-    def _coreml_signature(self) -> str:
-        """Identity for the persisted verdict: re-probe if whisper or model changes."""
+    def _gpu_signature(self) -> str:
+        """Identity for the persisted verdict: re-probe when anything that could
+        change the answer changes — whisper binary, model, macOS, detector."""
         try:
             size = self.config.WHISPER_CPP_PATH.stat().st_size
         except OSError:
             size = 0
-        return f"{size}:{self.config.WHISPER_MODEL}"
+        macos = platform.mac_ver()[0]
+        return (
+            f"v{self._GPU_VERDICT_VERSION}:{size}:{self.config.WHISPER_MODEL}:{macos}"
+        )
 
-    def _load_persisted_coreml_disabled(self) -> None:
-        """Honour a previously recorded Metal failure so we don't waste a full
-        GPU attempt rediscovering it on every launch."""
+    # A Metal failure only becomes a standing verdict once it has happened on
+    # this many separate boots. One `failed to allocate Metal buffer` under
+    # momentary VRAM pressure (Blender, a browser) is an accident, not a broken
+    # machine — and the verdict is expensive: it silently keeps the decoder on
+    # the CPU for good, with no UI signal and no reset button.
+    _GPU_VERDICT_MIN_FAILURES = 2
+
+    # …or once they are this far apart in time. Boot alone is too lazy a unit:
+    # macOS boxes run for weeks (a reboot is not a thing users do to fix this),
+    # and a GPU that dies *mid-run* costs a doubled wall clock on the first
+    # recording after every app start until the verdict finally sticks.
+    _GPU_FAILURE_COOLDOWN_SECONDS = 12 * 3600
+
+    # Absolute path: launchd hands the daemon a minimal PATH, and a silent
+    # slide into the day-based fallback would quietly change what the tally
+    # counts.
+    _SYSCTL_PATH = "/usr/sbin/sysctl"
+
+    def _boot_id(self) -> str:
+        """Identity of the current boot — the unit the failure tally counts in.
+
+        Counting *processes* would not do: the daemon and the menu bar app run
+        side by side (see ProcessLock) with a Transcriber each, so one hour of
+        VRAM pressure would tick the tally twice within a minute and condemn a
+        healthy GPU — exactly the false positive the threshold exists to stop.
+        Falls back to the calendar day if sysctl is unavailable.
+        """
         try:
-            data = json.loads(self._coreml_flag_path().read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if data.get("disabled") and data.get("signature") == self._coreml_signature():
-            self._coreml_disabled_in_session = True
+            probe = subprocess.run(
+                [self._SYSCTL_PATH, "-n", "kern.boottime"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            match = re.search(r"sec\s*=\s*(\d+)", probe.stdout or "")
+            if match:
+                return f"boot:{match.group(1)}"
+            logger.debug("Unexpected kern.boottime output: %r", probe.stdout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Could not read kern.boottime: %s", exc)
+        return f"day:{datetime.now().date().isoformat()}"
+
+    def _read_gpu_verdict(self) -> dict:
+        """Persisted verdict for the current signature, or an empty dict."""
+        try:
+            data = json.loads(self._gpu_flag_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # ValueError covers both JSONDecodeError and the UnicodeDecodeError
+            # a corrupted sidecar raises — callers run inside the transcription
+            # path, where a bad status file must never sink the recording.
+            return {}
+        if not isinstance(data, dict) or data.get("signature") != self._gpu_signature():
+            return {}
+        return data
+
+    def _load_persisted_gpu_disabled(self) -> None:
+        """Honour a *confirmed* Metal failure so we don't waste a full GPU
+        attempt rediscovering it on every launch."""
+        data = self._read_gpu_verdict()
+        failures = data.get("failures", 0)
+        if data.get("disabled") and failures >= self._GPU_VERDICT_MIN_FAILURES:
+            self._gpu_disabled_in_session = True
             logger.info(
-                "Core ML disabled (persisted: Metal failed previously on this "
-                "machine for the current whisper/model)"
+                "GPU (Metal) disabled (persisted: %d independent Metal failures "
+                "on this machine for the current whisper/model/macOS)",
+                failures,
             )
 
-    def _persist_coreml_disabled(self) -> None:
-        """Record the Metal failure so future launches skip the GPU attempt."""
+    def _persist_gpu_disabled(self) -> None:
+        """Count this Metal failure; a second, independent one makes it stick.
+
+        "Independent" = another boot, or far enough apart in time. The daemon
+        and the menu bar app hitting the same VRAM squeeze minutes apart is one
+        event, not two; the same machine failing again tomorrow is two.
+        """
+        data = self._read_gpu_verdict()
+        boot_id = self._boot_id()
+        now = time.time()
+        failures = data.get("failures", 0)
+        age = now - data.get("at", 0)
+        counted = (
+            data.get("boot_id") != boot_id or age >= self._GPU_FAILURE_COOLDOWN_SECONDS
+        )
+        if counted:
+            failures += 1
         try:
-            self._coreml_flag_path().parent.mkdir(parents=True, exist_ok=True)
-            self._coreml_flag_path().write_text(
-                json.dumps({"disabled": True, "signature": self._coreml_signature()}),
+            self._gpu_flag_path().parent.mkdir(parents=True, exist_ok=True)
+            self._gpu_flag_path().write_text(
+                json.dumps(
+                    {
+                        "disabled": True,
+                        "signature": self._gpu_signature(),
+                        "failures": failures,
+                        "boot_id": boot_id,
+                        # Stamped only when the failure was counted: a rolling
+                        # stamp would restart the window on every failure, so a
+                        # machine failing more often than the cooldown could
+                        # never reach the threshold — the exact cost the
+                        # cooldown exists to stop.
+                        "at": now if counted else data.get("at", now),
+                    }
+                ),
                 encoding="utf-8",
             )
         except OSError as exc:  # pragma: no cover - defensive
-            logger.debug("Could not persist Core ML status: %s", exc)
+            logger.debug("Could not persist GPU status: %s", exc)
+            return
+        if failures < self._GPU_VERDICT_MIN_FAILURES:
+            logger.info(
+                "Metal failure recorded (%d/%d) — the GPU is still tried on the "
+                "next launch; only a second, independent failure makes it stick",
+                failures,
+                self._GPU_VERDICT_MIN_FAILURES,
+            )
+
+    def _clear_gpu_verdict(self) -> None:
+        """A GPU run that finished retires the tally recorded so far.
+
+        Without this, two unrelated hiccups years apart would add up to a
+        permanent verdict on hardware that works. Note this only reaches a
+        tally *below* the threshold: once the verdict stands, the GPU is never
+        attempted again, so it can no longer prove itself — those installs
+        re-probe when whisper, the model or macOS changes (see
+        ``_gpu_signature``), or when the sidecar is deleted by hand.
+        """
+        if not self._read_gpu_verdict():
+            return
+        try:
+            self._gpu_flag_path().unlink()
+            logger.info("GPU ran cleanly — cleared the recorded Metal failure(s)")
+        except OSError as exc:  # pragma: no cover - defensive
+            logger.debug("Could not clear GPU status: %s", exc)
 
     def _convert_to_wav(self, audio_file: Path) -> Optional[Path]:
         """Transcode *audio_file* to a 16 kHz mono PCM WAV for whisper-cli.
@@ -1136,32 +1256,69 @@ class Transcriber:
             return None
         return wav_path
 
-    # Markers in whisper.cpp stderr that mean the Core ML / Metal backend
-    # failed and we should fall back to pure CPU. Shared by the live stream
-    # detector (early abort) and the post-hoc check.
-    _COREML_FAIL_MARKERS = (
-        "Core ML",
-        "ggml_metal",
-        "MTLLibrar",
-        "tensor API disabled",
+    # Markers in whisper.cpp stderr that mean the *Metal* backend is unusable,
+    # so a `-ng` (GPU off) retry is worth the wall clock. Error lines ONLY:
+    # the bare words "ggml_metal" / "Core ML" / "tensor API disabled" show up
+    # in every healthy run ("whisper_init_state: Core ML model loaded"), and
+    # matching those made every GPU attempt look like a failure — Core ML was
+    # never actually exercised, and the verdict got persisted as fact.
+    _METAL_FAIL_MARKERS = (
+        # init-time
+        "ggml_metal_init: error",
+        "ggml_metal_init: failed",
+        "ggml_metal_device_init: error",
+        "ggml_metal_device_init: failed",
+        "ggml_metal_library_init: error",
+        "ggml_metal_library_init: failed",
+        "failed to allocate Metal",
+        "whisper_backend_init_gpu: failed",
+        "MTLLibraryErrorDomain",
+        # run-time: the GPU can also die *after* a clean init — command buffers
+        # fail mid-graph (ggml-metal-context.m) and pipelines compile lazily
+        # (ggml-metal-device.m). Without these a GPU that dies two hours into a
+        # recording is a hard error instead of a `-ng` retry. Only covers a GPU
+        # that *says* it failed: one that simply wedges still ends the recording
+        # on TRANSCRIPTION_TIMEOUT, with no fallback attempt.
+        "ggml_metal_synchronize: error",
+        "failed with status",
+        "failed to compile pipeline",
     )
 
-    def _should_retry_without_coreml(
-        self, stderr: Optional[str], use_coreml_attempted: bool
+    # A Core ML encoder that won't load is NOT recoverable by retrying: this
+    # whisper-cli is built without WHISPER_COREML_ALLOW_FALLBACK, so it aborts
+    # (rc=3) before decoding a single frame — with or without `-ng`, since -ng
+    # only turns off Metal and the encoder still goes through Core ML. Retrying
+    # just burns another full run; surface an actionable error instead.
+    _COREML_LOAD_FAIL_MARKERS = ("failed to load Core ML model",)
+
+    def _coreml_load_failed(self, stderr: Optional[str]) -> bool:
+        """True when whisper aborted because the Core ML encoder wouldn't load."""
+        if not stderr:
+            return False
+        return any(marker in stderr for marker in self._COREML_LOAD_FAIL_MARKERS)
+
+    def _should_retry_without_gpu(
+        self,
+        stderr: Optional[str],
+        *,
+        gpu_attempted: bool,
+        returncode: int,
     ) -> bool:
-        """Determine if whisper run should be retried without Core ML acceleration.
+        """Determine if the whisper run should be retried with the GPU off.
 
         Args:
-            stderr: stderr output from whisper.cpp invocation.
-            use_coreml_attempted: True if the failed run tried Core ML.
+            stderr: stderr output from the whisper.cpp invocation.
+            gpu_attempted: True only if that run actually allowed Metal.
+            returncode: whisper's exit status; a clean run is never retried,
+                whatever its stderr happens to mention.
 
         Returns:
-            True when stderr indicates Metal/Core ML failures and CPU retry is warranted.
+            True when Metal genuinely failed and a `-ng` retry is warranted.
         """
-        if not use_coreml_attempted or not stderr:
+        if not gpu_attempted or not stderr or returncode == 0:
             return False
 
-        return any(marker in stderr for marker in self._COREML_FAIL_MARKERS)
+        return any(marker in stderr for marker in self._METAL_FAIL_MARKERS)
 
     def _summary_coverage(
         self, transcript_text: str, summarized_by_llm: bool
@@ -1424,14 +1581,18 @@ class Transcriber:
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 
-            # Try with Core ML acceleration first (unless a prior/persisted
-            # Metal failure already took it off the table for this session).
-            if self._coreml_disabled_in_session:
-                logger.info("🔄 Starting transcription (CPU — Core ML disabled)")
+            # Try with the GPU first (unless a prior/persisted Metal failure
+            # already took it off the table for this session). Track what we
+            # actually attempted: passing a hardcoded True to the retry check
+            # made a GPU-less run look like a failed GPU run, so every single
+            # transcription ran twice, start to finish.
+            gpu_attempted = not self._gpu_disabled_in_session
+            if gpu_attempted:
+                logger.info("🔄 Attempting transcription with GPU acceleration")
             else:
-                logger.info("🔄 Attempting transcription with Core ML acceleration")
+                logger.info("🔄 Starting transcription (GPU disabled on this machine)")
             result = self._run_whisper_transcription(
-                audio_file, use_coreml=True, source_audio=wav_for_whisper
+                audio_file, use_gpu=gpu_attempted, source_audio=wav_for_whisper
             )
 
             logger.debug(
@@ -1440,29 +1601,51 @@ class Transcriber:
                 f"stderr length: {len(result.stderr) if result.stderr else 0}"
             )
 
-            # If Core ML failed, retry without it
-            if self._should_retry_without_coreml(
-                result.stderr, use_coreml_attempted=True
+            # If Metal failed, retry with the GPU off
+            if self._should_retry_without_gpu(
+                result.stderr,
+                gpu_attempted=gpu_attempted,
+                returncode=result.returncode,
             ):
                 logger.warning(
-                    f"⚠️  Core ML/Metal failed, falling back to CPU for {audio_file.name}"
+                    f"⚠️  Metal failed, falling back to CPU for {audio_file.name}"
                 )
                 if result.stderr:
                     logger.debug(f"  Error details: {result.stderr[:500]}")
 
-                if not self._coreml_disabled_in_session:
-                    self._coreml_disabled_in_session = True
-                    self._persist_coreml_disabled()
+                if not self._gpu_disabled_in_session:
+                    self._gpu_disabled_in_session = True
+                    self._persist_gpu_disabled()
                     logger.info(
-                        "Core ML disabled for this session and future launches "
+                        "GPU disabled for this session and future launches "
                         "(Metal failed on this machine)"
                     )
 
-                logger.info("🔄 Retrying transcription with CPU only")
+                logger.info("🔄 Retrying transcription with GPU off")
                 result = self._run_whisper_transcription(
-                    audio_file, use_coreml=False, source_audio=wav_for_whisper
+                    audio_file, use_gpu=False, source_audio=wav_for_whisper
                 )
                 logger.debug(f"CPU retry completed - returncode: {result.returncode}")
+            elif gpu_attempted and result.returncode == 0:
+                # Working GPU — retire any earlier one-off failure on record.
+                self._clear_gpu_verdict()
+
+            # A Core ML encoder that won't load is terminal for this build — no
+            # retry can rescue it, so say what actually needs fixing. Checked on
+            # the *final* result: an early-aborted GPU attempt is killed before
+            # whisper even reaches the Core ML load, so the diagnosis can only
+            # show up on the fallback run.
+            if self._coreml_load_failed(result.stderr):
+                error_msg = (
+                    "Core ML encoder nie ładuje się — uruchom ponownie instalację "
+                    "zależności (brakujący lub uszkodzony ggml-"
+                    f"{self.config.WHISPER_MODEL}-encoder.mlmodelc)"
+                )
+                logger.error("✗ Core ML encoder failed to load: %s", audio_file.name)
+                if result.stderr:
+                    logger.error("  Error: %s", result.stderr[:500])
+                self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
+                return None
 
             # Check for errors
             if result.returncode != 0:
@@ -2245,7 +2428,7 @@ Brak podsumowania AI. Możliwe przyczyny:
     ) -> bool:
         """Transcribe a single audio file using whisper.cpp.
 
-        Automatically falls back to CPU-only if Core ML fails.
+        Automatically retries with the GPU off if Metal fails.
         Post-processes transcript to create markdown document with summary.
 
         Args:

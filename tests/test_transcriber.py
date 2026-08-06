@@ -1186,7 +1186,7 @@ def test_process_recorder_skips_files_with_existing_markdown(
 
 
 def test_run_macwhisper_retries_on_metal_error(transcriber, tmp_path, monkeypatch):
-    """Whisper retry should trigger on Metal/Core ML failures."""
+    """Whisper retry should trigger on a genuine Metal failure."""
     from src import config as config_module
 
     transcript_dir = tmp_path / "output"
@@ -1201,18 +1201,18 @@ def test_run_macwhisper_retries_on_metal_error(transcriber, tmp_path, monkeypatc
     audio_file.touch()
 
     # The pipeline now converts to WAV before whisper; stub that out so the
-    # test stays focused on the Core ML retry logic (no real ffmpeg).
+    # test stays focused on the retry logic (no real ffmpeg).
     transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
         return_value=tmp_path / "sample.whisper16k.wav"
     )
 
-    def run_side_effect(_, use_coreml=True, source_audio=None):
-        if use_coreml:
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
             return subprocess.CompletedProcess(
                 args=["whisper"],
                 returncode=1,
                 stdout="",
-                stderr="ggml_metal_device_init: tensor API disabled",
+                stderr="ggml_metal_init: error: failed to allocate Metal buffer",
             )
         output_file = transcript_dir / "sample.txt"
         output_file.write_text("ok")
@@ -1227,15 +1227,286 @@ def test_run_macwhisper_retries_on_metal_error(transcriber, tmp_path, monkeypatc
 
     assert result == transcript_dir / "sample.txt"
     assert mock_runner.call_count == 2
-    assert mock_runner.call_args_list[1].kwargs["use_coreml"] is False
+    assert mock_runner.call_args_list[1].kwargs["use_gpu"] is False
 
 
-def test_run_whisper_transcription_disables_metal_for_cpu(
+def test_run_macwhisper_healthy_coreml_run_is_not_retried(
     transcriber, tmp_path, monkeypatch
 ):
-    """CPU fallback should disable Core ML / Metal backends via environment."""
-    from src import config as config_module
+    """A successful run must not be re-run just because stderr says "Core ML".
 
+    whisper.cpp announces a *working* Core ML encoder with
+    "whisper_init_state: Core ML model loaded" and chatters ggml_metal_* lines
+    all through a healthy init. Matching those turned every GPU attempt into a
+    "failure" — the exact bug that disabled Core ML on every machine.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    healthy_stderr = (
+        "ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices\n"
+        "ggml_metal_init: allocating\n"
+        "ggml_metal_init: found device: Apple M2 Pro\n"
+        "whisper_init_state: loading Core ML model from 'ggml-small-encoder.mlmodelc'\n"
+        "whisper_init_state: Core ML model loaded\n"
+        "ggml_metal_free: deallocating\n"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=healthy_stderr
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    result = transcriber._run_macwhisper(audio_file)
+
+    assert result == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 1
+    assert transcriber._gpu_disabled_in_session is False
+
+
+def test_run_macwhisper_gpu_disabled_run_never_runs_twice(
+    transcriber, tmp_path, monkeypatch
+):
+    """With the GPU already off, a run must not be mistaken for a failed GPU run.
+
+    The caller used to pass a hardcoded ``use_coreml_attempted=True``, so a
+    CPU-only run whose stderr still mentioned ggml_metal triggered a second
+    full transcription — doubling every recording's wall clock.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._gpu_disabled_in_session = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"],
+            returncode=0,
+            stdout="",
+            stderr="ggml_metal_init: allocating\nwhisper_init_state: Core ML model loaded",
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    result = transcriber._run_macwhisper(audio_file)
+
+    assert result == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 1
+    assert mock_runner.call_args_list[0].kwargs["use_gpu"] is False
+
+
+def test_run_macwhisper_retries_on_midrun_metal_failure(
+    transcriber, tmp_path, monkeypatch
+):
+    """The GPU can also die *after* a clean init — that still deserves a retry.
+
+    A command buffer failing mid-graph (or a lazily compiled pipeline) used to
+    fall outside the marker list, turning a recoverable GPU death two hours
+    into a recording into a hard error.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
+            return subprocess.CompletedProcess(
+                args=["whisper"],
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "whisper_init_state: Core ML model loaded\n"
+                    "ggml_metal_synchronize: error: command buffer 0 failed "
+                    "with status 5\n"
+                ),
+            )
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 2
+    assert mock_runner.call_args_list[1].kwargs["use_gpu"] is False
+
+
+def test_run_macwhisper_clears_verdict_after_clean_gpu_run(
+    transcriber, tmp_path, monkeypatch
+):
+    """The pipeline itself must retire a recorded failure after a clean GPU run.
+
+    Testing the helper in isolation left the call site free to disappear.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._boot_id = lambda: "boot:1"  # type: ignore[assignment]
+    transcriber._persist_gpu_disabled()
+    assert transcriber._gpu_flag_path().exists()
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert not transcriber._gpu_flag_path().exists()
+
+
+def test_retry_triggers_on_info_level_command_buffer_failure(transcriber):
+    """The GGML_LOG_INFO variant of a dead command buffer must also count.
+
+    ggml logs the same failure at ERROR from ggml_metal_synchronize and at INFO
+    from graph_compute; both return GGML_STATUS_FAILED. Matching only the ERROR
+    spelling would leave the more common path without a fallback.
+    """
+    stderr = (
+        "whisper_init_state: Core ML model loaded\n"
+        "ggml_backend_metal_graph_compute: command buffer 0 failed with status 5\n"
+    )
+    assert transcriber._should_retry_without_gpu(
+        stderr, gpu_attempted=True, returncode=1
+    )
+
+
+def test_run_macwhisper_coreml_diagnosis_survives_the_fallback(
+    transcriber, tmp_path, monkeypatch
+):
+    """A broken encoder found only on the retry must still be named.
+
+    The early abort kills the GPU attempt before whisper reaches the Core ML
+    load, so that diagnosis can only appear in the fallback run's stderr.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:  # killed at init, never got to the Core ML load
+            return subprocess.CompletedProcess(
+                args=["whisper"],
+                returncode=-9,
+                stdout="",
+                stderr="ggml_metal_init: error: no device",
+            )
+        return subprocess.CompletedProcess(
+            args=["whisper"],
+            returncode=3,
+            stdout="",
+            stderr="whisper_init_state: failed to load Core ML model from 'x'",
+        )
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+    states = []
+    transcriber.set_state_updater(
+        lambda status, filename=None, error=None, *a, **k: states.append(
+            (status, error)
+        )
+    )
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    errors = [err for status, err in states if err]
+    assert any("Core ML encoder" in err for err in errors), errors
+
+
+def test_run_macwhisper_coreml_load_failure_is_terminal(
+    transcriber, tmp_path, monkeypatch
+):
+    """A Core ML encoder that won't load must fail fast, not retry.
+
+    whisper-cli is built without WHISPER_COREML_ALLOW_FALLBACK: it aborts at
+    init (rc=3) whether or not the GPU is on, so a retry only burns a second
+    run. The user needs the encoder repaired, not another 30 minutes.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    mock_runner = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=["whisper"],
+            returncode=3,
+            stdout="",
+            stderr=(
+                "whisper_init_state: failed to load Core ML model from "
+                "'ggml-small-encoder.mlmodelc'\n"
+                "error: failed to initialize whisper context\n"
+            ),
+        )
+    )
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert mock_runner.call_count == 1
+
+
+def test_run_whisper_transcription_disables_gpu_with_ng_flag(
+    transcriber, tmp_path, monkeypatch
+):
+    """CPU fallback must use the -ng CLI flag, not build-time env vars.
+
+    WHISPER_COREML / GGML_METAL_DISABLE are CMake switches; exporting them did
+    nothing and the "CPU retry" ran with `use gpu = 1`.
+    """
     audio_file = tmp_path / "sample.mp3"
     audio_file.touch()  # Point config to temporary paths so command construction works
     update_transcriber_config(
@@ -1249,18 +1520,19 @@ def test_run_whisper_transcription_disables_metal_for_cpu(
 
     captured = {}
 
-    def fake_stream(cmd, *, env, use_coreml, audio_file):
+    def fake_stream(cmd, *, env, use_gpu, audio_file):
+        captured["cmd"] = cmd
         captured["env"] = env
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(transcriber, "_run_whisper_streaming", fake_stream)
 
-    _ = transcriber._run_whisper_transcription(audio_file, use_coreml=False)
+    _ = transcriber._run_whisper_transcription(audio_file, use_gpu=False)
+    assert "-ng" in captured["cmd"]
+    assert captured["env"] is None
 
-    env = captured.get("env")
-    assert env is not None
-    assert env.get("WHISPER_COREML") == "0"
-    assert env.get("GGML_METAL_DISABLE") == "1"
+    _ = transcriber._run_whisper_transcription(audio_file, use_gpu=True)
+    assert "-ng" not in captured["cmd"]
 
 
 def test_run_whisper_transcription_injects_glossary_prompt(
@@ -1281,7 +1553,7 @@ def test_run_whisper_transcription_injects_glossary_prompt(
 
     captured = {}
 
-    def fake_stream(cmd, *, env, use_coreml, audio_file):
+    def fake_stream(cmd, *, env, use_gpu, audio_file):
         captured["cmd"] = cmd
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
@@ -1290,14 +1562,14 @@ def test_run_whisper_transcription_injects_glossary_prompt(
         transcriber.vocabulary, "whisper_prompt", lambda: "Tech to the Rescue, TTTR"
     )
 
-    _ = transcriber._run_whisper_transcription(audio_file, use_coreml=True)
+    _ = transcriber._run_whisper_transcription(audio_file, use_gpu=True)
     cmd = captured["cmd"]
     assert "--prompt" in cmd
     assert cmd[cmd.index("--prompt") + 1] == "Tech to the Rescue, TTTR"
 
     # Empty glossary (fresh vault / feature off) -> no --prompt flag at all.
     monkeypatch.setattr(transcriber.vocabulary, "whisper_prompt", lambda: "")
-    _ = transcriber._run_whisper_transcription(audio_file, use_coreml=True)
+    _ = transcriber._run_whisper_transcription(audio_file, use_gpu=True)
     assert "--prompt" not in captured["cmd"]
 
 
@@ -1337,26 +1609,51 @@ class _FakePipeProc:
         self.returncode = -9
 
 
-def test_streaming_aborts_coreml_early_on_metal_error(
-    transcriber, tmp_path, monkeypatch
-):
-    """A Metal marker in stderr must kill the GPU attempt immediately (not after
-    the full run) and surface as a failure so the caller retries on CPU."""
+def test_streaming_aborts_gpu_early_on_metal_error(transcriber, tmp_path, monkeypatch):
+    """A Metal *error* in stderr must kill the GPU attempt immediately (not after
+    the full run) and surface as a failure so the caller retries with -ng."""
     payload = (
         "whisper_init: loading model\n"
-        "ggml_metal_device_init: tensor API disabled\n"
+        "ggml_metal_init: error: failed to allocate Metal buffer\n"
         "more output that we never wait around for\n"
     )
     proc = _FakePipeProc(payload, rc=0)
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
 
     result = transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_coreml=True, audio_file=tmp_path / "rec.wav"
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
     )
 
     assert result.returncode != 0  # killed → caller will fall back to CPU
-    assert "tensor API disabled" in result.stderr
+    assert "failed to allocate Metal buffer" in result.stderr
     assert proc.returncode == -9  # proc.kill() was invoked
+
+
+def test_streaming_does_not_abort_on_healthy_metal_chatter(
+    transcriber, tmp_path, monkeypatch
+):
+    """Normal ggml_metal_* / Core ML init output must never abort a GPU run.
+
+    This is the regression that made Core ML unusable: the detector matched
+    "ggml_metal", "Core ML" and "tensor API disabled" — all of which a healthy
+    run prints — and killed whisper within a second of every start.
+    """
+    payload = (
+        "ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices\n"
+        "ggml_metal_init: allocating\n"
+        "ggml_metal_init: found device: Apple M2 Pro\n"
+        "whisper_init_state: loading Core ML model from 'ggml-small-encoder.mlmodelc'\n"
+        "whisper_init_state: Core ML model loaded\n"
+    )
+    proc = _FakePipeProc(payload, rc=0)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.returncode == 0  # ran to completion
+    assert proc.returncode != -9  # never killed
 
 
 def test_streaming_logs_progress_heartbeat(transcriber, tmp_path, monkeypatch):
@@ -1371,7 +1668,7 @@ def test_streaming_logs_progress_heartbeat(transcriber, tmp_path, monkeypatch):
 
     with patch("src.transcriber.logger") as mock_logger:
         transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+            ["whisper"], env=None, use_gpu=False, audio_file=tmp_path / "rec.wav"
         )
 
     progress_logs = [
@@ -1397,7 +1694,7 @@ def test_streaming_timeout_fires_on_partial_line_without_newline(
     started = time.time()
     with pytest.raises(subprocess.TimeoutExpired):
         transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+            ["whisper"], env=None, use_gpu=False, audio_file=tmp_path / "rec.wav"
         )
     assert time.time() - started < 5.0  # bounded, not wedged
     assert proc.returncode == -9  # proc.kill() was invoked
@@ -1409,7 +1706,7 @@ def test_streaming_flushes_final_partial_line(transcriber, tmp_path, monkeypatch
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
 
     result = transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+        ["whisper"], env=None, use_gpu=False, audio_file=tmp_path / "rec.wav"
     )
 
     assert "partial tail" in result.stderr
@@ -1418,17 +1715,17 @@ def test_streaming_flushes_final_partial_line(transcriber, tmp_path, monkeypatch
 def test_streaming_detects_marker_in_partial_line_at_eof(
     transcriber, tmp_path, monkeypatch
 ):
-    """A Metal marker as the final, newline-less line still aborts the GPU run."""
-    payload = "whisper_init: loading model\nggml_metal_device_init: tensor API disabled"
+    """A Metal error as the final, newline-less line still aborts the GPU run."""
+    payload = "whisper_init: loading model\nggml_metal_library_init: error: no library"
     proc = _FakePipeProc(payload, rc=0)
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
 
     result = transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_coreml=True, audio_file=tmp_path / "rec.wav"
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
     )
 
     assert result.returncode != 0  # caller falls back to CPU
-    assert "tensor API disabled" in result.stderr
+    assert "ggml_metal_library_init: error" in result.stderr
 
 
 def test_streaming_sets_and_clears_active_proc(transcriber, tmp_path, monkeypatch):
@@ -1453,7 +1750,7 @@ def test_streaming_sets_and_clears_active_proc(transcriber, tmp_path, monkeypatc
     monkeypatch.setattr(_FakePipeProc, "poll", spy_poll)
 
     transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_coreml=False, audio_file=tmp_path / "rec.wav"
+        ["whisper"], env=None, use_gpu=False, audio_file=tmp_path / "rec.wav"
     )
 
     assert captured_kwargs.get("start_new_session") is True
@@ -1516,25 +1813,201 @@ def test_whisper_thread_count_leaves_headroom(monkeypatch):
     assert Transcriber._whisper_thread_count() >= 1
 
 
-def test_coreml_verdict_persists_across_instances(transcriber):
-    """A recorded Metal failure must skip the GPU attempt on the next launch."""
-    assert transcriber._coreml_disabled_in_session is False
-    transcriber._persist_coreml_disabled()
-    assert transcriber._coreml_flag_path().exists()
+def test_gpu_verdict_from_older_detector_is_discarded(transcriber):
+    """A verdict written by a previous detector must not survive an upgrade.
+
+    The v1 detector called a healthy run "Metal failed" and persisted it, so
+    every existing install carries a false verdict; bumping the version in the
+    signature makes each machine re-probe the GPU exactly once.
+    """
+    transcriber._gpu_flag_path().parent.mkdir(parents=True, exist_ok=True)
+    transcriber._gpu_flag_path().write_text(
+        json.dumps({"disabled": True, "signature": "0:small"}),  # v1 format
+        encoding="utf-8",
+    )
 
     with patch("src.transcriber.logger"):
         fresh = Transcriber(config=transcriber.config)
-    assert fresh._coreml_disabled_in_session is True
+    assert fresh._gpu_disabled_in_session is False
 
 
-def test_coreml_verdict_reprobes_when_model_changes(transcriber):
+def _fail_on_boot(transcriber, boot: str) -> None:
+    """Record a Metal failure as if the machine had booted at *boot*."""
+    transcriber._boot_id = lambda: boot  # type: ignore[assignment]
+    transcriber._persist_gpu_disabled()
+
+
+def test_gpu_verdict_reprobes_after_macos_upgrade(transcriber, monkeypatch):
+    """A macOS upgrade can fix Metal — the verdict must not outlive it."""
+    _fail_on_boot(transcriber, "boot:1")
+    _fail_on_boot(transcriber, "boot:2")
+    monkeypatch.setattr(
+        "src.transcriber.platform.mac_ver", lambda: ("99.0", ("", "", ""), "arm64")
+    )
+
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is False
+
+
+def test_gpu_verdict_persists_across_instances(transcriber):
+    """A Metal failure confirmed on a second boot skips the GPU attempt."""
+    assert transcriber._gpu_disabled_in_session is False
+    _fail_on_boot(transcriber, "boot:1")
+    _fail_on_boot(transcriber, "boot:2")
+    assert transcriber._gpu_flag_path().exists()
+
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is True
+
+
+def test_single_metal_failure_does_not_disable_gpu_for_good(transcriber):
+    """One hiccup must not cost the GPU permanently.
+
+    `failed to allocate Metal buffer` happens under momentary VRAM pressure
+    (another app hogging the GPU). The session still falls back, but the next
+    launch has to give the GPU another chance.
+    """
+    _fail_on_boot(transcriber, "boot:1")
+
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is False
+
+
+def test_gpu_verdict_counts_boots_not_processes(transcriber):
+    """The daemon and the menu bar app must not convict the GPU between them.
+
+    Both run at once (see ProcessLock) with a Transcriber each and share the
+    sidecar, so one hour of VRAM pressure would otherwise tick the tally twice
+    inside a minute — condemning a healthy GPU for good.
+    """
+    _fail_on_boot(transcriber, "boot:1")  # daemon
+
+    with patch("src.transcriber.logger"):
+        menu_app = Transcriber(config=transcriber.config)
+    _fail_on_boot(menu_app, "boot:1")  # menu bar app, same boot
+
+    assert transcriber._read_gpu_verdict()["failures"] == 1
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is False
+
+
+def test_repeat_failure_convicts_gpu_without_a_reboot(transcriber, monkeypatch):
+    """A machine that keeps failing must converge without waiting for a reboot.
+
+    macOS boxes run for weeks, so keying the tally on boot alone would leave a
+    genuinely dying GPU costing a doubled wall clock on the first recording
+    after every app start, indefinitely.
+    """
+    transcriber._boot_id = lambda: "boot:1"  # type: ignore[assignment]
+    monkeypatch.setattr("src.transcriber.time.time", lambda: 1_000.0)
+    transcriber._persist_gpu_disabled()
+
+    # Same boot, a day later: an independent event.
+    monkeypatch.setattr("src.transcriber.time.time", lambda: 1_000.0 + 86_400)
+    transcriber._persist_gpu_disabled()
+
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is True
+
+
+def test_frequent_failures_still_reach_the_threshold(transcriber, monkeypatch):
+    """Failing more often than the cooldown must not stall the tally forever.
+
+    The window has to start at the *counted* failure. Re-stamping it on every
+    recorded failure would mean a machine failing, say, every 6 hours never
+    reaches the threshold — the app would pay the doubled wall clock on the
+    first recording after every start, indefinitely.
+    """
+    transcriber._boot_id = lambda: "boot:1"  # type: ignore[assignment]
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr("src.transcriber.time.time", lambda: clock["now"])
+
+    transcriber._persist_gpu_disabled()  # counted: 1
+    for _ in range(3):  # every 6h, inside the 12h window
+        clock["now"] += 6 * 3600
+        transcriber._persist_gpu_disabled()
+
+    assert transcriber._read_gpu_verdict()["failures"] == 2
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is True
+
+
+def test_boot_id_reads_kern_boottime(transcriber, monkeypatch):
+    """The real sysctl parse must be covered — a broken regex is otherwise
+    invisible: it degrades silently to the day-based fallback, which changes
+    what the tally counts."""
+    # Absolute path: launchd hands the daemon a minimal PATH.
+    assert Transcriber._SYSCTL_PATH.startswith("/")
+    assert transcriber._boot_id().startswith("boot:")  # macOS-only project
+
+    monkeypatch.setattr(
+        "src.transcriber.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=a,
+            returncode=0,
+            stdout="{ sec = 1785226770, usec = 929723 }",
+            stderr="",
+        ),
+    )
+    assert transcriber._boot_id() == "boot:1785226770"
+
+    monkeypatch.setattr(
+        "src.transcriber.subprocess.run",
+        MagicMock(side_effect=FileNotFoundError("no sysctl")),
+    )
+    assert transcriber._boot_id().startswith("day:")  # documented fallback
+
+
+def test_corrupted_verdict_file_is_ignored(transcriber):
+    """A damaged sidecar must never sink a transcription.
+
+    read_text() raises UnicodeDecodeError (a ValueError, not JSONDecodeError)
+    on binary junk, and both the persist and the clear path call this outside
+    their own try — an unhandled raise here would take down every successful
+    GPU run.
+    """
+    transcriber._gpu_flag_path().parent.mkdir(parents=True, exist_ok=True)
+    transcriber._gpu_flag_path().write_bytes(b"\xff\xfe\x00 not utf-8 at all")
+
+    assert transcriber._read_gpu_verdict() == {}
+    transcriber._clear_gpu_verdict()  # must not raise
+    _fail_on_boot(transcriber, "boot:1")  # must not raise
+    assert transcriber._read_gpu_verdict()["failures"] == 1
+
+
+def test_successful_gpu_run_clears_recorded_failures(transcriber):
+    """A GPU run that finishes proves the machine is fine — drop the tally.
+
+    Otherwise two unrelated hiccups far apart would add up to a standing
+    verdict on hardware that works.
+    """
+    _fail_on_boot(transcriber, "boot:1")
+    assert transcriber._gpu_flag_path().exists()
+
+    transcriber._clear_gpu_verdict()
+    assert not transcriber._gpu_flag_path().exists()
+
+    _fail_on_boot(transcriber, "boot:2")  # counts as the first failure again
+    with patch("src.transcriber.logger"):
+        fresh = Transcriber(config=transcriber.config)
+    assert fresh._gpu_disabled_in_session is False
+
+
+def test_gpu_verdict_reprobes_when_model_changes(transcriber):
     """Changing the whisper model invalidates the persisted verdict (re-probe)."""
-    transcriber._persist_coreml_disabled()
+    _fail_on_boot(transcriber, "boot:1")
+    _fail_on_boot(transcriber, "boot:2")
     transcriber.config.WHISPER_MODEL = "tiny"  # different signature
 
     with patch("src.transcriber.logger"):
         fresh = Transcriber(config=transcriber.config)
-    assert fresh._coreml_disabled_in_session is False
+    assert fresh._gpu_disabled_in_session is False
 
 
 def test_process_recorder_skips_when_lock_held(transcriber, monkeypatch):
@@ -2164,7 +2637,7 @@ def test_run_whisper_transcription_uses_utf8_encoding(
     transcriber.config.WHISPER_MODEL = "small"
     transcriber.config.WHISPER_LANGUAGE = "pl"
 
-    transcriber._run_whisper_transcription(audio, use_coreml=True)
+    transcriber._run_whisper_transcription(audio, use_gpu=True)
 
     assert captured["kwargs"].get("text") is True
     assert captured["kwargs"].get("encoding") == "utf-8", (
