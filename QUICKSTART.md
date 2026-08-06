@@ -123,12 +123,24 @@ Re-trigger downloads from the menu bar: **Settings → Maintenance → "Re-downl
 
 ### Whisper Metal error (-6)
 
-The app auto-detects Metal failures (`ggml_metal_device_init: tensor API disabled`) and retries on CPU. To disable Core ML entirely:
+The app detects genuine Metal errors (`ggml_metal_init: error`, a command buffer
+that `failed with status`, …) and retries the recording with the GPU off
+(`-ng`). Lines like `ggml_metal_device_init: tensor API disabled` or
+`Core ML model loaded` are normal output of a healthy run, not failures.
 
-```bash
-export WHISPER_COREML=0
-python -m src.menu_app
-```
+After two independent failures — another boot, or another day — the GPU is
+switched off for good on this machine; the verdict lives in
+`~/Library/Application Support/Timshel/coreml_status.json`. A single recorded
+failure is dropped as soon as a GPU run succeeds. Once the verdict stands the
+GPU is no longer tried, so it only lifts when whisper, the model, or macOS
+changes — or when you delete that file to force a re-probe.
+
+Note there is no way to turn Core ML off: `WHISPER_COREML` and
+`GGML_METAL_DISABLE` are whisper.cpp *build* switches and do nothing in the
+environment. This build always runs the encoder through Core ML — `-ng` only
+moves the decoder to the CPU. If the log says
+`failed to load Core ML model`, the encoder itself is missing or damaged:
+re-run **Settings → Maintenance → "Re-download dependencies"**.
 
 ### Process locked
 

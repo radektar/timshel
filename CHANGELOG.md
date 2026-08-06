@@ -36,6 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Zachowaj (now with a bookmark glyph) against a ghost Odrzuć; palette aligned to
   the on-dark design tokens (`--terra #D9542A`, `--terra-deep #C24010`).
 
+### Fixed
+- **Every recording was transcribed twice, and never on the GPU.** The Core ML
+  failure detector matched strings a *healthy* whisper.cpp prints
+  (`Core ML model loaded`, `ggml_metal_init: allocating`, `tensor API
+  disabled`), so the GPU attempt was killed a second after every start and the
+  "Metal is broken on this machine" verdict was written on hardware that works.
+  On top of that the retry check was told the run had used the GPU even when it
+  hadn't, so a CPU-only run was mistaken for a failed GPU run and the whole
+  recording ran a second time — a 3-hour note took two full passes. The
+  detector now matches error lines only (init *and* mid-run: dead command
+  buffers, pipelines that won't compile), the retry check knows what actually
+  ran, and the CPU fallback uses whisper's `-ng` flag instead of
+  `WHISPER_COREML=0` / `GGML_METAL_DISABLE=1`, which are build-time switches
+  that did nothing in the environment. A Core ML encoder that won't load is now
+  reported as such (this build aborts on it, so retrying cannot help) instead
+  of costing another full pass. The persisted verdict now needs two
+  independent failures — another boot, or another day — so one momentary VRAM
+  squeeze no longer costs the GPU for good, and a clean GPU run retires it;
+  existing (false) verdicts are invalidated automatically, so every install
+  re-probes the GPU once.
+
 ### Added
 - **Triage navigation — Nowe / Zachowane / Odrzucone.** The rail now has a
   segmented control (count over label) to switch among the three triage views,
