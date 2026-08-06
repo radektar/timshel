@@ -27,7 +27,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Optional, Set
+from typing import Callable, Iterable, Optional, Set
 
 from src.config import config
 from src.logger import logger
@@ -487,14 +487,18 @@ class DigestScheduler:
         bulk import) — only genuinely new recordings, which bump the counter on
         top via :meth:`register_new_notes`, can.
         """
-        self.last_digest_at = now.isoformat(timespec="seconds")
-        if path is not None:
-            self.last_digest_path = str(path)
         # Sync from disk FIRST, union our consumed window AFTER: if another
         # process bumped the epoch (reset) mid-run, adoption replaces the set —
         # our window must be re-added on top, not lost in the swap. Consuming
         # a key also lifts its un-see tombstone: the note really is seen again.
+        # The merge also adopts a newer disk clock, hence: stamp OUR run after
+        # it, never before. ``now`` is captured when the run starts, so a
+        # settle_after_import landing mid-run carries a later timestamp — and
+        # adoption would otherwise wipe the path of the digest we just wrote.
         self._merge_disk_seen()
+        self.last_digest_at = now.isoformat(timespec="seconds")
+        if path is not None:
+            self.last_digest_path = str(path)
         # A run consumed a window: this vault now HAS digest history (also
         # when the run was paid but empty, hence not last_digest_path).
         self.digest_runs = max(self.digest_runs, 0) + 1
@@ -1109,12 +1113,21 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
 
 
 def run_digest_if_due(
-    transcriber: object = None, force: bool = False
+    transcriber: object = None,
+    force: bool = False,
+    on_paid: Optional[Callable[[], None]] = None,
 ) -> Optional[Path]:
     """Generate a digest when due. Safe to call every periodic tick.
 
     Returns the digest path when one was written, else ``None``. Never raises
     into the daemon loop — synthesis must never disturb transcription.
+
+    ``on_paid`` fires exactly when THIS call consumed a window, i.e. spent
+    money — including a paid run that found nothing, which returns ``None``
+    like every free bail does. Callers that bill the user (the manual deep
+    scan) need that distinction, and cannot get it from the scheduler's
+    process-wide run counter: the daemon or a CLI bumping it mid-call would
+    look identical to our own spend.
     """
     # Lazy imports keep `import src.connections` light (no anthropic/pydantic
     # unless a digest actually runs) and avoid import cycles with transcriber.
@@ -1223,6 +1236,13 @@ def run_digest_if_due(
             )
             if late:
                 scheduler.register_new_notes(late)
+            if on_paid is not None:
+                try:
+                    on_paid()
+                except (
+                    Exception
+                ) as exc:  # noqa: BLE001 - billing must not break the run
+                    logger.debug("on_paid callback failed: %s", exc)
 
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]

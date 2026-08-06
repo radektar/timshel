@@ -2076,7 +2076,14 @@ class TimshelMenuApp(rumps.App):
             )
         else:
             noun = "note" if potential.unseen_total == 1 else "notes"
-            lines.append(f"{potential.unseen_total} new {noun} since your last digest.")
+            # No digest has ever run here, so "since your last digest" would
+            # invent one — the same standard the rest of this dialog is held to.
+            since = (
+                "in your vault"
+                if self._digest_runs() <= 0
+                else "since your last digest"
+            )
+            lines.append(f"{potential.unseen_total} new {noun} {since}.")
             if not potential.ok:
                 lines.append(
                     "Probably too little to connect — a run now will likely "
@@ -2107,7 +2114,7 @@ class TimshelMenuApp(rumps.App):
 
     @staticmethod
     def _digest_runs() -> int:
-        """Paid-run counter; -1 when unreadable, so it never looks like growth."""
+        """How many digests this vault has ever had; -1 when unreadable."""
         try:
             from src.connections.scheduler import get_scheduler
 
@@ -2156,16 +2163,15 @@ class TimshelMenuApp(rumps.App):
 
                 # force=True skips the cadence and the $0 gate, but NOT the
                 # free bails (no API key, AI disabled, digest lock held by the
-                # daemon, <2 candidate notes). digest_runs is the scheduler's
-                # own marker of a run that consumed a window — the only honest
-                # "this cost money". Counting on confirm instead would let a
+                # daemon, <2 candidate notes). Counting on confirm would let a
                 # tester with no key click the monthly allowance to 10/10
                 # without a single API call, poisoning the very number the
-                # pricing tier is calibrated on.
-                runs_before = self._digest_runs()
-                path = run_digest_if_due(self.transcriber, force=True)
-                if self._digest_runs() > runs_before:
-                    self._count_deep_scan()
+                # pricing tier is calibrated on. on_paid fires only when THIS
+                # call consumed a window — a process-wide run counter cannot
+                # tell our spend from the daemon's.
+                path = run_digest_if_due(
+                    self.transcriber, force=True, on_paid=self._count_deep_scan
+                )
                 if path is None:
                     send_notification(
                         "Timshel",
