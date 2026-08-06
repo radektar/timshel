@@ -20,13 +20,14 @@ State (one JSON file, shared by the resident app and the CLI dogfood scripts):
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Set
+from typing import Callable, Iterable, Optional, Set
 
 from src.config import config
 from src.logger import logger
@@ -81,6 +82,10 @@ class DigestScheduler:
         # misses paid-but-empty runs, and the seen-set is also seeded by
         # migration on a fresh install (which is not history at all).
         self.digest_runs: int = 0
+        # Signature of the window the last digest consumed, so the manual path
+        # can warn that a re-run would read the same material. Kept separately
+        # because ``mark_ran`` merges every window into one flat seen-set.
+        self.last_window_sig: Optional[str] = None
         # True only for the process that set or cleared the hold. Every other
         # writer adopts the disk value before saving, so an unrelated write
         # (a CLI's unsee after a transcription) can neither wipe a live hold
@@ -223,6 +228,8 @@ class DigestScheduler:
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
             self.digest_runs = int(data.get("digest_runs", 0) or 0)
+            sig = data.get("last_window_sig")
+            self.last_window_sig = sig if isinstance(sig, str) else None
         except (TypeError, ValueError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
 
@@ -241,6 +248,13 @@ class DigestScheduler:
             data = self._read_disk_state()
             if data is None:
                 return
+            # The clock (and the window signature that belongs to it) travels
+            # with the seen-set: every writer that merges must adopt it too,
+            # or an unrelated write from a stale holder — an import calling
+            # unsee(), say — republishes a run that is two digests old.
+            # reset_seen was hardened for exactly this; unsee/clear_pending/
+            # init_seen were not.
+            self._adopt_disk_clock(data)
             raw = data.get("seen_note_keys")
             disk_epoch = int(data.get("seen_epoch", 0) or 0)
             disk_tombstones = set(data.get("unseen_tombstones", []) or [])
@@ -316,6 +330,10 @@ class DigestScheduler:
         if isinstance(disk_at, str) and disk_at > (self.last_digest_at or ""):
             self.last_digest_at = disk_at
             self.last_digest_path = data.get("last_digest_path")
+            # Belongs to that run — adopting the clock without it would leave
+            # the dedup warning comparing against a window nobody read.
+            sig = data.get("last_window_sig")
+            self.last_window_sig = sig if isinstance(sig, str) else None
 
     def _save(self) -> None:
         try:
@@ -328,6 +346,7 @@ class DigestScheduler:
                 "unseen_tombstones": sorted(self.unseen_tombstones),
                 "auto_digest_hold_until": self.auto_digest_hold_until,
                 "digest_runs": int(self.digest_runs),
+                "last_window_sig": self.last_window_sig,
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -451,10 +470,15 @@ class DigestScheduler:
         path: Optional[Path] = None,
         seen_keys: Optional[Set[str]] = None,
         pending: int = 0,
+        window_keys: Optional[Set[str]] = None,
     ) -> None:
         """Record a completed (paid) run.
 
-        ``seen_keys`` — the consumed window's note keys, added to the seen-set.
+        ``seen_keys`` — the note keys this run consumed, added to the seen-set.
+        ``window_keys`` — the keys the run actually READ, when that differs
+        (the first-session digest marks the whole corpus as seen but reads one
+        window); defaults to ``seen_keys``. Only this feeds the signature, so
+        the dedup hint describes a real window rather than a whole vault.
         ``pending`` — unseen notes left over by the window cap (a backfill
         catching up): kept as the new-notes counter so the weekly cadence keeps
         firing until the backlog drains, even with no new recordings. Clamped
@@ -463,14 +487,26 @@ class DigestScheduler:
         bulk import) — only genuinely new recordings, which bump the counter on
         top via :meth:`register_new_notes`, can.
         """
-        self.last_digest_at = now.isoformat(timespec="seconds")
-        if path is not None:
-            self.last_digest_path = str(path)
         # Sync from disk FIRST, union our consumed window AFTER: if another
         # process bumped the epoch (reset) mid-run, adoption replaces the set —
         # our window must be re-added on top, not lost in the swap. Consuming
         # a key also lifts its un-see tombstone: the note really is seen again.
+        # The merge also adopts a newer disk clock, hence: stamp OUR run after
+        # it, never before. ``now`` is captured when the run starts, so a
+        # settle_after_import landing mid-run carries a later timestamp — and
+        # adoption would otherwise wipe the path of the digest we just wrote.
         self._merge_disk_seen()
+        # Stamp AFTER the merge (which adopts a newer disk clock and the path
+        # that came with it) — but never roll the clock back. ``now`` is
+        # captured when the run STARTS, so a write landing mid-run legitimately
+        # carries a later timestamp; taking our own unconditionally would undo
+        # it, and taking theirs unconditionally would erase the path of the
+        # digest we just wrote. Keep the later clock and our own path.
+        stamped = now.isoformat(timespec="seconds")
+        if stamped > (self.last_digest_at or ""):
+            self.last_digest_at = stamped
+        if path is not None:
+            self.last_digest_path = str(path)
         # A run consumed a window: this vault now HAS digest history (also
         # when the run was paid but empty, hence not last_digest_path).
         self.digest_runs = max(self.digest_runs, 0) + 1
@@ -478,6 +514,9 @@ class DigestScheduler:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
             self.unseen_tombstones -= set(seen_keys)
+            # Record the signature BEFORE the union: once merged, this window
+            # is indistinguishable from every earlier one.
+            self.last_window_sig = window_signature(window_keys or seen_keys)
             self.seen_note_keys |= set(seen_keys)
         self.new_notes = max(
             0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
@@ -651,6 +690,13 @@ class DigestPotential:
     window: int  # new (unseen) notes in the window
     neighbors: int  # STRONG-channel archive neighbours (bm25-only excluded)
     ok: bool
+    # Total unseen notes BEFORE the window cap — what "N new notes since your
+    # last digest" in the deep-scan dialog states. ``window`` is capped, so it
+    # would understate the backlog on a vault with a lot of fresh material.
+    unseen_total: int = 0
+    # Fingerprint of the window this run would read, for telling a genuinely
+    # new scan from a re-run over the same material.
+    window_sig: Optional[str] = None
 
 
 def digest_potential(candidates) -> DigestPotential:
@@ -671,7 +717,26 @@ def digest_potential(candidates) -> DigestPotential:
         if name not in candidates.window_basenames and (channels - {"bm25"})
     )
     ok = window >= 2 or (window >= 1 and neighbors >= config.DIGEST_GATE_MIN_NEIGHBORS)
-    return DigestPotential(window=window, neighbors=neighbors, ok=ok)
+    return DigestPotential(
+        window=window,
+        neighbors=neighbors,
+        ok=ok,
+        unseen_total=int(getattr(candidates, "unseen_total", 0) or 0),
+        window_sig=window_signature(getattr(candidates, "window_keys", ()) or ()),
+    )
+
+
+def window_signature(keys: Iterable[str]) -> Optional[str]:
+    """Stable fingerprint of a digest window (order-independent).
+
+    Lets the manual path say "this is the same material as last time" without
+    keeping note keys around: ``mark_ran`` merges each window into one flat
+    seen-set, where individual runs stop being distinguishable.
+    """
+    ordered = sorted(str(k) for k in keys)
+    if not ordered:
+        return None
+    return hashlib.sha256("\n".join(ordered).encode("utf-8")).hexdigest()[:16]
 
 
 def _assemble_for_digest(
@@ -1033,7 +1098,14 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
             # them so mark_ran's overwrite doesn't strand their trigger.
             late = max(0, scheduler.new_notes - pre_run_notes)
             scheduler.mark_ran(
-                now, final_path, seen_keys=corpus_keys or consumed, pending=0
+                now,
+                final_path,
+                seen_keys=corpus_keys or consumed,
+                pending=0,
+                # Seen = the whole corpus; READ = the window. Without the
+                # split the first digest of every install would stamp a
+                # corpus-wide signature no later window can ever match.
+                window_keys=consumed,
             )
             if late:
                 scheduler.register_new_notes(late)
@@ -1049,12 +1121,21 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
 
 
 def run_digest_if_due(
-    transcriber: object = None, force: bool = False
+    transcriber: object = None,
+    force: bool = False,
+    on_paid: Optional[Callable[[], None]] = None,
 ) -> Optional[Path]:
     """Generate a digest when due. Safe to call every periodic tick.
 
     Returns the digest path when one was written, else ``None``. Never raises
     into the daemon loop — synthesis must never disturb transcription.
+
+    ``on_paid`` fires exactly when THIS call consumed a window, i.e. spent
+    money — including a paid run that found nothing, which returns ``None``
+    like every free bail does. Callers that bill the user (the manual deep
+    scan) need that distinction, and cannot get it from the scheduler's
+    process-wide run counter: the daemon or a CLI bumping it mid-call would
+    look identical to our own spend.
     """
     # Lazy imports keep `import src.connections` light (no anthropic/pydantic
     # unless a digest actually runs) and avoid import cycles with transcriber.
@@ -1163,6 +1244,13 @@ def run_digest_if_due(
             )
             if late:
                 scheduler.register_new_notes(late)
+            if on_paid is not None:
+                try:
+                    on_paid()
+                except (
+                    Exception
+                ) as exc:  # noqa: BLE001 - billing must not break the run
+                    logger.debug("on_paid callback failed: %s", exc)
 
         language = detect_language(
             " ".join(n.summary_md for n in candidates.notes)[:5000]

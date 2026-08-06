@@ -1301,3 +1301,191 @@ def test_reset_seen_does_not_roll_back_the_weekly_clock(tmp_path):
     fresh = DigestScheduler(state_file)
     assert fresh.last_digest_at == later.isoformat(timespec="seconds")
     assert fresh.last_digest_path == "/x/later.md"
+
+
+# --------------------------------------------------------------------------- #
+# Deep scan: window signature (dedup hint for the manual path).
+# --------------------------------------------------------------------------- #
+
+
+def test_window_signature_is_order_independent_and_stable():
+    from src.connections.scheduler import window_signature
+
+    a = window_signature(["fp-b", "fp-a", "fp-c"])
+    b = window_signature(["fp-c", "fp-b", "fp-a"])
+    assert a == b
+    assert a != window_signature(["fp-a", "fp-b"])
+
+
+def test_window_signature_empty_is_none():
+    from src.connections.scheduler import window_signature
+
+    assert window_signature([]) is None
+
+
+def test_mark_ran_records_the_window_signature(tmp_path):
+    from src.connections.scheduler import DigestScheduler, window_signature
+
+    sched = DigestScheduler(tmp_path / "state.json")
+    keys = {"fp-1", "fp-2"}
+    sched.mark_ran(datetime.now(), path=tmp_path / "d.md", seen_keys=keys)
+
+    assert sched.last_window_sig == window_signature(keys)
+    # Survives a reload — the manual dialog runs in a different process.
+    assert DigestScheduler(tmp_path / "state.json").last_window_sig == (
+        window_signature(keys)
+    )
+
+
+def test_state_file_without_the_key_loads_clean(tmp_path):
+    """Upgrades read state written before this field existed."""
+    from src.connections.scheduler import DigestScheduler
+
+    import json as _json
+
+    state = tmp_path / "state.json"
+    state.write_text(
+        _json.dumps({"last_digest_at": "2026-08-01T10:00:00", "digest_runs": 3}),
+        encoding="utf-8",
+    )
+    sched = DigestScheduler(state)
+    assert sched.last_window_sig is None
+    assert sched.digest_runs == 3
+
+
+def test_newer_disk_clock_brings_its_window_signature(tmp_path):
+    """Adopting another process's run without its window would compare against
+    a window nobody read."""
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    sched = DigestScheduler(state)
+    sched.mark_ran(datetime(2026, 8, 1, 10, 0), seen_keys={"old"})
+
+    other = DigestScheduler(state)
+    other.mark_ran(datetime(2026, 8, 5, 10, 0), seen_keys={"new-a", "new-b"})
+
+    sched._adopt_disk_clock(sched._read_disk_state())
+    assert sched.last_window_sig == other.last_window_sig
+
+
+def test_digest_potential_exposes_backlog_and_signature():
+    """The dialog needs the FULL backlog, not the capped window."""
+    from src.connections.candidate_assembly import CandidateSet, NoteRef
+    from src.connections.scheduler import digest_potential, window_signature
+
+    notes = [
+        NoteRef(
+            md_path=Path(f"/x/w{i}.md"),
+            basename=f"w{i}",
+            title=f"w{i}",
+            date="2026-07-01",
+            tags=[],
+            norm_tags=set(),
+            summary_md="text",
+            fingerprint=f"sha256:w{i}",
+        )
+        for i in range(2)
+    ]
+    candidates = CandidateSet(
+        notes,
+        {n.basename for n in notes},
+        channel_map={n.basename: {"window"} for n in notes},
+        window_keys={n.fingerprint for n in notes},
+        unseen_total=9,
+    )
+
+    potential = digest_potential(candidates)
+    assert potential.unseen_total == 9  # 9 waiting, only 2 fit the window
+    assert potential.window_sig == window_signature({n.fingerprint for n in notes})
+
+
+def test_unrelated_write_does_not_roll_back_the_window_signature(tmp_path):
+    """The mirror of test_reset_seen_does_not_roll_back_the_weekly_clock.
+
+    An import calling unsee() merges and saves without syncing the clock; with
+    the signature riding along in memory, that stale holder would republish a
+    window two digests old — and the deep-scan dedup hint would then compare
+    against something nobody read.
+    """
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    holder = DigestScheduler(state)
+    holder.mark_ran(datetime(2026, 8, 1, 10, 0), seen_keys={"n1", "n2"})
+
+    other = DigestScheduler(state)
+    other.mark_ran(datetime(2026, 8, 8, 10, 0), seen_keys={"n7", "n8"})
+    newer_sig = other.last_window_sig
+    newer_clock = other.last_digest_at
+
+    holder.unsee("n9")  # stale holder, unrelated write
+
+    on_disk = DigestScheduler(state)
+    assert on_disk.last_window_sig == newer_sig
+    assert on_disk.last_digest_at == newer_clock
+
+
+def test_onboarding_signature_describes_the_window_not_the_corpus(tmp_path):
+    """The first-session digest marks the whole corpus seen but READS one
+    window; stamping the corpus would make the dedup hint dead forever."""
+    from src.connections.scheduler import DigestScheduler, window_signature
+
+    sched = DigestScheduler(tmp_path / "state.json")
+    corpus = {f"n{i}" for i in range(60)}
+    window = {"n1", "n2", "n3"}
+    sched.mark_ran(datetime.now(), seen_keys=corpus, window_keys=window)
+
+    assert sched.last_window_sig == window_signature(window)
+    assert sched.seen_note_keys == corpus
+
+
+def test_mark_ran_keeps_its_own_digest_path_against_a_newer_disk_clock(tmp_path):
+    """``now`` is captured when the run STARTS, so an unrelated write landing
+    mid-run carries a later timestamp. Adopting it must not erase the path of
+    the digest we just wrote — the regression the adopt-on-merge fix caused."""
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    sched = DigestScheduler(state)
+    run_started = datetime(2026, 8, 6, 10, 0, 0)
+
+    # Another writer (settle_after_import) bumps the clock during our run.
+    other = DigestScheduler(state)
+    other.last_digest_at = datetime(2026, 8, 6, 10, 5, 0).isoformat(timespec="seconds")
+    other._save()
+
+    digest = tmp_path / "Zestawienie.md"
+    sched.mark_ran(run_started, digest, seen_keys={"n1", "n2"})
+
+    assert sched.last_digest_path == str(digest)
+    assert DigestScheduler(state).last_digest_path == str(digest)
+    # ...and the newer clock is NOT rolled back to our start time either:
+    # fixing the path must not reintroduce the rollback the merge closed.
+    assert sched.last_digest_at == "2026-08-06T10:05:00"
+
+
+def test_mark_ran_advances_the_clock_when_nobody_competed(tmp_path):
+    from src.connections.scheduler import DigestScheduler
+
+    sched = DigestScheduler(tmp_path / "s.json")
+    sched.mark_ran(datetime(2026, 8, 6, 11, 0, 0), seen_keys={"n1"})
+    assert sched.last_digest_at == "2026-08-06T11:00:00"
+
+
+def test_on_paid_fires_only_when_a_window_was_consumed(tmp_path, monkeypatch):
+    """The manual deep scan bills on this callback; a free bail must be silent."""
+    import src.connections.scheduler as sched_mod
+
+    monkeypatch.setattr(sched_mod.config, "TRANSCRIBE_DIR", tmp_path)
+    monkeypatch.setattr(
+        "src.connections.synthesis.get_synthesizer", lambda *a, **kw: None
+    )
+    sched_mod.reset_scheduler_for_tests()
+
+    paid = []
+    # No synthesizer → the run bails for free before any assembly.
+    assert (
+        sched_mod.run_digest_if_due(force=True, on_paid=lambda: paid.append(1)) is None
+    )
+    assert paid == []

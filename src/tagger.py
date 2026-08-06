@@ -85,10 +85,10 @@ class ClaudeTagger(BaseTagger):
             )
             # Low temperature: tag choice is near-mechanical (name what is
             # there, reuse an existing tag when it fits). Reasoning models
-            # (Opus 4.x) reject `temperature` — omit it there, as in the
+            # (any Opus) reject `temperature` — omit it there, as in the
             # summarizer.
             extra = {}
-            if not self.model.startswith("claude-opus-4"):
+            if not self.model.startswith("claude-opus-"):
                 extra["temperature"] = 0.2
             message = self.client.messages.create(
                 model=self.model,

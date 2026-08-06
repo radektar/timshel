@@ -110,7 +110,7 @@ class UserSettings:
 
     # Tester build: turns on the H1 instrumentation (verdict pass, metrics log,
     # entity/dense/graph/stance synthesis channels, Opus synthesis+verdict) for
-    # BOTH the scheduled daemon digest and the "Generate digest now" menu action.
+    # BOTH the scheduled daemon digest and the "Deep scan now…" menu action.
     # Baked into a tester DMG (see setup_app.py TESTER_BUILD + bootstrap
     # adoption). Persisted so it survives reload_config(); Config.__post_init__
     # maps it to the runtime knobs.

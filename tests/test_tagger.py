@@ -278,3 +278,12 @@ def test_disabled_tagging_clears_usage(monkeypatch):
     monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", False)
     assert tagger.generate_tags("Druga", "Podsumowanie", []) == []
     assert tagger.last_usage is None
+
+
+def test_temperature_omitted_for_opus_5(monkeypatch):
+    """Opus 5 is a reasoning model too — sending `temperature` would 400."""
+    captured = _patch_anthropic(monkeypatch, '["x"]')
+    monkeypatch.setattr(tagger_module.config, "ENABLE_LLM_TAGGING", True)
+    tagger = ClaudeTagger(api_key="test", model="claude-opus-5")
+    tagger.generate_tags("Test", "Summary", [])
+    assert "temperature" not in captured
