@@ -316,6 +316,10 @@ class ClaudeSummarizer(BaseSummarizer):
         Raises:
             Exception: If API call fails
         """
+        # Cleared up front so a call that never reaches the API (empty input,
+        # swallowed error → fallback summary) cannot leave the PREVIOUS note's
+        # token counts here for the cost ledger to bill to this one.
+        self.last_usage = None
         if not transcript or not transcript.strip():
             logger.warning("Empty transcript provided, using fallback")
             return self._fallback_summary()

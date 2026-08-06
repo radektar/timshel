@@ -278,6 +278,7 @@ def record_note_llm_call(
     usage: object,
     source_type: Optional[str] = None,
     duration_seconds: Optional[int] = None,
+    version: int = 1,
     path: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> bool:
@@ -315,6 +316,7 @@ def record_note_llm_call(
             "duration_seconds": (
                 int(duration_seconds) if duration_seconds is not None else None
             ),
+            "version": int(version),
             "model": model,
             "cost_usd": estimate_cost_usd(
                 model,

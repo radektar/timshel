@@ -23,8 +23,16 @@ class _Usage:
         self.output_tokens = o
 
 
+FALLBACK_SUMMARY = """## Podsumowanie
+
+Brak podsumowania AI. Możliwe przyczyny:
+- klucz Claude API (ANTHROPIC_API_KEY) nie jest skonfigurowany
+"""
+
+
 class FakeSummarizer:
-    """Returns a summary; records how many times it was called."""
+    """Mirrors production: clears ``last_usage`` on entry, sets it only on a
+    real call — a swallowed error returns a fallback and leaves it None."""
 
     model = "claude-haiku-4-5-20251001"
 
@@ -32,9 +40,15 @@ class FakeSummarizer:
         self._summary = summary_text
         self.calls = 0
         self.last_usage = None
+        # When set, the NEXT call swallows an error and returns a fallback
+        # (exactly what ClaudeSummarizer.generate does on a network blip).
+        self.fail_next = False
 
     def generate(self, transcript, known_terms_block="", correction=""):
+        self.last_usage = None
         self.calls += 1
+        if self.fail_next:
+            return {"title": "Nagranie", "summary": FALLBACK_SUMMARY}
         self.last_usage = _Usage(100_000 * self.calls, 1_000)
         return {"title": "Tytuł", "summary": self._summary}
 
@@ -44,8 +58,12 @@ class FakeTagger:
 
     def __init__(self) -> None:
         self.last_usage = None
+        self.fail_next = False
 
     def generate_tags(self, **_kwargs):
+        self.last_usage = None
+        if self.fail_next:
+            return []
         self.last_usage = _Usage(5_000, 50)
         return ["projekt-x"]
 
@@ -217,3 +235,65 @@ def test_broken_ledger_does_not_break_the_note(transcriber, monkeypatch):
     monkeypatch.setattr(usage_ledger, "add_ai_seconds", boom)
     path = _finalize(transcriber)
     assert path is not None and path.exists()
+
+
+# --- a call that never happened must not be billed -------------------------
+
+
+def test_failed_summary_is_not_billed_with_the_previous_notes_tokens(transcriber):
+    """The summarizer is long-lived: a swallowed error would otherwise charge
+    this note whatever the last successful note spent."""
+    _finalize(transcriber, duration=600)  # note 1 succeeds
+    transcriber.summarizer.fail_next = True
+    transcriber._finalize_note(
+        "Druga rozmowa.", _audio_metadata(10_800), fingerprint="fp-2"
+    )
+
+    rows = [r for r in _metrics(transcriber) if r.get("kind") == "note-llm"]
+    assert [r["note"] for r in rows if r["call"] == "summary"] == ["fp-test-1"]
+    # And a note that got no AI summary must not eat 3h of the budget.
+    assert usage_ledger.read_usage().ai_seconds == 600
+
+
+def test_failed_tag_call_writes_no_phantom_row(transcriber):
+    _finalize(transcriber)  # note 1 tags fine
+    transcriber.tagger.fail_next = True
+    transcriber._finalize_note(
+        "Druga rozmowa.", _audio_metadata(600), fingerprint="fp-2"
+    )
+
+    tag_rows = [
+        r
+        for r in _metrics(transcriber)
+        if r.get("kind") == "note-llm" and r["call"] == "tags"
+    ]
+    assert [r["note"] for r in tag_rows] == ["fp-test-1"]
+
+
+def test_render_failure_does_not_consume_the_budget(transcriber, monkeypatch):
+    """Rendering can fail and the periodic scan retries the tail every 30s —
+    counting before the note exists would burn 30h on one recording."""
+
+    def boom(*_a, **_kw):
+        raise OSError("vault not mounted")
+
+    monkeypatch.setattr(
+        transcriber.markdown_generator, "create_markdown_document", boom
+    )
+    with pytest.raises(OSError):
+        _finalize(transcriber, duration=10_800)
+
+    assert usage_ledger.read_usage().ai_seconds == 0
+    # The spend was real, though — the cost row stays.
+    assert [r for r in _metrics(transcriber) if r.get("kind") == "note-llm"]
+
+
+def test_rows_carry_the_note_version(transcriber):
+    transcriber._finalize_note(
+        "Poprawiona transkrypcja.",
+        _audio_metadata(600),
+        fingerprint="fp-test-1",
+        version=2,
+    )
+    rows = [r for r in _metrics(transcriber) if r.get("kind") == "note-llm"]
+    assert all(r["version"] == 2 for r in rows)

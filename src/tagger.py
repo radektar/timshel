@@ -57,6 +57,9 @@ class ClaudeTagger(BaseTagger):
         known_entities: str = "",
     ) -> List[str]:
         """Generate tags using Claude API."""
+        # Cleared up front: see ClaudeSummarizer.generate — a call that never
+        # reaches the API must not leave the previous note's usage behind.
+        self.last_usage = None
         if not config.ENABLE_LLM_TAGGING:
             logger.debug("LLM tagging disabled; skipping tag generation.")
             return []

@@ -366,3 +366,64 @@ class TestCreateMarkdownDocument:
         finally:
             # Restore permissions for cleanup
             output_dir.chmod(0o755)
+
+
+class TestDurationFallback:
+    """mutagen has no DSS/DS2 parser — the Olympus dictaphone's own formats.
+    Without an ffmpeg fallback the AI-hours ledger reads zero for exactly the
+    users this product is named for."""
+
+    def test_ffmpeg_fills_duration_mutagen_could_not_read(self, tmp_path, monkeypatch):
+        from src.markdown_generator import MarkdownGenerator
+
+        gen = MarkdownGenerator()
+        audio = tmp_path / "DS500001.DS2"
+        audio.write_bytes(b"not really audio")
+
+        monkeypatch.setattr(
+            MarkdownGenerator,
+            "_duration_via_ffmpeg",
+            staticmethod(lambda _f: 11_400),
+        )
+        meta = gen.extract_audio_metadata(audio)
+        assert meta["duration_seconds"] == 11_400
+        assert meta["duration_formatted"] == "03:10:00"
+
+    def test_parses_ffmpeg_stderr(self, tmp_path, monkeypatch):
+        import subprocess
+
+        from src.config import config
+        from src.markdown_generator import MarkdownGenerator
+
+        monkeypatch.setattr(config, "FFMPEG_PATH", tmp_path / "ffmpeg")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **kw: type(
+                "P", (), {"stderr": "  Duration: 01:23:45.67, start: 0.0\n"}
+            )(),
+        )
+        assert MarkdownGenerator._duration_via_ffmpeg(tmp_path / "x.dss") == 5025
+
+    def test_missing_duration_is_logged_not_silent(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        from src.markdown_generator import MarkdownGenerator
+
+        gen = MarkdownGenerator()
+        audio = tmp_path / "REC.DS2"
+        audio.write_bytes(b"x")
+        monkeypatch.setattr(
+            MarkdownGenerator, "_duration_via_ffmpeg", staticmethod(lambda _f: None)
+        )
+        with caplog.at_level(logging.WARNING, logger="timshel"):
+            meta = gen.extract_audio_metadata(audio)
+        assert meta["duration_seconds"] is None
+        assert "will not count towards AI hours" in caplog.text
+
+    def test_no_ffmpeg_configured_degrades_quietly(self, tmp_path, monkeypatch):
+        from src.config import config
+        from src.markdown_generator import MarkdownGenerator
+
+        monkeypatch.setattr(config, "FFMPEG_PATH", None)
+        assert MarkdownGenerator._duration_via_ffmpeg(tmp_path / "x.dss") is None

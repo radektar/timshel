@@ -19,7 +19,9 @@ subscription proxy exists.
 Concurrency
 -----------
 Both the menu app and the daemon finalize notes, so both increment this file.
-Writes are read-fresh → modify → atomic ``os.replace``, with no lock. Two
+Writes are read-fresh → modify → atomic ``os.replace`` via a PID-unique temp
+file, with no lock. Today the note path is additionally serialized by
+``ProcessLock``, but that is not something this module relies on. Two
 increments landing in the same millisecond from different processes can lose
 one — accepted on purpose: counters (unlike the scheduler's seen-set) cannot
 be merged idempotently without an oplog, and a soft budget does not justify
@@ -126,7 +128,10 @@ def _write(usage: MonthlyUsage) -> None:
         "notified_80": bool(usage.notified_80),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
+    # PID in the temp name: a shared one lets two processes interleave their
+    # writes into the same file, so os.replace would publish mangled JSON —
+    # and a corrupt ledger loses the WHOLE month, not one increment.
+    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 

@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
 from src.config import config as default_config
 from src.config.config import Config
@@ -53,6 +53,9 @@ class NoteMeter(NamedTuple):
     note: str
     source_type: str
     duration_seconds: Optional[int]
+    # Retranscribes reuse the fingerprint, so without this a v2 note's spend is
+    # indistinguishable from v1's in any per-note cost analysis.
+    version: int = 1
 
 
 def send_notification(title: str, message: str, subtitle: str = "") -> None:
@@ -1197,6 +1200,12 @@ class Transcriber:
         the alias retry runs on the same summarizer instance and overwrites it,
         which is why every call site records before the next one starts.
         """
+        usage = getattr(client, "last_usage", None)
+        if usage is None:
+            # No API call happened (empty input, or an error swallowed into a
+            # fallback summary). Billing this note would charge it the previous
+            # note's tokens — the client instance is long-lived.
+            return
         try:
             from src.connections.insight_metrics import record_note_llm_call
 
@@ -1204,9 +1213,10 @@ class Transcriber:
                 call=call,
                 note=meter.note,
                 model=str(getattr(client, "model", "")),
-                usage=getattr(client, "last_usage", None),
+                usage=usage,
                 source_type=meter.source_type,
                 duration_seconds=meter.duration_seconds,
+                version=meter.version,
             )
         except Exception as exc:  # noqa: BLE001 - instrument, never a blocker
             logger.debug("note-llm metering skipped: %s", exc)
@@ -1636,7 +1646,7 @@ class Transcriber:
     def _finalize_note(
         self,
         transcript_text: str,
-        metadata: Dict[str, str],
+        metadata: Dict[str, Any],
         fingerprint: str,
         *,
         version: int = 1,
@@ -1665,8 +1675,12 @@ class Transcriber:
         meter = NoteMeter(
             note=fingerprint,
             source_type=(extra_frontmatter or {}).get("source_type") or "recorder",
+            version=int(version),
             duration_seconds=(
-                int(duration_seconds) if isinstance(duration_seconds, int) else None
+                int(duration_seconds)
+                if isinstance(duration_seconds, (int, float))
+                and not isinstance(duration_seconds, bool)
+                else None
             ),
         )
 
@@ -1687,7 +1701,6 @@ class Transcriber:
                 )
                 summarized_by_llm = True
                 self._record_llm_usage("summary", self.summarizer, meter)
-                self._count_ai_hours(meter.duration_seconds)
                 summary = self._canonicalize_aliases(
                     summary, transcript_text, known_terms, meter=meter
                 )
@@ -1774,6 +1787,13 @@ Brak podsumowania AI. Możliwe przyczyny:
             output_filename=output_filename,
         )
         logger.info(f"✓ Markdown document created: {md_path.name}")
+        # Budget accounting LAST, and only for a note that really got an AI
+        # summary. Rendering can fail (vault unmounted, disk full) and the
+        # periodic scan then retries the whole tail every 30s — counting before
+        # the note exists would burn a 30h budget in minutes on one recording.
+        # Cost rows stay where they are: that spend was real either way.
+        if summarized_by_llm and not is_fallback_summary(summary.get("summary", "")):
+            self._count_ai_hours(meter.duration_seconds)
         return md_path
 
     def _find_existing_markdown_for_audio(self, audio_file: Path) -> Optional[Path]:

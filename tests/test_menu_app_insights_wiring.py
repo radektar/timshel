@@ -66,7 +66,7 @@ def _usage_app(tmp_path, monkeypatch):
     monkeypatch.setattr(global_config, "AI_HOURS_BUDGET", 30)
     app = _app()
     app.ai_usage_item = SimpleNamespace(title="AI this month: —")
-    app._ai_usage_mtime = -1.0
+    app._ai_usage_key = ()
     return app
 
 
@@ -103,3 +103,18 @@ def test_ai_usage_line_skips_reread_until_ledger_changes(tmp_path, monkeypatch):
     )
     app._refresh_ai_usage()
     assert reads == []
+
+
+def test_ai_usage_line_resets_when_the_month_flips(tmp_path, monkeypatch):
+    """The ledger resets lazily ON READ, and nothing writes the file on the
+    1st — keyed on mtime alone the menu would show last month's total forever."""
+    from src import usage_ledger
+
+    app = _usage_app(tmp_path, monkeypatch)
+    usage_ledger.add_ai_seconds(28 * 3600)
+    app._refresh_ai_usage()
+    assert app.ai_usage_item.title == "AI this month: 28h 0m / 30h"
+
+    monkeypatch.setattr(usage_ledger, "current_month", lambda *a, **kw: "2099-01")
+    app._refresh_ai_usage()
+    assert app.ai_usage_item.title == "AI this month: 0m / 30h"

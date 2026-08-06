@@ -212,7 +212,7 @@ class TimshelMenuApp(rumps.App):
         self.ai_usage_item = rumps.MenuItem("AI this month: —")
         self.ai_usage_item.set_callback(None)
         self.menu.add(self.ai_usage_item)
-        self._ai_usage_mtime: float = -1.0
+        self._ai_usage_key: tuple = ()
         self.menu.add(rumps.separator)
 
         # Group 2 — feeding the vault (input).
@@ -1895,9 +1895,14 @@ class TimshelMenuApp(rumps.App):
 
             path = usage_ledger.ledger_path()
             mtime = path.stat().st_mtime if path and path.exists() else 0.0
-            if mtime == self._ai_usage_mtime:
+            # The month belongs in the key: the ledger resets lazily ON READ,
+            # and nothing writes the file on the 1st until a note is finalized.
+            # Keyed on mtime alone, a long-running menu bar app would keep
+            # showing last month's total indefinitely.
+            key = (mtime, usage_ledger.current_month())
+            if key == self._ai_usage_key:
                 return
-            self._ai_usage_mtime = mtime
+            self._ai_usage_key = key
             usage = usage_ledger.read_usage()
             budget = int(getattr(config, "AI_HOURS_BUDGET", 0) or 0)
             used = usage_ledger.format_hours(usage.ai_seconds)

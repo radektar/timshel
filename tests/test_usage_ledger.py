@@ -118,3 +118,20 @@ def test_budget_fraction(ledger_file):
 )
 def test_format_hours(seconds, expected):
     assert usage_ledger.format_hours(seconds) == expected
+
+
+def test_temp_file_is_per_process(ledger_file, monkeypatch):
+    """A shared temp name lets two writers interleave into one file, and
+    os.replace then publishes mangled JSON — losing the whole month, not one
+    increment."""
+    import os
+
+    seen = []
+    real_replace = os.replace
+    monkeypatch.setattr(
+        usage_ledger.os,
+        "replace",
+        lambda src, dst: (seen.append(str(src)), real_replace(src, dst))[1],
+    )
+    usage_ledger.add_ai_seconds(60)
+    assert str(os.getpid()) in seen[0]
