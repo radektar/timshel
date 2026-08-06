@@ -654,9 +654,12 @@ z realnym whisperem). 1038 szybkich testów + mypy zielone; audio e2e zielone.
    na której stoi limit 30h w cenniku.
    Wąskie gardło jest nadal to samo i NIE jest kodem: świeży DMG (ostatni
    `1bbee1af` z 29.07, sprzed #97–#103), Gatekeeper realnym kanałem, TCC dla
-   Group Containers na buildzie, klucze per-tester (cap $15/workspace, alert
-   na $10 — beta liczy się w innych cenach niż produkcja: Opus+verdict
-   w tester_mode) i lista 3–5 testerów.
+   Group Containers na buildzie, klucze per-tester (**cap $8/workspace, alert
+   na $6** — decyzja Radka 06.08: limit na testera nie przekracza ceny
+   miesięcznej subskrypcji; szacunek na 3 tyg. dla typowego testera to
+   ~$3,5–8, więc mieści się, ale tester z dużym archiwum może przebić i wtedy
+   breaker wyłączy mu AI w środku pomiaru — alert na $6 jest realnym
+   ostrzeżeniem) i lista 3–5 testerów.
 0b. **PR #100 — podsumowanie czyta całe nagranie** (szczegóły w sekcji na górze).
    Kolejność jest tu istotna: PR #99 naprawił *jak* apka opisuje notatkę, PR #100
    naprawił *co w ogóle widzi*. Uczciwy pomiar H1 zaczyna się dopiero po obu —
