@@ -345,9 +345,9 @@ class ClaudeSummarizer(BaseSummarizer):
             # Low temperature, not zero: canonicalisation and format adherence
             # are near-mechanical, and high temperature is what let the model
             # drift on headings and skip alias replacement. Reasoning models
-            # (Opus 4.x) reject `temperature` (deprecated) — omit it there.
+            # (any Opus) reject `temperature` (deprecated) — omit it there.
             extra = {}
-            if not self.model.startswith("claude-opus-4"):
+            if not self.model.startswith("claude-opus-"):
                 extra["temperature"] = 0.2
             message = self.client.messages.create(
                 model=self.model,

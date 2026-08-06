@@ -195,7 +195,7 @@ class TimshelMenuApp(rumps.App):
         )
         self.menu.add(self.insights_item)
         self.gen_digest_item = rumps.MenuItem(
-            "Generate digest now",
+            "Deep scan now…",
             callback=self._generate_digest_now,
         )
         self.menu.add(self.gen_digest_item)
@@ -2057,17 +2057,78 @@ class TimshelMenuApp(rumps.App):
             logger.error("Failed to open digest: %s", exc)
             rumps.alert("Error", f"Could not open digest: {exc}", ok="OK")
 
+    def _deep_scan_dialog_text(self, potential, usage) -> str:
+        """What the user is about to spend, in their terms.
+
+        States the size of the backlog rather than "not much new material":
+        the old copy only appeared when the local gate judged the run futile,
+        so a scan over a big backlog and one over nothing looked identical —
+        both silent. The count is what makes "worth it or not" answerable.
+        """
+        limit = int(getattr(config, "DEEP_SCAN_MONTHLY_LIMIT", 0) or 0)
+        lines = []
+        if potential is None:
+            lines.append("Couldn't check what's new since your last digest.")
+        elif potential.unseen_total <= 0:
+            lines.append(
+                "Nothing new since your last digest — this would re-read "
+                "material you have already seen."
+            )
+        else:
+            noun = "note" if potential.unseen_total == 1 else "notes"
+            lines.append(f"{potential.unseen_total} new {noun} since your last digest.")
+            if not potential.ok:
+                lines.append(
+                    "Probably too little to connect — a run now will likely "
+                    "find nothing."
+                )
+        # Same window as last time: the run is paid and the result would be
+        # near-identical. Kept as a warning, not a block — this is also the
+        # delete-and-retranscribe repair path.
+        if (
+            potential is not None
+            and potential.window_sig is not None
+            and potential.window_sig == self._last_digest_window_sig()
+        ):
+            lines.append(
+                "This is the same material your last digest read — expect a "
+                "near-identical result."
+            )
+        if limit:
+            used = usage.deep_scans if usage is not None else 0
+            if used >= limit:
+                lines.append(f"Deep scans: {used}/{limit} — monthly limit reached.")
+            else:
+                lines.append(f"Deep scans: {used}/{limit} this month.")
+        lines.append("Costs one Claude run (~$0.15–0.40).")
+        return "\n\n".join(lines) + "\n\nRun a deep scan?"
+
+    @staticmethod
+    def _last_digest_window_sig():
+        try:
+            from src.connections.scheduler import get_scheduler
+
+            return get_scheduler().last_window_sig
+        except Exception as exc:  # noqa: BLE001 - dedup hint is optional
+            logger.debug("could not read last digest window signature: %s", exc)
+            return None
+
     def _generate_digest_now(self, _):
-        """Force a synthesis digest now (runs in the background, BYOK/PRO)."""
+        """Run a deep scan on demand — always behind an informed confirmation.
+
+        The weekly digest is automatic and gated for free; this is the one
+        paid action the user can trigger at will, so it asks EVERY time and
+        says how much new material there is. Nothing is blocked: over the
+        monthly count the dialog states it and still offers the run (soft in
+        the beta — the hard ceiling is the API workspace cap).
+        """
         import threading
 
         if not self.transcriber:
             return
 
         def _run():
-            send_notification(
-                "Timshel", "Generating synthesis digest…", "Reading your notes…"
-            )
+            send_notification("Timshel", "Running a deep scan…", "Reading your notes…")
             try:
                 from src.connections import run_digest_if_due
 
@@ -2079,8 +2140,8 @@ class TimshelMenuApp(rumps.App):
                         "Nothing connected this time (or AI key not set).",
                     )
             except Exception as exc:  # noqa: BLE001
-                logger.error("Manual digest failed: %s", exc)
-                send_notification("Timshel", "Digest failed", str(exc))
+                logger.error("Deep scan failed: %s", exc)
+                send_notification("Timshel", "Deep scan failed", str(exc))
 
         def _preview_then_run():
             # The $0 preview reads the whole corpus (and the first tester-mode
@@ -2093,28 +2154,41 @@ class TimshelMenuApp(rumps.App):
             except Exception as exc:  # noqa: BLE001 - preview must never block
                 logger.debug("digest potential preview failed (%s) — proceeding", exc)
                 potential = None
-            if potential is None or potential.ok:
-                _run()
-                return
+            try:
+                from src import usage_ledger
+
+                usage = usage_ledger.read_usage()
+            except Exception as exc:  # noqa: BLE001 - count is informational
+                logger.debug("deep-scan count unavailable: %s", exc)
+                usage = None
+
+            message = self._deep_scan_dialog_text(potential, usage)
 
             def _confirm_on_main() -> None:
-                clicked = rumps.alert(
-                    "Timshel",
-                    "Not much new material since the last digest — a run now "
-                    "will likely find no new connections, but will still cost "
-                    "an API call.\n\nGenerate anyway?",
-                    ok="Generate",
-                    cancel="Cancel",
-                )
-                if clicked == 1:
-                    threading.Thread(
-                        target=_run, name="ManualDigest", daemon=True
-                    ).start()
+                try:
+                    clicked = rumps.alert(
+                        "Timshel",
+                        message,
+                        ok="Run deep scan",
+                        cancel="Cancel",
+                    )
+                except Exception as exc:  # noqa: BLE001 - alert has failed before
+                    logger.error("deep-scan confirmation failed: %s", exc)
+                    return
+                if clicked != 1:
+                    return
+                try:
+                    from src import usage_ledger
+
+                    usage_ledger.increment_deep_scan()
+                except Exception as exc:  # noqa: BLE001 - never block the run
+                    logger.debug("could not count deep scan: %s", exc)
+                threading.Thread(target=_run, name="DeepScan", daemon=True).start()
 
             _run_on_main_thread(_confirm_on_main)
 
         threading.Thread(
-            target=_preview_then_run, name="ManualDigestPreview", daemon=True
+            target=_preview_then_run, name="DeepScanPreview", daemon=True
         ).start()
 
     def _maybe_start_first_session(self) -> None:
@@ -2395,7 +2469,7 @@ class TimshelMenuApp(rumps.App):
             ),
             "unavailable": (
                 "No Claude API key is configured, so the analysis didn't "
-                "run. Add one in Settings, then use 'Generate digest now'."
+                "run. Add one in Settings, then use 'Deep scan now…'."
             ),
             "not-first-session": (
                 "Your notes were imported. Timshel has already been "
@@ -2406,7 +2480,7 @@ class TimshelMenuApp(rumps.App):
         message = messages.get(
             outcome,
             "The analysis couldn't finish (connection or service problem). "
-            "Your notes are safe — try 'Generate digest now' from the menu.",
+            "Your notes are safe — try 'Deep scan now…' from the menu.",
         )
         logger.info("first digest outcome: %s", outcome)
 

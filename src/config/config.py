@@ -485,8 +485,8 @@ tags: [{tags}]
             self.SYNTHESIS_DENSE_COUNT = 6
             self.SYNTHESIS_GRAPH_COUNT = 6
             self.SYNTHESIS_STANCE_COUNT = 4
-            self.LLM_MODEL_SYNTHESIS = "claude-opus-4-8"
-            self.LLM_MODEL_VERDICT = "claude-opus-4-8"
+            self.LLM_MODEL_SYNTHESIS = "claude-opus-5"
+            self.LLM_MODEL_VERDICT = "claude-opus-5"
 
     def ensure_directories(self) -> None:
         """Create necessary directories if they don't exist."""

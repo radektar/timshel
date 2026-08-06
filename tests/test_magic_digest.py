@@ -39,8 +39,8 @@ def test_main_sets_overrides_and_forces_run(tmp_path, monkeypatch):
     assert calls["force"] is True
     assert calls["verdict"] is True
     assert calls["tester"] is True
-    assert calls["model_synth"] == "claude-opus-4-8"
-    assert calls["model_verdict"] == "claude-opus-4-8"
+    assert calls["model_synth"] == "claude-opus-5"
+    assert calls["model_verdict"] == "claude-opus-5"
 
 
 def test_no_verdict_flag(tmp_path, monkeypatch):
