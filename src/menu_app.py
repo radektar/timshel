@@ -2094,14 +2094,36 @@ class TimshelMenuApp(rumps.App):
                 "This is the same material your last digest read — expect a "
                 "near-identical result."
             )
-        if limit:
-            used = usage.deep_scans if usage is not None else 0
+        # Only when the ledger really answered: stating "0/10" after a failed
+        # read invents a fact about the user's month.
+        if limit and usage is not None:
+            used = usage.deep_scans
             if used >= limit:
                 lines.append(f"Deep scans: {used}/{limit} — monthly limit reached.")
             else:
                 lines.append(f"Deep scans: {used}/{limit} this month.")
         lines.append("Costs one Claude run (~$0.15–0.40).")
         return "\n\n".join(lines) + "\n\nRun a deep scan?"
+
+    @staticmethod
+    def _digest_runs() -> int:
+        """Paid-run counter; -1 when unreadable, so it never looks like growth."""
+        try:
+            from src.connections.scheduler import get_scheduler
+
+            return int(get_scheduler().digest_runs)
+        except Exception as exc:  # noqa: BLE001 - accounting is best-effort
+            logger.debug("could not read digest run count: %s", exc)
+            return -1
+
+    @staticmethod
+    def _count_deep_scan() -> None:
+        try:
+            from src import usage_ledger
+
+            usage_ledger.increment_deep_scan()
+        except Exception as exc:  # noqa: BLE001 - never block the run
+            logger.debug("could not count deep scan: %s", exc)
 
     @staticmethod
     def _last_digest_window_sig():
@@ -2132,7 +2154,18 @@ class TimshelMenuApp(rumps.App):
             try:
                 from src.connections import run_digest_if_due
 
+                # force=True skips the cadence and the $0 gate, but NOT the
+                # free bails (no API key, AI disabled, digest lock held by the
+                # daemon, <2 candidate notes). digest_runs is the scheduler's
+                # own marker of a run that consumed a window — the only honest
+                # "this cost money". Counting on confirm instead would let a
+                # tester with no key click the monthly allowance to 10/10
+                # without a single API call, poisoning the very number the
+                # pricing tier is calibrated on.
+                runs_before = self._digest_runs()
                 path = run_digest_if_due(self.transcriber, force=True)
+                if self._digest_runs() > runs_before:
+                    self._count_deep_scan()
                 if path is None:
                     send_notification(
                         "Timshel",
@@ -2177,12 +2210,6 @@ class TimshelMenuApp(rumps.App):
                     return
                 if clicked != 1:
                     return
-                try:
-                    from src import usage_ledger
-
-                    usage_ledger.increment_deep_scan()
-                except Exception as exc:  # noqa: BLE001 - never block the run
-                    logger.debug("could not count deep scan: %s", exc)
                 threading.Thread(target=_run, name="DeepScan", daemon=True).start()
 
             _run_on_main_thread(_confirm_on_main)

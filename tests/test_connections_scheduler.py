@@ -1398,3 +1398,43 @@ def test_digest_potential_exposes_backlog_and_signature():
     potential = digest_potential(candidates)
     assert potential.unseen_total == 9  # 9 waiting, only 2 fit the window
     assert potential.window_sig == window_signature({n.fingerprint for n in notes})
+
+
+def test_unrelated_write_does_not_roll_back_the_window_signature(tmp_path):
+    """The mirror of test_reset_seen_does_not_roll_back_the_weekly_clock.
+
+    An import calling unsee() merges and saves without syncing the clock; with
+    the signature riding along in memory, that stale holder would republish a
+    window two digests old — and the deep-scan dedup hint would then compare
+    against something nobody read.
+    """
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    holder = DigestScheduler(state)
+    holder.mark_ran(datetime(2026, 8, 1, 10, 0), seen_keys={"n1", "n2"})
+
+    other = DigestScheduler(state)
+    other.mark_ran(datetime(2026, 8, 8, 10, 0), seen_keys={"n7", "n8"})
+    newer_sig = other.last_window_sig
+    newer_clock = other.last_digest_at
+
+    holder.unsee("n9")  # stale holder, unrelated write
+
+    on_disk = DigestScheduler(state)
+    assert on_disk.last_window_sig == newer_sig
+    assert on_disk.last_digest_at == newer_clock
+
+
+def test_onboarding_signature_describes_the_window_not_the_corpus(tmp_path):
+    """The first-session digest marks the whole corpus seen but READS one
+    window; stamping the corpus would make the dedup hint dead forever."""
+    from src.connections.scheduler import DigestScheduler, window_signature
+
+    sched = DigestScheduler(tmp_path / "state.json")
+    corpus = {f"n{i}" for i in range(60)}
+    window = {"n1", "n2", "n3"}
+    sched.mark_ran(datetime.now(), seen_keys=corpus, window_keys=window)
+
+    assert sched.last_window_sig == window_signature(window)
+    assert sched.seen_note_keys == corpus
