@@ -1460,6 +1460,17 @@ def test_mark_ran_keeps_its_own_digest_path_against_a_newer_disk_clock(tmp_path)
 
     assert sched.last_digest_path == str(digest)
     assert DigestScheduler(state).last_digest_path == str(digest)
+    # ...and the newer clock is NOT rolled back to our start time either:
+    # fixing the path must not reintroduce the rollback the merge closed.
+    assert sched.last_digest_at == "2026-08-06T10:05:00"
+
+
+def test_mark_ran_advances_the_clock_when_nobody_competed(tmp_path):
+    from src.connections.scheduler import DigestScheduler
+
+    sched = DigestScheduler(tmp_path / "s.json")
+    sched.mark_ran(datetime(2026, 8, 6, 11, 0, 0), seen_keys={"n1"})
+    assert sched.last_digest_at == "2026-08-06T11:00:00"
 
 
 def test_on_paid_fires_only_when_a_window_was_consumed(tmp_path, monkeypatch):
