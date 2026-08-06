@@ -105,9 +105,14 @@ def test_failed_preview_still_produces_a_dialog(app, monkeypatch):
 # --- what confirming / cancelling does -------------------------------------
 
 
-def _drive(app, monkeypatch, *, answer, potential=None):
-    """Run the handler synchronously, capturing whether the digest fired."""
+def _drive(app, monkeypatch, *, answer, potential=None, paid=True):
+    """Run the handler synchronously, capturing whether the digest fired.
+
+    ``paid`` models whether the run consumed a window: the scheduler bumps
+    ``digest_runs`` only then, and a free bail leaves it untouched.
+    """
     ran = []
+    runs = {"n": 4}
     monkeypatch.setattr(ma, "_run_on_main_thread", lambda fn: fn())
     monkeypatch.setattr(ma.rumps, "alert", lambda *a, **kw: answer)
     monkeypatch.setattr(ma, "send_notification", lambda *a, **kw: None)
@@ -115,9 +120,15 @@ def _drive(app, monkeypatch, *, answer, potential=None):
         "src.connections.scheduler.estimate_digest_potential",
         lambda *a, **kw: potential or _potential(),
     )
-    monkeypatch.setattr(
-        "src.connections.run_digest_if_due", lambda *a, **kw: ran.append(1)
-    )
+    monkeypatch.setattr(TimshelMenuApp, "_digest_runs", staticmethod(lambda: runs["n"]))
+
+    def _fake_run(*_a, **_kw):
+        ran.append(1)
+        if paid:
+            runs["n"] += 1
+        return None
+
+    monkeypatch.setattr("src.connections.run_digest_if_due", _fake_run)
 
     class _Thread:
         def __init__(self, target=None, **_kw):
@@ -145,6 +156,18 @@ def test_cancelling_runs_nothing_and_counts_nothing(app, monkeypatch):
     ran = _drive(app, monkeypatch, answer=0)
     assert ran == []
     assert usage_ledger.read_usage().deep_scans == 0
+
+
+def test_a_run_that_bails_for_free_is_not_charged(app, monkeypatch):
+    """force=True skips the cadence and the $0 gate, not the free bails: no
+    API key, AI disabled, digest lock held, <2 notes. A tester without a key
+    could otherwise click the monthly allowance to 10/10 without one API
+    call — and that count is the pricing-calibration signal."""
+    from src import usage_ledger
+
+    ran = _drive(app, monkeypatch, answer=1, paid=False)
+    assert ran == [1]  # the attempt happened
+    assert usage_ledger.read_usage().deep_scans == 0  # but nothing was paid
 
 
 def test_dialog_is_shown_even_when_the_gate_would_pass(app, monkeypatch):

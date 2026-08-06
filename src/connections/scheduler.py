@@ -248,6 +248,13 @@ class DigestScheduler:
             data = self._read_disk_state()
             if data is None:
                 return
+            # The clock (and the window signature that belongs to it) travels
+            # with the seen-set: every writer that merges must adopt it too,
+            # or an unrelated write from a stale holder — an import calling
+            # unsee(), say — republishes a run that is two digests old.
+            # reset_seen was hardened for exactly this; unsee/clear_pending/
+            # init_seen were not.
+            self._adopt_disk_clock(data)
             raw = data.get("seen_note_keys")
             disk_epoch = int(data.get("seen_epoch", 0) or 0)
             disk_tombstones = set(data.get("unseen_tombstones", []) or [])
@@ -463,10 +470,15 @@ class DigestScheduler:
         path: Optional[Path] = None,
         seen_keys: Optional[Set[str]] = None,
         pending: int = 0,
+        window_keys: Optional[Set[str]] = None,
     ) -> None:
         """Record a completed (paid) run.
 
-        ``seen_keys`` — the consumed window's note keys, added to the seen-set.
+        ``seen_keys`` — the note keys this run consumed, added to the seen-set.
+        ``window_keys`` — the keys the run actually READ, when that differs
+        (the first-session digest marks the whole corpus as seen but reads one
+        window); defaults to ``seen_keys``. Only this feeds the signature, so
+        the dedup hint describes a real window rather than a whole vault.
         ``pending`` — unseen notes left over by the window cap (a backfill
         catching up): kept as the new-notes counter so the weekly cadence keeps
         firing until the backlog drains, even with no new recordings. Clamped
@@ -492,7 +504,7 @@ class DigestScheduler:
             self.unseen_tombstones -= set(seen_keys)
             # Record the signature BEFORE the union: once merged, this window
             # is indistinguishable from every earlier one.
-            self.last_window_sig = window_signature(seen_keys)
+            self.last_window_sig = window_signature(window_keys or seen_keys)
             self.seen_note_keys |= set(seen_keys)
         self.new_notes = max(
             0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
@@ -1074,7 +1086,14 @@ def run_onboarding_digest(transcriber: object = None) -> tuple:
             # them so mark_ran's overwrite doesn't strand their trigger.
             late = max(0, scheduler.new_notes - pre_run_notes)
             scheduler.mark_ran(
-                now, final_path, seen_keys=corpus_keys or consumed, pending=0
+                now,
+                final_path,
+                seen_keys=corpus_keys or consumed,
+                pending=0,
+                # Seen = the whole corpus; READ = the window. Without the
+                # split the first digest of every install would stamp a
+                # corpus-wide signature no later window can ever match.
+                window_keys=consumed,
             )
             if late:
                 scheduler.register_new_notes(late)
