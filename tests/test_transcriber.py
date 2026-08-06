@@ -3,18 +3,19 @@
 import json
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.transcriber import Transcriber
 from src.app_status import AppStatus
-from src.summarizer import BaseSummarizer
-from src.markdown_generator import MarkdownGenerator
-from src.vault_index import IndexEntry
 from src.config.settings import UserSettings
+from src.markdown_generator import MarkdownGenerator
+from src.summarizer import BaseSummarizer
+from src.transcriber import Transcriber, WhisperRun
+from src.vault_index import IndexEntry
 
 
 def update_transcriber_config(transcriber, monkeypatch, **kwargs):
@@ -25,8 +26,6 @@ def update_transcriber_config(transcriber, monkeypatch, **kwargs):
         monkeypatch: pytest monkeypatch fixture
         **kwargs: Config attributes to update (e.g., TRANSCRIBE_DIR=path)
     """
-    from src import config as config_module
-
     from src import config as config_module
 
     # Update transcriber's injected config
@@ -958,8 +957,9 @@ def test_stage_audio_file_not_found(transcriber, tmp_path, monkeypatch):
 
 def test_stage_audio_file_reuse_existing(transcriber, tmp_path, monkeypatch):
     """Test staging reuses existing copy if it matches."""
-    from src import config as config_module
     import time
+
+    from src import config as config_module
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
@@ -1396,6 +1396,112 @@ def test_run_macwhisper_clears_verdict_after_clean_gpu_run(
     assert not transcriber._gpu_flag_path().exists()
 
 
+def _reported_error(transcriber) -> str:
+    """The message the last ERROR state carried (the IDLE reset comes after)."""
+    for call in reversed(transcriber._update_state.call_args_list):
+        if call.args and call.args[0] == AppStatus.ERROR:
+            return call.args[2]
+    raise AssertionError("no ERROR state was reported")
+
+
+def _stalled_run(stderr: str = "") -> WhisperRun:
+    """What _run_whisper_streaming returns for a run it killed for silence."""
+    return WhisperRun(
+        args=["whisper"], returncode=-9, stdout="", stderr=stderr, stalled=True
+    )
+
+
+def test_run_macwhisper_stall_falls_back_to_cpu_for_this_recording_only(
+    transcriber, tmp_path, monkeypatch
+):
+    """A wedged GPU gets one -ng retry — and no permanent verdict.
+
+    Silence is circumstantial: a loaded CPU, a sleeping disk or iCloud can wedge
+    a run that Metal had nothing to do with. Recording a verdict here would move
+    every future recording to the CPU on that guess, so the tally is reserved
+    for failures whisper actually reports.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
+            return _stalled_run()
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 2
+    assert mock_runner.call_args_list[1].kwargs["use_gpu"] is False
+    assert transcriber._gpu_disabled_in_session is False
+    assert not transcriber._gpu_flag_path().exists()
+
+
+def test_run_macwhisper_stall_with_gpu_off_does_not_run_twice(
+    transcriber, tmp_path, monkeypatch
+):
+    """With the GPU already off there is nothing left to try: report the stall
+    instead of transcribing the same recording a second time."""
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._gpu_disabled_in_session = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    mock_runner = MagicMock(return_value=_stalled_run())
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+    transcriber._update_state = MagicMock()  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert mock_runner.call_count == 1
+    assert "utknęła" in _reported_error(transcriber)
+
+
+def test_run_macwhisper_reports_a_stall_that_survives_the_fallback(
+    transcriber, tmp_path, monkeypatch
+):
+    """Stalling with the GPU off too is a different diagnosis than a wedged GPU
+    — the message has to say so, or the log sends the tester after Metal."""
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    mock_runner = MagicMock(return_value=_stalled_run())
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+    transcriber._update_state = MagicMock()  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert mock_runner.call_count == 2  # GPU, then the -ng experiment
+    assert "wyłączonym GPU" in _reported_error(transcriber)
+    # Still no verdict: the fallback stalling too says the GPU was never the
+    # problem, which is the opposite of grounds for disabling it.
+    assert not transcriber._gpu_flag_path().exists()
+
+
 def test_retry_triggers_on_info_level_command_buffer_failure(transcriber):
     """The GGML_LOG_INFO variant of a dead command buffer must also count.
 
@@ -1574,26 +1680,44 @@ def test_run_whisper_transcription_injects_glossary_prompt(
 
 
 class _FakePipeProc:
-    """A fake Popen backed by a real OS pipe so select()/readline() work.
+    """A fake Popen backed by real OS pipes so select()/readline() work.
 
     Pre-loads *payload* into the stderr pipe and closes the write end (EOF),
     so the streaming reader consumes it line-by-line exactly like the real run.
+    stdout is a second pipe: the reader watches it for signs of life, so it must
+    exist even when the test only cares about stderr. ``stdout_payload`` puts
+    decoded segments there the way whisper does.
     """
 
-    def __init__(self, payload: str, rc: int = 0, hold_open: bool = False):
+    def __init__(
+        self,
+        payload: str,
+        rc: int = 0,
+        hold_open: bool = False,
+        stdout_payload: str = "",
+    ):
         import os as _os
 
         r, w = _os.pipe()
         self.stderr = _os.fdopen(r, "r", encoding="utf-8", errors="replace")
         wf = _os.fdopen(w, "w", encoding="utf-8")
         wf.write(payload)
+
+        out_r, out_w = _os.pipe()
+        self.stdout = _os.fdopen(out_r, "r", encoding="utf-8", errors="replace")
+        out_wf = _os.fdopen(out_w, "w", encoding="utf-8")
+        out_wf.write(stdout_payload)
+
         if hold_open:
-            # Keep the write end open: no EOF — simulates a stalled whisper
+            # Keep the write ends open: no EOF — simulates a stalled whisper
             # that wrote a partial line and went silent.
             wf.flush()
+            out_wf.flush()
             self._wf = wf
+            self._out_wf = out_wf
         else:
             wf.close()
+            out_wf.close()
         self._rc = rc
         self.returncode = None  # None == "running" (poll())
 
@@ -1698,6 +1822,173 @@ def test_streaming_timeout_fires_on_partial_line_without_newline(
         )
     assert time.time() - started < 5.0  # bounded, not wedged
     assert proc.returncode == -9  # proc.kill() was invoked
+
+
+class _DripPipeProc(_FakePipeProc):
+    """A fake Popen that keeps trickling output from a thread, never ending.
+
+    Models the case the stall detector must NOT touch: whisper working normally
+    on a long recording. It writes *count* chunks *interval* apart onto the
+    chosen stream and then holds both pipes open, so the run can only end on the
+    timeout — or, if the detector is broken, on a bogus stall.
+    """
+
+    def __init__(self, chunk: str, count: int, interval: float, stream: str = "stdout"):
+        import threading
+
+        super().__init__("", hold_open=True)
+        target = self._out_wf if stream == "stdout" else self._wf
+
+        def drip() -> None:
+            for _ in range(count):
+                time.sleep(interval)
+                if self.returncode is not None:  # killed — stop writing
+                    return
+                try:
+                    target.write(chunk)
+                    target.flush()
+                except (ValueError, OSError):  # pragma: no cover - pipe closed
+                    return
+
+        self._thread = threading.Thread(target=drip, daemon=True)
+        self._thread.start()
+
+
+def test_is_stalled_waits_out_a_slow_cold_start(transcriber):
+    """Before the first output, silence is normal: the first Core ML run on a
+    device compiles the encoder and whisper says nothing while it does.
+
+    Applying the short window here would kill a healthy cold start — the one
+    failure mode of this feature that costs the user a recording for nothing.
+    """
+    assert transcriber._STALL_GRACE_SECONDS > transcriber._STALL_SILENCE_SECONDS
+    long_but_legal = transcriber._STALL_SILENCE_SECONDS + 1
+
+    assert (
+        transcriber._is_stalled(silent_for=long_but_legal, decoding_started=False)
+        is False
+    )
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_GRACE_SECONDS + 1, decoding_started=False
+        )
+        is True
+    )
+
+
+def test_is_stalled_tightens_once_output_starts(transcriber):
+    """Once whisper decodes, it speaks every ~30 s window of audio, so the
+    tolerated silence drops to the short window."""
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_SILENCE_SECONDS - 1, decoding_started=True
+        )
+        is False
+    )
+    assert (
+        transcriber._is_stalled(
+            silent_for=transcriber._STALL_SILENCE_SECONDS + 1, decoding_started=True
+        )
+        is True
+    )
+
+
+def test_streaming_kills_a_wedged_run_long_before_the_timeout(
+    transcriber, tmp_path, monkeypatch
+):
+    """A live, silent whisper must be killed on the stall window — not left to
+    burn the full TRANSCRIPTION_TIMEOUT (an hour) before anyone notices."""
+    proc = _FakePipeProc(
+        "whisper_print_progress_callback: progress =  5%\n", hold_open=True
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    started = time.time()
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+    elapsed = time.time() - started
+
+    assert result.stalled is True
+    assert result.returncode != 0  # so the caller falls back instead of shipping
+    assert proc.returncode == -9  # killed
+    # Killed on the threshold, not on the next poll: the reader must not sleep
+    # past the stall deadline, or the poll interval sets the response time.
+    assert elapsed < 0.9
+
+
+def test_streaming_does_not_apply_the_stall_window_before_first_output(
+    transcriber, tmp_path, monkeypatch
+):
+    """A run that has not produced anything yet is still starting up: only the
+    grace window applies, however short the stall window is."""
+    proc = _FakePipeProc("whisper_init: loading model\n", hold_open=True)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 30)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 0.6, raising=False)
+
+    # Ends on the timeout, i.e. it was never declared stalled.
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_decoded_segments_on_stdout_count_as_a_sign_of_life(
+    transcriber, tmp_path, monkeypatch
+):
+    """stdout is the fast liveness signal: whisper emits a segment per ~30 s of
+    audio, while `progress = NN%` only lands every 5% of the run.
+
+    A run trickling segments must never be killed — if stdout were ignored (it
+    used to go to DEVNULL), the short window would execute a perfectly healthy
+    transcription.
+    """
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=20,
+        interval=0.1,
+        stream="stdout",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.4)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.0, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_progress_that_is_too_throttled_to_log_still_counts_as_life(
+    transcriber, tmp_path, monkeypatch
+):
+    """Liveness must not be inferred from the heartbeat *log*.
+
+    The heartbeat is throttled (every 10 points / 20 s), so a run reporting 1%
+    at a time logs almost nothing while working fine. Tying the detector to the
+    logged heartbeat would kill it — the same log-vs-fact confusion that made
+    the Metal detector fire on healthy output.
+    """
+    proc = _DripPipeProc(
+        "whisper_print_progress_callback: progress =  1%\n",
+        count=20,
+        interval=0.1,
+        stream="stderr",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.4)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.0, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
 
 
 def test_streaming_flushes_final_partial_line(transcriber, tmp_path, monkeypatch):
@@ -2099,8 +2390,9 @@ def test_process_lock_ignores_leftover_file_contents(tmp_path):
     ``open`` and ``write``. With flock the file contents are irrelevant — only
     a live holder blocks — so every one of these leftovers must still acquire.
     """
-    from src.transcriber import ProcessLock
     import time as time_module
+
+    from src.transcriber import ProcessLock
 
     lock_path = tmp_path / "transcriber.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2613,6 +2905,7 @@ def test_run_whisper_transcription_uses_utf8_encoding(
 
         def __init__(self):
             self.stderr = _FakeStderr()
+            self.stdout = _FakeStderr()  # watched for liveness, same shape
 
         def poll(self):
             return 0  # already finished → loop drains and exits, no select()
@@ -2693,6 +2986,7 @@ def test_filehandler_uses_utf8_encoding():
     przez UnicodeEncodeError (ASCII locale).
     """
     import inspect
+
     from src.logger import setup_logger
 
     source = inspect.getsource(setup_logger)

@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the on-dark design tokens (`--terra #D9542A`, `--terra-deep #C24010`).
 
 ### Fixed
+- **A hung transcription died after an hour instead of being rescued.** The
+  previous fix covers GPU failures that announce themselves; a GPU that simply
+  wedges says nothing, so the recording sat there until the 60-minute timeout
+  and then failed outright — no fallback, no diagnosis. whisper's output is now
+  watched as a sign of life (each decoded segment on stdout, roughly one per
+  30 s of audio, plus the progress line every 5%): 3 minutes of complete silence
+  ends the run and retries the recording once with the GPU off. Startup keeps a
+  15-minute grace, because the first Core ML run on a machine compiles the
+  encoder without printing anything. A stall records **no** permanent verdict —
+  it can come from a loaded CPU or a sleeping disk as easily as from Metal, so
+  the GPU is still tried on the next recording — and if the fallback stalls too,
+  the error says that instead of a bare exit code.
 - **Every recording was transcribed twice, and never on the GPU.** The Core ML
   failure detector matched strings a *healthy* whisper.cpp prints
   (`Core ML model loaded`, `ggml_metal_init: allocating`, `tensor API

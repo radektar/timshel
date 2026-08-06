@@ -15,9 +15,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
+from src.app_status import AppStatus
 from src.config import config as default_config
 from src.config.config import Config
+from src.config.settings import UserSettings
+from src.fingerprint import compute_fingerprint
+from src.hostinfo import get_hostname
 from src.logger import logger
+from src.markdown_frontmatter import read_frontmatter
+from src.markdown_generator import MarkdownGenerator
+from src.stance_guard import guard_stance_subjects
+from src.state_manager import get_last_sync_time, save_sync_time
 from src.summarizer import (
     APIBillingError,
     BaseSummarizer,
@@ -26,22 +34,29 @@ from src.summarizer import (
     is_fallback_summary,
     transcript_coverage,
 )
-from src.markdown_generator import MarkdownGenerator
-from src.app_status import AppStatus
-from src.state_manager import get_last_sync_time, save_sync_time
-from src.stance_guard import guard_stance_subjects
 from src.tag_index import GENERATED_TAG, TagIndex
 from src.tagger import BaseTagger, get_tagger
-from src.vocabulary import VocabularyIndex, find_alias_misses
-from src.fingerprint import compute_fingerprint
-from src.hostinfo import get_hostname
 from src.vault_index import IndexEntry, VaultIndex
-from src.config.settings import UserSettings
-from src.markdown_frontmatter import read_frontmatter
+from src.vocabulary import VocabularyIndex, find_alias_misses
 from src.volume_utils import find_matching_volumes
 
 # whisper-cli with -pp prints "whisper_print_progress_callback: progress =  NN%".
 _PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
+
+
+class WhisperRun(subprocess.CompletedProcess):
+    """A finished whisper-cli run, plus why it finished.
+
+    ``stalled`` is True only when *we* killed the process for going silent —
+    something no exit code can express, and something the caller must handle
+    differently from a failure whisper reported itself (see
+    ``_STALL_SILENCE_SECONDS``). Callers that only know about
+    :class:`subprocess.CompletedProcess` keep working unchanged.
+    """
+
+    def __init__(self, *args, stalled: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stalled = stalled
 
 
 class NoteMeter(NamedTuple):
@@ -822,6 +837,48 @@ class Transcriber:
         cores = os.cpu_count() or 4
         return max(1, cores - 2)
 
+    # How long whisper may produce nothing at all before we call it wedged.
+    #
+    # A GPU that fails loudly is handled by _METAL_FAIL_MARKERS; this covers the
+    # one that just stops. Silence is a weaker signal than an error message, so
+    # the threshold sits far above any legitimate quiet period. Measured on an
+    # M2 Pro (medium + Core ML): whisper emits a decoded segment on stdout after
+    # every ~30 s window of audio — 0.7–5 s apart — and a `progress = NN%` line
+    # on stderr every 5% of the run. Both count as a sign of life, so the worst
+    # legitimate gap is the time to chew one 30 s window; 3 minutes tolerates a
+    # machine ~6x slower than real time, which could not finish a recording
+    # inside TRANSCRIPTION_TIMEOUT anyway.
+    _STALL_SILENCE_SECONDS = 180
+
+    # …but before the first decoded window there is one legitimately long
+    # silence: the first Core ML run on a device compiles the encoder (whisper
+    # warns "first run on a device may take a while") on top of loading the
+    # model. Getting this wrong kills a healthy cold start, so it is generous.
+    _STALL_GRACE_SECONDS = 900
+
+    def _stall_limit(self, decoding_started: bool) -> float:
+        """How long this phase of the run may stay silent.
+
+        Args:
+            decoding_started: True once whisper has emitted a segment or a
+                progress line — i.e. it is past model load and Core ML compile,
+                so the generous grace window no longer applies.
+        """
+        return (
+            self._STALL_SILENCE_SECONDS
+            if decoding_started
+            else self._STALL_GRACE_SECONDS
+        )
+
+    def _is_stalled(self, *, silent_for: float, decoding_started: bool) -> bool:
+        """Whether a live whisper has been quiet long enough to count as wedged.
+
+        Args:
+            silent_for: Seconds since the last byte on *either* pipe.
+            decoding_started: See :meth:`_stall_limit`.
+        """
+        return silent_for >= self._stall_limit(decoding_started)
+
     def _run_whisper_streaming(
         self,
         cmd: List[str],
@@ -832,7 +889,7 @@ class Transcriber:
     ) -> subprocess.CompletedProcess:
         """Run whisper-cli with live stderr streaming.
 
-        Replaces a blocking ``subprocess.run(capture_output=True)`` to fix two
+        Replaces a blocking ``subprocess.run(capture_output=True)`` to fix three
         bugs at once:
           1. **Early Metal abort.** whisper.cpp prints the Metal error
              at backend init; the old post-hoc stderr check only saw it after the
@@ -840,12 +897,19 @@ class Transcriber:
              detect the marker live and kill the process within seconds.
           2. **Progress heartbeat.** With ``-pp`` whisper emits ``progress = NN%``
              to stderr; we log it so a long run is visibly alive.
+          3. **Stall detection.** A GPU that wedges says nothing at all, so
+             neither of the above sees it and the recording used to die on
+             TRANSCRIPTION_TIMEOUT an hour later. Silence on *both* pipes is
+             the signal (see ``_is_stalled``).
 
-        stdout → DEVNULL (whisper writes the TXT via ``-otxt``); this also avoids
-        a pipe-buffer deadlock while we block on stderr. Returns a
-        :class:`subprocess.CompletedProcess` (stdout always ``""``) so the caller
-        is unchanged, and raises :class:`subprocess.TimeoutExpired` on the
-        deadline to preserve the old contract.
+        Both pipes are read: stderr for markers and progress, stdout purely as a
+        sign of life — whisper prints each decoded segment there, far more often
+        than it prints progress, and the content is redundant (the TXT comes
+        from ``-otxt``) so it is read and dropped. Reading both is also what
+        keeps the old pipe-buffer deadlock away now that stdout is no longer
+        DEVNULL. Returns a :class:`WhisperRun` (stdout always ``""``) so the
+        caller is unchanged, and raises :class:`subprocess.TimeoutExpired` on
+        the deadline to preserve the old contract.
 
         encoding/errors are critical under py2app (ASCII locale) — whisper prints
         UTF-8 paths / Polish chars to stderr.
@@ -862,7 +926,7 @@ class Transcriber:
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,  # read purely as a sign of life, then dropped
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -878,17 +942,29 @@ class Transcriber:
         last_logged_pct = -1
         last_heartbeat = time.time()
         started = time.time()
+        # Liveness is tracked separately from the heartbeat above: that one only
+        # moves when a heartbeat is actually *logged* (throttled to every 10
+        # points / 20 s), so reusing it would let the logging policy decide when
+        # a healthy run counts as hung.
+        last_activity = started
+        decoding_started = False
         metal_failed = False
+        stalled = False
 
         assert proc.stderr is not None  # stderr=PIPE above guarantees it
+        assert proc.stdout is not None  # stdout=PIPE above guarantees it
         stderr_fd = proc.stderr.fileno()
+        stdout_fd = proc.stdout.fileno()
         os.set_blocking(stderr_fd, False)
+        os.set_blocking(stdout_fd, False)
+        open_fds = {stderr_fd, stdout_fd}
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         pending = ""  # text accumulated until a newline arrives
 
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
             nonlocal metal_failed, last_logged_pct, last_heartbeat
+            nonlocal decoding_started
             if use_gpu and any(m in line for m in self._METAL_FAIL_MARKERS):
                 metal_failed = True
                 logger.warning(
@@ -902,6 +978,7 @@ class Transcriber:
             if match:
                 pct = int(match.group(1))
                 now = time.time()
+                decoding_started = True
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
                         "⏳ Transkrypcja %d%% — %s",
@@ -913,7 +990,8 @@ class Transcriber:
             return False
 
         def read_chunk() -> Optional[str]:
-            """One non-blocking read. Text (possibly ''), or None on EOF."""
+            """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
+            nonlocal last_activity
             try:
                 chunk = os.read(stderr_fd, 65536)
             except BlockingIOError:
@@ -922,7 +1000,28 @@ class Transcriber:
                 return None
             if not chunk:
                 return None
+            last_activity = time.time()
             return decoder.decode(chunk)
+
+        def drain_stdout() -> Optional[int]:
+            """One non-blocking stdout read, discarded. Bytes read, None on EOF.
+
+            whisper writes the transcript itself (``-otxt``); what we want here
+            is only the *timing* of each decoded segment, so nothing is kept and
+            a long recording costs no memory.
+            """
+            nonlocal last_activity, decoding_started
+            try:
+                chunk = os.read(stdout_fd, 65536)
+            except BlockingIOError:
+                return 0
+            except OSError:  # pragma: no cover - defensive (closed fd)
+                return None
+            if not chunk:
+                return None
+            last_activity = time.time()
+            decoding_started = True  # first segment out = the decode loop runs
+            return len(chunk)
 
         def process_remaining() -> None:
             """Flush the decoder and run marker/progress logic on every
@@ -950,6 +1049,8 @@ class Transcriber:
                             break
                         stderr_chunks.append(text)
                         pending += text
+                    while drain_stdout():
+                        pass
                     process_remaining()
                     break
 
@@ -960,31 +1061,65 @@ class Transcriber:
                         cmd, self.config.TRANSCRIPTION_TIMEOUT
                     )
 
-                ready, _, _ = select.select([stderr_fd], [], [], min(1.0, remaining))
+                silent_for = time.time() - last_activity
+                if self._is_stalled(
+                    silent_for=silent_for,
+                    decoding_started=decoding_started,
+                ):
+                    stalled = True
+                    logger.warning(
+                        "⚠️  whisper produced nothing for %.0fs (%s, %.0fs into "
+                        "the run) — killing it as stalled",
+                        time.time() - last_activity,
+                        "decoding" if decoding_started else "still starting up",
+                        time.time() - started,
+                    )
+                    proc.kill()
+                    break
+
+                # Never sleep past the moment the run would count as stalled:
+                # the check only runs between selects, so a longer sleep would
+                # let the poll interval, not the threshold, decide when a wedged
+                # GPU is noticed.
+                until_stall = self._stall_limit(decoding_started) - silent_for
+                wait = max(min(1.0, remaining, until_stall), 0.01)
+                ready, _, _ = select.select(list(open_fds), [], [], wait)
                 if not ready:
                     continue
 
-                text = read_chunk()
-                if text is None:
-                    # EOF: the write end closed — flush any final partial line.
-                    process_remaining()
-                    break
-                if not text:
-                    continue
+                for fd in ready:
+                    if fd == stdout_fd:
+                        if drain_stdout() is None:
+                            open_fds.discard(stdout_fd)
+                        continue
 
-                stderr_chunks.append(text)
-                pending += text
-                while "\n" in pending:
-                    line, pending = pending.split("\n", 1)
-                    if handle_line(line):
+                    text = read_chunk()
+                    if text is None:
+                        # EOF: the write end closed — flush any final partial
+                        # line. stderr closing ends the run; whatever stdout
+                        # still holds is output we deliberately discard.
+                        process_remaining()
                         stop = True
                         break
+                    if not text:
+                        continue
+
+                    stderr_chunks.append(text)
+                    pending += text
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        if handle_line(line):
+                            stop = True
+                            break
+                    if stop:
+                        break
         finally:
-            try:
-                if proc.stderr is not None:
-                    proc.stderr.close()
-            except Exception:  # pragma: no cover - defensive
-                pass
+            for pipe in (proc.stderr, proc.stdout):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:  # pragma: no cover - defensive
+                    pass
             if proc.poll() is None:
                 try:
                     proc.wait(timeout=5)
@@ -997,12 +1132,16 @@ class Transcriber:
                 self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
-        if metal_failed and returncode == 0:
-            # Ensure the caller treats an early-aborted GPU run as a failure
+        if (metal_failed or stalled) and returncode == 0:
+            # Ensure the caller treats a run we aborted ourselves as a failure
             # so the CPU fallback fires.
             returncode = -1
-        return subprocess.CompletedProcess(
-            args=cmd, returncode=returncode, stdout="", stderr="".join(stderr_chunks)
+        return WhisperRun(
+            args=cmd,
+            returncode=returncode,
+            stdout="",
+            stderr="".join(stderr_chunks),
+            stalled=stalled,
         )
 
     def stop(self) -> None:
@@ -1601,8 +1740,25 @@ class Transcriber:
                 f"stderr length: {len(result.stderr) if result.stderr else 0}"
             )
 
+            # A run we killed for going silent gets exactly one retry with the
+            # GPU off — and, unlike a reported Metal failure, leaves no verdict
+            # behind. A stall can come from outside Metal (a loaded CPU, a disk
+            # going to sleep, iCloud), so condemning the GPU on this evidence
+            # would be a guess; the `-ng` run is the experiment that tells us,
+            # and it costs one recording, not every future one.
+            if getattr(result, "stalled", False) and gpu_attempted:
+                logger.warning(
+                    "⚠️  GPU attempt stalled for %s — retrying once with GPU off "
+                    "(no permanent verdict recorded)",
+                    audio_file.name,
+                )
+                result = self._run_whisper_transcription(
+                    audio_file, use_gpu=False, source_audio=wav_for_whisper
+                )
+                logger.debug(f"Stall fallback completed - rc: {result.returncode}")
+
             # If Metal failed, retry with the GPU off
-            if self._should_retry_without_gpu(
+            elif self._should_retry_without_gpu(
                 result.stderr,
                 gpu_attempted=gpu_attempted,
                 returncode=result.returncode,
@@ -1644,6 +1800,25 @@ class Transcriber:
                 logger.error("✗ Core ML encoder failed to load: %s", audio_file.name)
                 if result.stderr:
                     logger.error("  Error: %s", result.stderr[:500])
+                self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
+                return None
+
+            # Still silent after the fallback (or with the GPU already off):
+            # nothing left to try, and a generic "kod: -9" would send the user
+            # looking for a broken file instead of a wedged machine.
+            if getattr(result, "stalled", False):
+                minutes = round(self._STALL_SILENCE_SECONDS / 60)
+                error_msg = (
+                    f"Transkrypcja utknęła (brak postępu przez {minutes} min)"
+                    if not gpu_attempted
+                    else f"Transkrypcja utknęła (brak postępu przez {minutes} min) "
+                    "także z wyłączonym GPU"
+                )
+                logger.error(
+                    "✗ Transcription stalled: %s (GPU %s)",
+                    audio_file.name,
+                    "was already off" if not gpu_attempted else "off on the retry too",
+                )
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 

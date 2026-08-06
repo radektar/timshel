@@ -135,6 +135,20 @@ failure is dropped as soon as a GPU run succeeds. Once the verdict stands the
 GPU is no longer tried, so it only lifts when whisper, the model, or macOS
 changes — or when you delete that file to force a re-probe.
 
+### Transcription hangs ("Transkrypcja utknęła")
+
+A GPU can also wedge without reporting anything. The app watches whisper's
+output — a decoded segment per ~30 s of audio, plus a progress line every 5% —
+and if **nothing** arrives for 3 minutes it kills the run and retries the
+recording once with the GPU off. Startup gets a longer leash (15 minutes),
+because the first Core ML run on a machine compiles the encoder in silence.
+
+Nothing is recorded permanently here: a stall can come from a loaded CPU or a
+sleeping disk just as easily as from Metal, so the GPU stays enabled for the
+next recording. If the retry with the GPU off stalls too, the log says so — at
+that point look at the machine (disk, memory, a stuck iCloud sync), not at the
+GPU.
+
 Note there is no way to turn Core ML off: `WHISPER_COREML` and
 `GGML_METAL_DISABLE` are whisper.cpp *build* switches and do nothing in the
 environment. This build always runs the encoder through Core ML — `-ng` only
