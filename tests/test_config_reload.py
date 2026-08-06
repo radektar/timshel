@@ -88,7 +88,7 @@ def test_tester_mode_knobs_survive_reload(write_settings):
     assert cfg.VERDICT_ENABLED is True
     assert cfg.INSIGHT_METRICS_ENABLED is True
     assert cfg.PROTOTYPE_TESTER_MODE is True
-    assert cfg.LLM_MODEL_SYNTHESIS == "claude-opus-4-8"
+    assert cfg.LLM_MODEL_SYNTHESIS == "claude-opus-5"
     assert cfg.SYNTHESIS_ENTITY_COUNT == 4
 
     # A later save (e.g. user changes an unrelated setting) must NOT turn the
@@ -96,7 +96,7 @@ def test_tester_mode_knobs_survive_reload(write_settings):
     write_settings("sk-ant-key-DDDD", tester_mode=True)
     cfg2 = reload_config()
     assert cfg2.VERDICT_ENABLED is True
-    assert cfg2.LLM_MODEL_VERDICT == "claude-opus-4-8"
+    assert cfg2.LLM_MODEL_VERDICT == "claude-opus-5"
 
 
 def test_tester_mode_off_leaves_production_baseline(write_settings):

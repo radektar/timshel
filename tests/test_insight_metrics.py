@@ -24,6 +24,11 @@ def _lines(path):
 
 def test_cost_opus_list_price():
     # 1M input @ $5 + 1M output @ $25 = $30 exactly.
+    assert im.estimate_cost_usd("claude-opus-5", 1_000_000, 1_000_000) == 30.0
+
+
+def test_cost_retired_opus_still_prices_historical_rows():
+    """metrics.jsonl rows written before the Opus 5 swap must still cost out."""
     assert im.estimate_cost_usd("claude-opus-4-8", 1_000_000, 1_000_000) == 30.0
 
 

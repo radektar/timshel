@@ -76,8 +76,8 @@ def a8_tester_mode_wiring() -> str:
         cfg = Config()
     assert cfg.VERDICT_ENABLED and cfg.INSIGHT_METRICS_ENABLED, "gates off"
     assert cfg.PROTOTYPE_TESTER_MODE, "label off"
-    assert cfg.LLM_MODEL_SYNTHESIS == "claude-opus-4-8", "synthesis model wrong"
-    assert cfg.LLM_MODEL_VERDICT == "claude-opus-4-8", "verdict model wrong"
+    assert cfg.LLM_MODEL_SYNTHESIS == "claude-opus-5", "synthesis model wrong"
+    assert cfg.LLM_MODEL_VERDICT == "claude-opus-5", "verdict model wrong"
     assert cfg.SYNTHESIS_ENTITY_COUNT == 4, "entity channel off"
     return "verdict+metrics+opus+channels all wired"
 
@@ -100,8 +100,12 @@ def a3_text_import(tmp: Path) -> str:
     t.summarizer = None
     t.tagger = None
 
-    (tmp / "a.txt").write_text("Notatka o strategii rekrutacji testerów.", encoding="utf-8")
-    (tmp / "b.md").write_text("# Nagłówek\n\nDruga notatka o pricingu.", encoding="utf-8")
+    (tmp / "a.txt").write_text(
+        "Notatka o strategii rekrutacji testerów.", encoding="utf-8"
+    )
+    (tmp / "b.md").write_text(
+        "# Nagłówek\n\nDruga notatka o pricingu.", encoding="utf-8"
+    )
     (tmp / "c.vtt").write_text(
         "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n<v R>Trzecia o retencji.\n",
         encoding="utf-8",
@@ -134,7 +138,11 @@ def a2_real_audio(tmp: Path) -> str:
     from tests.fixtures import whisper_runtime as wr
     from tests.fixtures.audio_factory import AudioFactory, say_available
 
-    if wr.find_whisper_install() is None or wr.find_ffmpeg() is None or not say_available():
+    if (
+        wr.find_whisper_install() is None
+        or wr.find_ffmpeg() is None
+        or not say_available()
+    ):
         raise Skip("no whisper install / ffmpeg / macOS `say`")
 
     from src.transcriber import Transcriber
@@ -152,7 +160,9 @@ def a2_real_audio(tmp: Path) -> str:
     assert t.import_audio_file(source) is True, "import_audio_file returned False"
     notes = list(Path(cfg.TRANSCRIBE_DIR).glob("*.md"))
     assert len(notes) == 1, f"expected 1 note, got {len(notes)}"
-    assert "recording" in notes[0].read_text(encoding="utf-8").lower(), "no transcript text"
+    assert (
+        "recording" in notes[0].read_text(encoding="utf-8").lower()
+    ), "no transcript text"
     return "real whisper transcribed a .wav into a note"
 
 
@@ -172,7 +182,11 @@ def a4_alias_judge_live(tmp: Path) -> str:
     (vault / ".timshel").mkdir(parents=True, exist_ok=True)
     (vault / ".timshel" / "vocabulary.json").write_text(
         json.dumps(
-            {"terms": [{"canonical": "Tech to the Rescue", "aliases": ["TekTutoreski"]}]}
+            {
+                "terms": [
+                    {"canonical": "Tech to the Rescue", "aliases": ["TekTutoreski"]}
+                ]
+            }
         ),
         encoding="utf-8",
     )
@@ -186,16 +200,22 @@ def a4_alias_judge_live(tmp: Path) -> str:
         "organizacjom pozarządowym w projektach technologicznych. Ustaliliśmy "
         "trzy kolejne kroki z TekTutoreski na najbliższy kwartał."
     )
-    summary = summarizer.generate(transcript, known_terms_block=vocab.known_terms_block())
+    summary = summarizer.generate(
+        transcript, known_terms_block=vocab.known_terms_block()
+    )
     misses = find_alias_misses(summary.get("summary", ""), vocab)
     # The model should canonicalise the alias; if it slips once, the prod path
     # re-prompts — here we assert the judge at least DETECTS correctly and the
     # canonical form made it into the output.
     canonical_present = "Tech to the Rescue" in summary.get("summary", "")
-    assert canonical_present or misses == [], (
-        f"neither canonicalised nor detectable; misses={misses}"
+    assert (
+        canonical_present or misses == []
+    ), f"neither canonicalised nor detectable; misses={misses}"
+    return (
+        "live summary canonicalised the alias"
+        if canonical_present
+        else "judge detected the miss"
     )
-    return "live summary canonicalised the alias" if canonical_present else "judge detected the miss"
 
 
 # --------------------------------------------------------------------------- #
@@ -212,10 +232,22 @@ def a5_real_digest(tmp: Path) -> str:
     vault.mkdir(parents=True, exist_ok=True)
     today = datetime.now()
     seeds = [
-        ("Priorytety produktu — początek", "Zdecydowaliśmy, że najważniejszy jest onboarding testerów i seedowanie vaulta."),
-        ("Rozmowa o pricingu", "Rozważamy 59 vs 79 dolarów; onboarding testerów wpływa na konwersję pre-order."),
-        ("Retencja i digest", "Cotygodniowy digest ma trzymać retencję; testerzy oceniają połączenia."),
-        ("Sprzeczność w priorytetach", "Wcześniej mówiliśmy, że onboarding jest najważniejszy, dziś priorytetem jest pricing."),
+        (
+            "Priorytety produktu — początek",
+            "Zdecydowaliśmy, że najważniejszy jest onboarding testerów i seedowanie vaulta.",
+        ),
+        (
+            "Rozmowa o pricingu",
+            "Rozważamy 59 vs 79 dolarów; onboarding testerów wpływa na konwersję pre-order.",
+        ),
+        (
+            "Retencja i digest",
+            "Cotygodniowy digest ma trzymać retencję; testerzy oceniają połączenia.",
+        ),
+        (
+            "Sprzeczność w priorytetach",
+            "Wcześniej mówiliśmy, że onboarding jest najważniejszy, dziś priorytetem jest pricing.",
+        ),
     ]
     for i, (title, body) in enumerate(seeds):
         d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
@@ -239,8 +271,8 @@ def a5_real_digest(tmp: Path) -> str:
     config.SYNTHESIS_DENSE_COUNT = 6
     config.SYNTHESIS_GRAPH_COUNT = 6
     config.SYNTHESIS_STANCE_COUNT = 4
-    config.LLM_MODEL_SYNTHESIS = "claude-opus-4-8"
-    config.LLM_MODEL_VERDICT = "claude-opus-4-8"
+    config.LLM_MODEL_SYNTHESIS = "claude-opus-5"
+    config.LLM_MODEL_VERDICT = "claude-opus-5"
 
     from src.connections.scheduler import run_digest_if_due
 
@@ -250,10 +282,14 @@ def a5_real_digest(tmp: Path) -> str:
     assert metrics.exists(), "no metrics.jsonl written — digest pipeline didn't run"
     last = json.loads(metrics.read_text(encoding="utf-8").strip().splitlines()[-1])
     assert last.get("tester_mode") is True, "metrics row not stamped tester_mode"
-    assert "opus" in str(last.get("model", "")).lower(), (
-        f"digest did not use Opus: {last.get('model')}"
+    assert (
+        "opus" in str(last.get("model", "")).lower()
+    ), f"digest did not use Opus: {last.get('model')}"
+    wrote = (
+        f"digest note written ({path.name})"
+        if path
+        else "no connections (clock reset, metrics recorded)"
     )
-    wrote = f"digest note written ({path.name})" if path else "no connections (clock reset, metrics recorded)"
     return f"instrumented run OK — {wrote}"
 
 
@@ -267,10 +303,24 @@ def a6_signal_report(tmp: Path) -> str:
     sig_path = tmp / ".timshel" / "signal.jsonl"
     sig_path.parent.mkdir(parents=True, exist_ok=True)
     # Two engaged connections, both actioned via a handoff.
-    assert vs.record_action(vs.TARGET_LLM, sig="c1", conn_type="contradiction-over-time",
-                            notes=["A", "B"], kind="develop", tool="claude", path=sig_path)
-    assert vs.record_action(vs.TARGET_LLM, sig="c2", conn_type="shared-thread",
-                            notes=["C", "D"], kind="develop", tool="claude", path=sig_path)
+    assert vs.record_action(
+        vs.TARGET_LLM,
+        sig="c1",
+        conn_type="contradiction-over-time",
+        notes=["A", "B"],
+        kind="develop",
+        tool="claude",
+        path=sig_path,
+    )
+    assert vs.record_action(
+        vs.TARGET_LLM,
+        sig="c2",
+        conn_type="shared-thread",
+        notes=["C", "D"],
+        kind="develop",
+        tool="claude",
+        path=sig_path,
+    )
     events, _ = sr.load_events(sig_path)
     summary = sr.summarize(events)
     assert summary.engaged == 2, f"expected 2 engaged, got {summary.engaged}"
@@ -289,8 +339,12 @@ def a7_feedback_export(tmp: Path) -> str:
     vault = tmp / "vault"
     sidecar = vault / config.SIDECAR_DIR_NAME
     sidecar.mkdir(parents=True, exist_ok=True)
-    (sidecar / "signal.jsonl").write_text('{"action":"action_taken"}\n', encoding="utf-8")
-    (sidecar / "metrics.jsonl").write_text('{"cost_usd":0.01,"tester_mode":true}\n', encoding="utf-8")
+    (sidecar / "signal.jsonl").write_text(
+        '{"action":"action_taken"}\n', encoding="utf-8"
+    )
+    (sidecar / "metrics.jsonl").write_text(
+        '{"cost_usd":0.01,"tester_mode":true}\n', encoding="utf-8"
+    )
     digests = vault / config.DIGEST_DIR_NAME
     digests.mkdir(parents=True, exist_ok=True)
     (digests / "2026-07-09 Synthesis.md").write_text("# digest", encoding="utf-8")
@@ -299,7 +353,9 @@ def a7_feedback_export(tmp: Path) -> str:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
     assert "manifest.json" in names, "manifest missing"
-    assert "sidecar/signal.jsonl" in names and "sidecar/metrics.jsonl" in names, "evidence missing"
+    assert (
+        "sidecar/signal.jsonl" in names and "sidecar/metrics.jsonl" in names
+    ), "evidence missing"
     assert any(n.startswith("digests/") for n in names), "digests missing"
     return f"bundle built with {len(names)} members"
 
@@ -320,7 +376,9 @@ _CHECKS = [
 
 
 def main() -> int:
-    print("Tester-build acceptance harness (engine only; GUI/permissions are human-only)\n")
+    print(
+        "Tester-build acceptance harness (engine only; GUI/permissions are human-only)\n"
+    )
     results = []
     for label, fn, needs_tmp in _CHECKS:
         try:
@@ -342,7 +400,9 @@ def main() -> int:
     passed = sum(1 for s, _, _ in results if s == "PASS")
     skipped = sum(1 for s, _, _ in results if s == "SKIP")
     failed = sum(1 for s, _, _ in results if s == "FAIL")
-    print(f"\n{'='*70}\n  {passed} passed · {skipped} skipped · {failed} failed\n{'='*70}")
+    print(
+        f"\n{'='*70}\n  {passed} passed · {skipped} skipped · {failed} failed\n{'='*70}"
+    )
     return 1 if failed else 0
 
 

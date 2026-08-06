@@ -20,13 +20,14 @@ State (one JSON file, shared by the resident app and the CLI dogfood scripts):
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Set
+from typing import Iterable, Optional, Set
 
 from src.config import config
 from src.logger import logger
@@ -81,6 +82,10 @@ class DigestScheduler:
         # misses paid-but-empty runs, and the seen-set is also seeded by
         # migration on a fresh install (which is not history at all).
         self.digest_runs: int = 0
+        # Signature of the window the last digest consumed, so the manual path
+        # can warn that a re-run would read the same material. Kept separately
+        # because ``mark_ran`` merges every window into one flat seen-set.
+        self.last_window_sig: Optional[str] = None
         # True only for the process that set or cleared the hold. Every other
         # writer adopts the disk value before saving, so an unrelated write
         # (a CLI's unsee after a transcription) can neither wipe a live hold
@@ -223,6 +228,8 @@ class DigestScheduler:
             # would strand the backlog — is_due() needs a non-zero counter.
             self.new_notes = int(data.get("new_notes", 0) or 0)
             self.digest_runs = int(data.get("digest_runs", 0) or 0)
+            sig = data.get("last_window_sig")
+            self.last_window_sig = sig if isinstance(sig, str) else None
         except (TypeError, ValueError) as exc:
             logger.warning("DigestScheduler state load failed (%s)", exc)
 
@@ -316,6 +323,10 @@ class DigestScheduler:
         if isinstance(disk_at, str) and disk_at > (self.last_digest_at or ""):
             self.last_digest_at = disk_at
             self.last_digest_path = data.get("last_digest_path")
+            # Belongs to that run — adopting the clock without it would leave
+            # the dedup warning comparing against a window nobody read.
+            sig = data.get("last_window_sig")
+            self.last_window_sig = sig if isinstance(sig, str) else None
 
     def _save(self) -> None:
         try:
@@ -328,6 +339,7 @@ class DigestScheduler:
                 "unseen_tombstones": sorted(self.unseen_tombstones),
                 "auto_digest_hold_until": self.auto_digest_hold_until,
                 "digest_runs": int(self.digest_runs),
+                "last_window_sig": self.last_window_sig,
             }
             if self.seen_note_keys is not None:
                 payload["seen_note_keys"] = sorted(self.seen_note_keys)
@@ -478,6 +490,9 @@ class DigestScheduler:
             if self.seen_note_keys is None:
                 self.seen_note_keys = set()
             self.unseen_tombstones -= set(seen_keys)
+            # Record the signature BEFORE the union: once merged, this window
+            # is indistinguishable from every earlier one.
+            self.last_window_sig = window_signature(seen_keys)
             self.seen_note_keys |= set(seen_keys)
         self.new_notes = max(
             0, min(int(pending), config.CONNECTIONS_PATTERN_TRIGGER_MIN - 1)
@@ -651,6 +666,13 @@ class DigestPotential:
     window: int  # new (unseen) notes in the window
     neighbors: int  # STRONG-channel archive neighbours (bm25-only excluded)
     ok: bool
+    # Total unseen notes BEFORE the window cap — what "N new notes since your
+    # last digest" in the deep-scan dialog states. ``window`` is capped, so it
+    # would understate the backlog on a vault with a lot of fresh material.
+    unseen_total: int = 0
+    # Fingerprint of the window this run would read, for telling a genuinely
+    # new scan from a re-run over the same material.
+    window_sig: Optional[str] = None
 
 
 def digest_potential(candidates) -> DigestPotential:
@@ -671,7 +693,26 @@ def digest_potential(candidates) -> DigestPotential:
         if name not in candidates.window_basenames and (channels - {"bm25"})
     )
     ok = window >= 2 or (window >= 1 and neighbors >= config.DIGEST_GATE_MIN_NEIGHBORS)
-    return DigestPotential(window=window, neighbors=neighbors, ok=ok)
+    return DigestPotential(
+        window=window,
+        neighbors=neighbors,
+        ok=ok,
+        unseen_total=int(getattr(candidates, "unseen_total", 0) or 0),
+        window_sig=window_signature(getattr(candidates, "window_keys", ()) or ()),
+    )
+
+
+def window_signature(keys: Iterable[str]) -> Optional[str]:
+    """Stable fingerprint of a digest window (order-independent).
+
+    Lets the manual path say "this is the same material as last time" without
+    keeping note keys around: ``mark_ran`` merges each window into one flat
+    seen-set, where individual runs stop being distinguishable.
+    """
+    ordered = sorted(str(k) for k in keys)
+    if not ordered:
+        return None
+    return hashlib.sha256("\n".join(ordered).encode("utf-8")).hexdigest()[:16]
 
 
 def _assemble_for_digest(

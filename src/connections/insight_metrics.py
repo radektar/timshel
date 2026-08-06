@@ -45,6 +45,8 @@ METRICS_SCHEMA_VERSION = 2
 #: Verified 2026-07-05; unknown models fall back to Opus (the safe over-estimate
 #: for a budget guard — better to over-report cost than under-report it).
 _PRICES_PER_MTOK: Dict[str, Tuple[float, float]] = {
+    "claude-opus-5": (5.0, 25.0),
+    # Kept: rows written before the swap must still price correctly.
     "claude-opus-4-8": (5.0, 25.0),
     # Standard rate (verified 2026-07-24). Intro promo $2/$10 runs through
     # 2026-08-31 — we model the permanent rate, so the ledger over-reports
@@ -53,7 +55,7 @@ _PRICES_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
-_FALLBACK_MODEL = "claude-opus-4-8"
+_FALLBACK_MODEL = "claude-opus-5"
 
 #: Cache multipliers relative to the input price.
 _CACHE_READ_MULT = 0.1

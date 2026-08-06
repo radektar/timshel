@@ -191,15 +191,15 @@ def test_get_verifier_gated_by_config(monkeypatch):
 def test_resolve_model_verdict_stage(monkeypatch):
     monkeypatch.setattr(config, "LLM_MODEL_VERDICT", None)
     assert resolve_model("verdict") == config.LLM_MODEL
-    monkeypatch.setattr(config, "LLM_MODEL_VERDICT", "claude-opus-4-8")
-    assert resolve_model("verdict") == "claude-opus-4-8"
+    monkeypatch.setattr(config, "LLM_MODEL_VERDICT", "claude-opus-5")
+    assert resolve_model("verdict") == "claude-opus-5"
 
 
 # --------------------------------------------------------------------------- #
 # Scheduler wiring (no API — stubbed synthesizer/verifier)
 # --------------------------------------------------------------------------- #
 class _StubSynth:
-    model = "claude-opus-4-8"
+    model = "claude-opus-5"
     last_usage = None
 
     def __init__(self, result):
@@ -210,7 +210,7 @@ class _StubSynth:
 
 
 class _StubVerifier:
-    model = "claude-opus-4-8"
+    model = "claude-opus-5"
     last_usage = None
 
     def __init__(self, verdicts):
@@ -300,7 +300,7 @@ def test_verdict_drops_connection_from_digest_and_sidecar(digest_env, monkeypatc
     ]
     assert metrics[-1]["verdict_dropped"] == 1
     assert metrics[-1]["connections"] == 1
-    assert metrics[-1]["verdict_model"] == "claude-opus-4-8"
+    assert metrics[-1]["verdict_model"] == "claude-opus-5"
 
 
 def test_all_dropped_no_digest_but_metrics_written(digest_env, monkeypatch):

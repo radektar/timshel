@@ -1301,3 +1301,100 @@ def test_reset_seen_does_not_roll_back_the_weekly_clock(tmp_path):
     fresh = DigestScheduler(state_file)
     assert fresh.last_digest_at == later.isoformat(timespec="seconds")
     assert fresh.last_digest_path == "/x/later.md"
+
+
+# --------------------------------------------------------------------------- #
+# Deep scan: window signature (dedup hint for the manual path).
+# --------------------------------------------------------------------------- #
+
+
+def test_window_signature_is_order_independent_and_stable():
+    from src.connections.scheduler import window_signature
+
+    a = window_signature(["fp-b", "fp-a", "fp-c"])
+    b = window_signature(["fp-c", "fp-b", "fp-a"])
+    assert a == b
+    assert a != window_signature(["fp-a", "fp-b"])
+
+
+def test_window_signature_empty_is_none():
+    from src.connections.scheduler import window_signature
+
+    assert window_signature([]) is None
+
+
+def test_mark_ran_records_the_window_signature(tmp_path):
+    from src.connections.scheduler import DigestScheduler, window_signature
+
+    sched = DigestScheduler(tmp_path / "state.json")
+    keys = {"fp-1", "fp-2"}
+    sched.mark_ran(datetime.now(), path=tmp_path / "d.md", seen_keys=keys)
+
+    assert sched.last_window_sig == window_signature(keys)
+    # Survives a reload — the manual dialog runs in a different process.
+    assert DigestScheduler(tmp_path / "state.json").last_window_sig == (
+        window_signature(keys)
+    )
+
+
+def test_state_file_without_the_key_loads_clean(tmp_path):
+    """Upgrades read state written before this field existed."""
+    from src.connections.scheduler import DigestScheduler
+
+    import json as _json
+
+    state = tmp_path / "state.json"
+    state.write_text(
+        _json.dumps({"last_digest_at": "2026-08-01T10:00:00", "digest_runs": 3}),
+        encoding="utf-8",
+    )
+    sched = DigestScheduler(state)
+    assert sched.last_window_sig is None
+    assert sched.digest_runs == 3
+
+
+def test_newer_disk_clock_brings_its_window_signature(tmp_path):
+    """Adopting another process's run without its window would compare against
+    a window nobody read."""
+    from src.connections.scheduler import DigestScheduler
+
+    state = tmp_path / "state.json"
+    sched = DigestScheduler(state)
+    sched.mark_ran(datetime(2026, 8, 1, 10, 0), seen_keys={"old"})
+
+    other = DigestScheduler(state)
+    other.mark_ran(datetime(2026, 8, 5, 10, 0), seen_keys={"new-a", "new-b"})
+
+    sched._adopt_disk_clock(sched._read_disk_state())
+    assert sched.last_window_sig == other.last_window_sig
+
+
+def test_digest_potential_exposes_backlog_and_signature():
+    """The dialog needs the FULL backlog, not the capped window."""
+    from src.connections.candidate_assembly import CandidateSet, NoteRef
+    from src.connections.scheduler import digest_potential, window_signature
+
+    notes = [
+        NoteRef(
+            md_path=Path(f"/x/w{i}.md"),
+            basename=f"w{i}",
+            title=f"w{i}",
+            date="2026-07-01",
+            tags=[],
+            norm_tags=set(),
+            summary_md="text",
+            fingerprint=f"sha256:w{i}",
+        )
+        for i in range(2)
+    ]
+    candidates = CandidateSet(
+        notes,
+        {n.basename for n in notes},
+        channel_map={n.basename: {"window"} for n in notes},
+        window_keys={n.fingerprint for n in notes},
+        unseen_total=9,
+    )
+
+    potential = digest_potential(candidates)
+    assert potential.unseen_total == 9  # 9 waiting, only 2 fit the window
+    assert potential.window_sig == window_signature({n.fingerprint for n in notes})

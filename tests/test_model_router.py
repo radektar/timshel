@@ -16,8 +16,8 @@ def test_resolve_model_falls_back_to_global_default(monkeypatch):
 
 def test_resolve_model_honours_stage_override(monkeypatch):
     monkeypatch.setattr(config, "LLM_MODEL", "claude-default")
-    monkeypatch.setattr(config, "LLM_MODEL_SYNTHESIS", "claude-opus-4-8", raising=False)
-    assert mr.resolve_model("synthesis") == "claude-opus-4-8"
+    monkeypatch.setattr(config, "LLM_MODEL_SYNTHESIS", "claude-opus-5", raising=False)
+    assert mr.resolve_model("synthesis") == "claude-opus-5"
     # a different stage without an override still gets the global default
     monkeypatch.setattr(config, "LLM_MODEL_SUMMARY", None, raising=False)
     assert mr.resolve_model("summary") == "claude-default"

@@ -23,7 +23,7 @@ pulled forward to a 2-day floor once ≥6 new notes accumulate. The weekly ritua
 
 ## Weekly ritual (per tester, ~10 min)
 
-1. If no digest this week → **Generate digest now**.
+1. If no digest this week → **Deep scan now…** (confirm the dialog; it says how many new notes there are).
 2. **Insights** → rate every connection: Zachowaj / Odrzuć / handoff.
 3. **Export feedback** → email the Desktop zip back.
 

@@ -24,7 +24,8 @@ Preconditions: `make test` + `make lint` green; `make release-tester` produced
        works; alias judge doesn't break the happy path).
 6. [ ] **Import transcripts…** 8–10 `.md`/`.txt`/`.vtt` → notes created;
        re-import → duplicates skipped.
-7. [ ] **Generate digest now** → digest in `Timshel Digests/`; last row of
+7. [ ] **Deep scan now…** → dialog states new-note count + deep scans used;
+       confirm → digest in `Timshel Digests/`; last row of
        `.timshel/metrics.jsonl` has `"tester_mode": true` and the Opus model id;
        **Open latest digest** works.
 8. [ ] **Insights** → Zachowaj / Odrzuć / handoff each append a row to
