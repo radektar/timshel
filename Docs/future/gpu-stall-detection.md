@@ -88,6 +88,24 @@ istnieją. Stąd:
   i QUICKSTART kierują przy podwójnym zastoju także na model/zależności, nie
   wyłącznie na dysk i pamięć.
 
+## Poprawki po review (runda 2)
+
+- **Kalibracja tempa zależała od numeracji deskryptorów.** Segment (stdout) i
+  linia postępu (stderr) przychodzą w tej samej chwili, a `select` zwraca
+  gotowe fd jako zbiór — o kolejności decydowało to, jakie numery dostał
+  proces. Gdy pierwszy szedł stderr, przerwa była „zjadana" bez zapisania i
+  adaptacja po cichu nie działała: wolna maszyna wracała pod próg 3 min.
+  Teraz przerwa startowa jest przechowywana (`pending_gap`) i księgowana w
+  momencie, w którym wiadomo, że dekodowanie ruszyło — niezależnie od tego,
+  który kanał to zgłosił.
+- **Tempo liczy się z ostatnich kilku okien**, nie z maksimum całego biegu
+  (`_STALL_PACE_WINDOW`). Jedno wolne pierwsze okno kupowało wcześniej ślepotę
+  do końca nagrania — GPU zawieszone później czekałoby wielokrotność progu.
+- **Zastój nie skreśla nagrania od razu na całą sesję.** Ta sama przesłanka, dla
+  której nie zapisujemy werdyktu GPU (backup, budzący się dysk), każe dać nocie
+  jeszcze jeden cykl. Drugi zastój tego samego nagrania jest już trwały, żeby
+  realnie zawieszona maszyna nie kręciła się w pętli.
+
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 
 | zdarzenie | czas od startu |

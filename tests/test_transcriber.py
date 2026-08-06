@@ -6,6 +6,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import List, Optional
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -1554,6 +1555,39 @@ def test_run_macwhisper_stall_with_gpu_off_does_not_run_twice(
     assert "15 min" in error_msg
 
 
+def test_a_stalled_recording_gets_one_more_cycle_then_gives_up(
+    transcriber, tmp_path, monkeypatch
+):
+    """A stall is circumstantial, so the recording is not written off on the
+    first one — the same reasoning that keeps the GPU verdict unwritten.
+
+    A backup or a sleeping disk can wedge a run; marking the note permanently
+    failed would cost it until the user restarts the app, and the 3-minute
+    window makes that cheap to hit. The second stall on the same recording is
+    permanent, so a genuinely wedged machine does not retry forever.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._gpu_disabled_in_session = True  # single attempt, no fallback
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        return_value=_stalled_run()
+    )
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert transcriber._last_run_was_transient_failure is True  # retry next cycle
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert transcriber._last_run_was_transient_failure is False  # and no further
+
+
 def test_run_macwhisper_reports_a_stall_that_survives_the_fallback(
     transcriber, tmp_path, monkeypatch
 ):
@@ -1912,22 +1946,36 @@ class _DripPipeProc(_FakePipeProc):
     timeout — or, if the detector is broken, on a bogus stall.
     """
 
-    def __init__(self, chunk: str, count: int, interval: float, stream: str = "stdout"):
+    def __init__(
+        self,
+        chunk: str,
+        count: int,
+        interval: float = 0.1,
+        stream: str = "stdout",
+        intervals: Optional[List[float]] = None,
+        stderr_chunk: str = "",
+    ):
         import threading
 
         super().__init__("", hold_open=True)
-        target = self._out_wf if stream == "stdout" else self._wf
+        waits = intervals or [interval] * count
+        # "both" writes a segment and a progress line at the same moment, the
+        # way whisper does — that pair is what makes the read order matter.
+        targets = [(self._out_wf, chunk)] if stream != "stderr" else []
+        if stream in ("stderr", "both"):
+            targets.append((self._wf, stderr_chunk or chunk))
 
         def drip() -> None:
-            for _ in range(count):
-                time.sleep(interval)
+            for wait in waits:
+                time.sleep(wait)
                 if self.returncode is not None:  # killed — stop writing
                     return
-                try:
-                    target.write(chunk)
-                    target.flush()
-                except (ValueError, OSError):  # pragma: no cover - pipe closed
-                    return
+                for target, payload in targets:
+                    try:
+                        target.write(payload)
+                        target.flush()
+                    except (ValueError, OSError):  # pragma: no cover - closed
+                        return
 
         self._thread = threading.Thread(target=drip, daemon=True)
         self._thread.start()
@@ -2009,7 +2057,7 @@ def test_is_stalled_scales_the_window_to_a_slow_machine(transcriber):
         transcriber._is_stalled(
             silent_for=transcriber._STALL_SILENCE_SECONDS + 60,
             decoding_started=True,
-            longest_gap=slow_gap,
+            recent_gap=slow_gap,
         )
         is False
     )
@@ -2018,7 +2066,7 @@ def test_is_stalled_scales_the_window_to_a_slow_machine(transcriber):
         transcriber._is_stalled(
             silent_for=transcriber._STALL_SILENCE_SECONDS + 1,
             decoding_started=True,
-            longest_gap=0.5,
+            recent_gap=0.5,
         )
         is True
     )
@@ -2048,6 +2096,76 @@ def test_streaming_learns_the_pace_and_keeps_a_slow_run_alive(
         transcriber._run_whisper_streaming(
             ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
         )
+
+
+def test_pace_is_learned_whichever_pipe_reports_first(
+    transcriber, tmp_path, monkeypatch
+):
+    """Which pipe `select` hands back first must not decide whether the run's
+    pace is measured at all.
+
+    whisper prints a segment (stdout) and a progress line (stderr) at nearly the
+    same moment, and the ready list comes from a set of two ints — so the order
+    flips with the file descriptors the process happens to get. If the stderr
+    read consumed the gap without banking it, calibration silently never
+    happened and slow machines were back to being judged by the 3-minute floor.
+    """
+    import select as _select
+
+    real_select = _select.select
+
+    def stderr_first(rlist, wlist, xlist, timeout=None):
+        ready, w, x = real_select(rlist, wlist, xlist, timeout)
+        return sorted(ready, reverse=True), w, x  # stderr fd is the higher one
+
+    monkeypatch.setattr(_select, "select", stderr_first)
+
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=6,
+        interval=0.25,
+        stream="both",
+        stderr_chunk="whisper_print_progress_callback: progress =  20%\n",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_one_slow_window_does_not_blind_the_detector_for_the_rest_of_the_run(
+    transcriber, tmp_path, monkeypatch
+):
+    """The pace is the *recent* pace. A single slow first window — a model
+    paging in, a disk waking up — must not buy the run a blind spot: with an
+    all-time maximum, a GPU wedging later would burn minutes of the hour budget
+    before the fallback started."""
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=4,
+        # One slow window, then a fast run — the slow one must age out.
+        intervals=[0.6, 0.05, 0.05, 0.05],
+        stream="stdout",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_WINDOW", 2)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    started = time.time()
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.stalled is True
+    # Drip ends at ~0.75s; the window there is 4 * 0.05 = 0.2s, not 4 * 0.6.
+    assert time.time() - started < 1.6
 
 
 def test_streaming_waits_out_the_coreml_compile(transcriber, tmp_path, monkeypatch):

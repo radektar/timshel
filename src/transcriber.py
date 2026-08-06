@@ -11,9 +11,20 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Deque,
+    Dict,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    Tuple,
+)
 
 from src.app_status import AppStatus
 from src.config import config as default_config
@@ -250,6 +261,11 @@ class Transcriber:
         self._ai_disabled_reason: Optional[str] = None
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
         self._session_failed_fingerprints: set = set()
+        # Recordings already lost to a stall once. A stall is treated as
+        # transient (a busy CPU, a disk waking up, a backup running) and gets a
+        # second chance on the next cycle — but only one, or a genuinely wedged
+        # machine would retry the same recording forever.
+        self._stalled_once: set = set()
         self._gpu_disabled_in_session: bool = False
         self._load_persisted_gpu_disabled()
         self._last_run_was_transient_failure: bool = False
@@ -862,6 +878,13 @@ class Transcriber:
     # wedged, instead of being measured against an M2.
     _STALL_GAP_MULTIPLIER = 4
 
+    # …but only the *recent* pace counts. One slow first window (model paging
+    # in, a disk waking up) must not widen the window for the rest of the run:
+    # an all-time maximum would let a 5-minute cold window buy a 20-minute
+    # blind spot, and a GPU wedging later would burn a third of the hour budget
+    # before the fallback starts.
+    _STALL_PACE_WINDOW = 3
+
     # Before the first decoded window, silence is normal: whisper loads the
     # model and says nothing until the first segment comes out.
     _STALL_GRACE_SECONDS = 900
@@ -881,7 +904,7 @@ class Transcriber:
         decoding_started: bool,
         *,
         coreml_compiling: bool = False,
-        longest_gap: float = 0.0,
+        recent_gap: float = 0.0,
     ) -> float:
         """How long this phase of the run may stay silent.
 
@@ -891,16 +914,14 @@ class Transcriber:
                 so the generous grace window no longer applies.
             coreml_compiling: True between whisper announcing the Core ML load
                 and confirming it — a first-run encoder compile lives here.
-            longest_gap: Longest silence this run has already survived, used to
-                calibrate the window to the machine rather than to an M2.
+            recent_gap: Longest silence among the last few decoded windows, used
+                to calibrate the window to the machine rather than to an M2.
         """
         if coreml_compiling:
             return self._STALL_COMPILE_SECONDS
         if not decoding_started:
             return self._STALL_GRACE_SECONDS
-        return max(
-            self._STALL_SILENCE_SECONDS, longest_gap * self._STALL_GAP_MULTIPLIER
-        )
+        return max(self._STALL_SILENCE_SECONDS, recent_gap * self._STALL_GAP_MULTIPLIER)
 
     def _is_stalled(
         self,
@@ -908,7 +929,7 @@ class Transcriber:
         silent_for: float,
         decoding_started: bool,
         coreml_compiling: bool = False,
-        longest_gap: float = 0.0,
+        recent_gap: float = 0.0,
     ) -> bool:
         """Whether a live whisper has been quiet long enough to count as wedged.
 
@@ -916,12 +937,12 @@ class Transcriber:
             silent_for: Seconds since the last byte on *either* pipe.
             decoding_started: See :meth:`_stall_limit`.
             coreml_compiling: See :meth:`_stall_limit`.
-            longest_gap: See :meth:`_stall_limit`.
+            recent_gap: See :meth:`_stall_limit`.
         """
         return silent_for >= self._stall_limit(
             decoding_started,
             coreml_compiling=coreml_compiling,
-            longest_gap=longest_gap,
+            recent_gap=recent_gap,
         )
 
     def _run_whisper_streaming(
@@ -994,10 +1015,15 @@ class Transcriber:
         last_activity = started
         decoding_started = False
         coreml_compiling = False
-        # Longest silence this run has already survived: the pace of *this*
-        # machine, used to widen the stall window rather than judging a slow
-        # box by a fast one's numbers.
-        longest_gap = 0.0
+        # Silences this run has already survived while decoding: the pace of
+        # *this* machine, used to widen the stall window rather than judging a
+        # slow box by a fast one's numbers. Bounded, so an early outlier ages
+        # out instead of blinding the detector for the rest of the run.
+        recent_gaps: Deque[float] = deque(maxlen=self._STALL_PACE_WINDOW)
+        # The silence that ended with the most recent startup output. It only
+        # becomes a pace measurement once we know decoding had begun — which
+        # can be decided by a line read *after* it.
+        pending_gap = 0.0
         metal_failed = False
         stalled = False
         stalled_after = 0.0
@@ -1015,7 +1041,7 @@ class Transcriber:
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
             nonlocal metal_failed, last_logged_pct, last_heartbeat
-            nonlocal decoding_started, coreml_compiling
+            nonlocal coreml_compiling
             # The Core ML encoder compile is the one silence that can outlast
             # the grace window (first run of a model on a device). whisper
             # brackets it, so the phase is known instead of guessed.
@@ -1036,7 +1062,7 @@ class Transcriber:
             if match:
                 pct = int(match.group(1))
                 now = time.time()
-                decoding_started = True
+                start_decoding()
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
                         "⏳ Transkrypcja %d%% — %s",
@@ -1047,22 +1073,35 @@ class Transcriber:
                     last_heartbeat = now
             return False
 
-        def mark_activity(decode_output: bool = False) -> None:
-            """Whisper said something: reset the clock, and learn its pace.
-
-            The *first* decoded segment counts too, measured from the last thing
-            whisper printed while starting up: that gap is this machine chewing
-            its first 30 s window. Without it the pace could only be learned
-            from the second window — which a slow machine never reaches, because
-            the first one already exceeded the floor and killed the run.
-            """
-            nonlocal last_activity, longest_gap
+        def mark_activity() -> None:
+            """Whisper said something: reset the clock, and learn its pace."""
+            nonlocal last_activity, pending_gap
             now = time.time()
-            if decoding_started or decode_output:
+            gap = now - last_activity
+            if decoding_started:
                 # Startup silences say nothing about decoding speed; only gaps
                 # that end in decoded output calibrate the window.
-                longest_gap = max(longest_gap, now - last_activity)
+                recent_gaps.append(gap)
+            else:
+                # Might turn out to be the first decoded window: whether it was
+                # is decided by the line this read contained, which is parsed
+                # after the fact. Held here rather than dropped — that dropped
+                # gap was the whole calibration on a slow machine, and which
+                # pipe delivered it first is decided by fd numbering.
+                pending_gap = gap
             last_activity = now
+
+        def start_decoding() -> None:
+            """First sign the decode loop is running, from either pipe.
+
+            The silence that ended with this output was this machine chewing its
+            first 30 s window — the only pace measurement available before the
+            floor would kill a slow run, so it is banked here.
+            """
+            nonlocal decoding_started
+            if not decoding_started:
+                decoding_started = True
+                recent_gaps.append(pending_gap)
 
         def read_chunk() -> Optional[str]:
             """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
@@ -1084,7 +1123,6 @@ class Transcriber:
             is only the *timing* of each decoded segment, so nothing is kept and
             a long recording costs no memory.
             """
-            nonlocal decoding_started
             try:
                 chunk = os.read(stdout_fd, 65536)
             except BlockingIOError:
@@ -1093,8 +1131,8 @@ class Transcriber:
                 return None
             if not chunk:
                 return None
-            mark_activity(decode_output=True)
-            decoding_started = True  # first segment out = the decode loop runs
+            mark_activity()
+            start_decoding()  # a segment on stdout = the decode loop runs
             return len(chunk)
 
         def process_remaining() -> None:
@@ -1140,7 +1178,7 @@ class Transcriber:
                     silent_for=silent_for,
                     decoding_started=decoding_started,
                     coreml_compiling=coreml_compiling,
-                    longest_gap=longest_gap,
+                    recent_gap=max(recent_gaps, default=0.0),
                 ):
                     stalled = True
                     stalled_after = silent_for
@@ -1172,7 +1210,7 @@ class Transcriber:
                     self._stall_limit(
                         decoding_started,
                         coreml_compiling=coreml_compiling,
-                        longest_gap=longest_gap,
+                        recent_gap=max(recent_gaps, default=0.0),
                     )
                     - silent_for
                 )
@@ -1922,6 +1960,19 @@ class Transcriber:
                     audio_file.name,
                     "was already off" if not gpu_attempted else "off on the retry too",
                 )
+                # The same reasoning that keeps the GPU verdict unwritten applies
+                # to the recording: if a backup or a sleeping disk wedged this
+                # run, the note is fine and deserves the next cycle. Only the
+                # second stall on the same recording makes it permanent, so a
+                # truly wedged machine does not retry forever.
+                if file_id in self._stalled_once:
+                    logger.warning(
+                        "  Stalled twice — %s will not be retried this session",
+                        audio_file.name,
+                    )
+                else:
+                    self._stalled_once.add(file_id)
+                    self._last_run_was_transient_failure = True
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 
