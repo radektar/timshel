@@ -10,6 +10,11 @@ from src.llm.client import build_anthropic_client
 from src.llm.model_router import resolve_model
 from src.logger import logger
 
+# Public, non-secret key prefixes, longest first. Only a *recognised* prefix is
+# ever echoed: an unexpected key must not have its opening characters printed,
+# since whatever was pasted (another provider's key, a password) is secret too.
+_KNOWN_KEY_PREFIXES = ("sk-ant-api03-", "sk-ant-admin01-", "sk-ant-")
+
 
 def _fingerprint_key(key: Optional[str]) -> str:
     """Redacted, log-safe view of an API key.
@@ -17,8 +22,13 @@ def _fingerprint_key(key: Optional[str]) -> str:
     Shows just enough to catch a truncated, whitespace-padded, placeholder-
     contaminated, or simply *wrong* key — without ever writing the secret to a
     log. Answers "which key is actually being sent?" when Claude returns 401 on
-    a key the user is sure is correct: compare ``head``/``tail`` against the key
-    in the Anthropic console, and watch for the ``⚠`` flags.
+    a key the user is sure is correct: compare ``tail`` against the key in the
+    Anthropic console, and watch for the ``⚠`` flags.
+
+    Nothing here may be secret material. This line lands in the app log, which
+    "Export feedback" zips up and testers mail out — so the prefix is echoed
+    only when it matches a known *public* format, and the tail is the same four
+    characters the console itself shows.
     """
     if not key:
         return "<none>"
@@ -30,11 +40,18 @@ def _fingerprint_key(key: Optional[str]) -> str:
         flags.append("INNER_WHITESPACE")
     if "—" in key or "•" in key:
         flags.append("PLACEHOLDER_CHAR")
-    if not stripped.startswith("sk-ant-"):
+    prefix = next(
+        (p for p in _KNOWN_KEY_PREFIXES if stripped.startswith(p)), "<unexpected>"
+    )
+    recognised = prefix != "<unexpected>"
+    if not recognised:
         flags.append("UNEXPECTED_PREFIX")
-    tail = key[-4:] if len(key) > 8 else ""
+    # The tail is only shown for a recognised Anthropic key, where it matches
+    # what the console displays. For anything else we don't know what we're
+    # holding — the flag already says "wrong key", which is the whole diagnosis.
+    tail = key[-4:] if recognised and len(key) > 8 else ""
     note = (" ⚠ " + ",".join(flags)) if flags else ""
-    return f"len={len(key)} head={key[:14]!r} tail={tail!r}{note}"
+    return f"len={len(key)} prefix={prefix} tail={tail!r}{note}"
 
 
 # --------------------------------------------------------------------------- #
