@@ -74,3 +74,27 @@ create-dmg \
 
 echo "✅ DMG created: ${DIST_DIR}/${DMG_FILENAME}"
 echo "📏 Size: $(du -sh "${DIST_DIR}/${DMG_FILENAME}" | cut -f1)"
+
+# Verify the copy that actually ships. The gate above checked the source
+# bundle; this checks what the tester will double-click, so a copy that lost
+# or altered a sealed file cannot leave the machine reported as verified.
+echo "🔍 Verifying the signature inside the DMG..."
+MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/timshel-dmg-verify.XXXXXX")"
+DMG_VERIFY_STATUS=0
+if hdiutil attach "${DIST_DIR}/${DMG_FILENAME}" -mountpoint "${MOUNT_POINT}" \
+    -nobrowse -readonly -quiet; then
+    codesign --verify --strict --deep "${MOUNT_POINT}/${APP_NAME}.app" || DMG_VERIFY_STATUS=1
+    hdiutil detach "${MOUNT_POINT}" -quiet || hdiutil detach "${MOUNT_POINT}" -force -quiet || true
+else
+    echo "❌ Error: could not mount ${DMG_FILENAME} to verify it."
+    DMG_VERIFY_STATUS=1
+fi
+rmdir "${MOUNT_POINT}" 2>/dev/null || true
+
+if [ "${DMG_VERIFY_STATUS}" -ne 0 ]; then
+    echo "❌ Error: the app inside the DMG fails codesign verification."
+    echo "   Do not ship this image — rebuild and repackage."
+    rm -f "${DIST_DIR}/${DMG_FILENAME}"
+    exit 1
+fi
+echo "✅ Signature verified inside the DMG"

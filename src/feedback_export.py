@@ -6,8 +6,14 @@ with no telemetry path out. This collects them — plus a manifest — into one 
 the tester emails back. Pure and testable: it never touches AppKit or the OS
 beyond reading the vault and writing the zip.
 
-Privacy: the bundle carries digest text, note titles, and the vocabulary — and
-nothing else. App logs are deliberately excluded.
+Privacy — what actually leaves the tester's Mac: digest text (including the
+short quotes a digest cites as evidence), note titles, the vocabulary, the
+triage log (kept/dismissed/handoff with timestamps and target tool), per-digest
+cost/coverage metrics, and a manifest carrying the app version, tester-mode
+flag and the machine's hostname. Recordings, transcripts and full note bodies
+never do; app logs are deliberately excluded. Keep
+``Docs/TESTER-ONBOARDING.md`` in step with this list — it is the promise the
+tester reads before agreeing to send the zip.
 """
 
 from __future__ import annotations

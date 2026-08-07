@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.app` was silently invalidating the codesign seal, and the broken bundle
   would only surface as a Gatekeeper rejection on the tester's Mac.
 - The DMG build (`create_dmg.sh`) refuses to package a bundle whose signature
-  fails `codesign --verify`; the bundle smoke test verifies the seal before
-  launching and launches with `PYTHONDONTWRITEBYTECODE=1` so the smoke run
-  itself cannot write `.pyc` into the signed bundle.
+  fails `codesign --verify`; the bundle smoke test verifies the seal both
+  before and after launching the app, so a launch that writes back into the
+  bundle is detected here instead of on a tester's Mac.
 - Engine download URLs point at the renamed `radektar/timshel` repo directly
   instead of riding a GitHub redirect from the old name; the rename-guard test
   now covers `setup/checksums.py` so the next drift fails the suite.
@@ -29,10 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source-run auto-installs and the dev suite alike. An older auto-install that
   drifted off the pin is reported in the log with the directory to delete, not
   silently re-installed — pip-ing over a package that is already imported would
-  swap the native extension under the running wrapper. The shipped app has no
-  pip and no dense stack, so this affects source runs only.
-- Tester onboarding privacy note now states that exported digests include
-  short quotes from notes cited as evidence.
+  swap the native extension under the running wrapper. The shipped app ships
+  without pip, so it never auto-installs and this affects source runs only.
+- Tester onboarding privacy note now lists everything the feedback zip carries
+  (digest quotes, the triage log, per-digest cost, hostname in the manifest),
+  instead of claiming digest text and titles and "nothing else".
 
 ---
 
@@ -307,7 +308,7 @@ sections are kept as originally written, so heading types repeat below.
 - Migration flag `transrec_migrated` renamed to `legacy_migrated` in `src/config/settings.py`. `UserSettings.load()` reads the old key name as a backward-compat alias and rewrites it on next save, so existing alpha users are unaffected.
 - Active English documentation rewrite: `README.md`, `QUICKSTART.md`, `BACKLOG.md`, and `Docs/*.md` (architecture, development, API, plans, guides) translated from Polish to English. Historical archives in `Docs/archive/`, `Docs/testing-archive/`, `Docs/test-reports/`, and pre-Unreleased entries below remain in Polish.
 
-### Notes
+### Notes (beta.8–beta.17)
 - Per-version notes from v2.0.0-alpha.x onward remain in Polish for historical fidelity. New release entries from this point forward will be written in English.
 
 ## [2.0.0-alpha.18] - 2026-04-24

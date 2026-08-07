@@ -1,6 +1,6 @@
 # Timshel
 
-> **Version:** v2.0.0-beta.8 (development) → v2.0.0 (in preparation)
+> **Version:** v2.0.0-beta.18 (development) → v2.0.0 (in preparation)
 
 Automatic audio transcription system for any USB recorder or SD card on macOS.
 

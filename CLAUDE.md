@@ -8,7 +8,7 @@ Project-level guidance for Claude Code working on this repository. The global `~
 
 - Repo: https://github.com/radektar/malinche (remote: `origin`)
 - Stack: Python 3.12+, whisper.cpp, ffmpeg, macOS LaunchAgent, native menu bar app
-- Current version: v2.0.0-beta.8 (dev) → v2.0.0 (in prep)
+- Current version: v2.0.0-beta.18 (dev) → v2.0.0 (in prep)
 
 Note: legacy strings still reference "Olympus Transcriber" / `olympus-transcriber` (plist names, log paths, internal comments). Treat these as historical — don't rename them unless the task asks for it.
 
