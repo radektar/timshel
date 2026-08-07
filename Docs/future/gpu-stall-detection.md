@@ -106,6 +106,21 @@ istnieją. Stąd:
   jeszcze jeden cykl. Drugi zastój tego samego nagrania jest już trwały, żeby
   realnie zawieszona maszyna nie kręciła się w pętli.
 
+## Poprawki po review (runda 3)
+
+- **Burst segmentów kasował kalibrację.** whisper robi `fflush` po każdym
+  segmencie, więc jedno okno 30 s przychodzi jako kilka zapisów w odstępie
+  milisekund. Przerwy między nimi wpadały do historii tempa i wypychały z niej
+  realny pomiar — okno wracało do sztywnej podłogi 180 s dokładnie na wolnych
+  maszynach, dla których adaptacja powstała. Teraz do historii trafiają tylko
+  przerwy dłuższe niż `_STALL_PACE_MIN_GAP` (1 s): maszyna, której okno naprawdę
+  trwa poniżej sekundy, i tak nie potrzebuje kalibracji, bo podłoga jest o rzędy
+  wielkości wyżej. `_STALL_PACE_WINDOW` liczy więc okna, nie odczyty.
+- **Licznik zastojów jest zerowany** po udanym przebiegu i przy ręcznej
+  retranskrypcji. Bez tego pierwszy zastój wznowionego nagrania liczył się jako
+  drugi i nota od razu wracała na sesyjną blacklistę — odwrotność reguły
+  „jeden zastój = jeszcze jeden cykl".
+
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 
 | zdarzenie | czas od startu |

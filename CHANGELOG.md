@@ -45,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   30 s of audio, plus the progress line every 5%): 3 minutes of complete silence
   ends the run and retries the recording once with the GPU off. That window
   adapts to the machine — a box that has been taking two minutes per window is
-  measured against its own recent pace, not against an M2 — and the phases that are
+  measured against its own recent pace (counted in decoded windows, not in
+  reads — whisper flushes each segment separately) — and the phases that are
   legitimately silent get their own: 15 minutes for startup, and a wide window
   for the first Core ML encoder compile, which whisper announces (on `large`
   that compile can take longer than the whole startup grace). A stall records

@@ -882,8 +882,14 @@ class Transcriber:
     # in, a disk waking up) must not widen the window for the rest of the run:
     # an all-time maximum would let a 5-minute cold window buy a 20-minute
     # blind spot, and a GPU wedging later would burn a third of the hour budget
-    # before the fallback starts.
+    # before the fallback starts. Counted in windows, which is why the burst
+    # filter below matters: without it this counts reads instead.
     _STALL_PACE_WINDOW = 3
+
+    # Shortest silence that can be a decoded window rather than the gap between
+    # two writes of the same one. A machine whose windows really are this fast
+    # needs no calibration at all — the floor is orders of magnitude above it.
+    _STALL_PACE_MIN_GAP = 1.0
 
     # Before the first decoded window, silence is normal: whisper loads the
     # model and says nothing until the first segment comes out.
@@ -1073,6 +1079,19 @@ class Transcriber:
                     last_heartbeat = now
             return False
 
+        def record_gap(gap: float) -> None:
+            """Bank a silence as a measurement of how fast this machine decodes.
+
+            Only silences long enough to *be* a window count. whisper flushes
+            stdout once per decoded segment, so a single 30 s window arrives as
+            a burst of writes milliseconds apart; counting those as gaps would
+            fill the deque with zeros, evict the real measurement and drop the
+            window back to the floor — the calibration would quietly undo
+            itself exactly on the slow machines it exists for.
+            """
+            if gap >= self._STALL_PACE_MIN_GAP:
+                recent_gaps.append(gap)
+
         def mark_activity() -> None:
             """Whisper said something: reset the clock, and learn its pace."""
             nonlocal last_activity, pending_gap
@@ -1081,7 +1100,7 @@ class Transcriber:
             if decoding_started:
                 # Startup silences say nothing about decoding speed; only gaps
                 # that end in decoded output calibrate the window.
-                recent_gaps.append(gap)
+                record_gap(gap)
             else:
                 # Might turn out to be the first decoded window: whether it was
                 # is decided by the line this read contained, which is parsed
@@ -1101,7 +1120,7 @@ class Transcriber:
             nonlocal decoding_started
             if not decoding_started:
                 decoding_started = True
-                recent_gaps.append(pending_gap)
+                record_gap(pending_gap)
 
         def read_chunk() -> Optional[str]:
             """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
@@ -1999,6 +2018,10 @@ class Transcriber:
             logger.info(f"Checking for output file: {output_file}")
             if output_file.exists() or self._wait_for_output_file(output_file):
                 logger.info(f"✓ Transcription TXT verified: {output_file.name}")
+                # A run that finished retires the earlier stall: the next one is
+                # a first stall again, not a second one inherited from a problem
+                # the machine has evidently recovered from.
+                self._stalled_once.discard(file_id)
                 return output_file
             else:
                 logger.warning(
@@ -2649,6 +2672,11 @@ Brak podsumowania AI. Możliwe przyczyny:
                 # poprzedniej nieudanej próby; bez czyszczenia kolejny scan
                 # by go pominął.
                 self._session_failed_fingerprints.discard(fingerprint)
+                # …i licznik zastojów: bez tego pierwszy zastój ręcznie
+                # wznowionej transkrypcji liczy się jako drugi i nagranie
+                # od razu wraca na blacklistę, choć user właśnie poprosił
+                # o kolejną szansę.
+                self._stalled_once.discard(audio_file.stem)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not clean vault_index entry before retranscribe: %s",

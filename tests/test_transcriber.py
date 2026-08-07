@@ -1588,6 +1588,43 @@ def test_a_stalled_recording_gets_one_more_cycle_then_gives_up(
     assert transcriber._last_run_was_transient_failure is False  # and no further
 
 
+def test_a_finished_run_retires_the_earlier_stall(transcriber, tmp_path, monkeypatch):
+    """A recording that eventually transcribes starts over with a clean slate.
+
+    Without this the counter only ever grows, so a stall months later — or on a
+    recording the user manually re-runs — counts as the second one and the note
+    is written off immediately, which is the opposite of "one more cycle".
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._gpu_disabled_in_session = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        return_value=_stalled_run()
+    )
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert audio_file.stem in transcriber._stalled_once
+
+    def succeed(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=succeed
+    )
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert audio_file.stem not in transcriber._stalled_once
+
+
 def test_run_macwhisper_reports_a_stall_that_survives_the_fallback(
     transcriber, tmp_path, monkeypatch
 ):
@@ -1954,6 +1991,8 @@ class _DripPipeProc(_FakePipeProc):
         stream: str = "stdout",
         intervals: Optional[List[float]] = None,
         stderr_chunk: str = "",
+        segments: int = 1,
+        burst_interval: float = 0.02,
     ):
         import threading
 
@@ -1968,14 +2007,19 @@ class _DripPipeProc(_FakePipeProc):
         def drip() -> None:
             for wait in waits:
                 time.sleep(wait)
-                if self.returncode is not None:  # killed — stop writing
-                    return
-                for target, payload in targets:
-                    try:
-                        target.write(payload)
-                        target.flush()
-                    except (ValueError, OSError):  # pragma: no cover - closed
+                # whisper flushes stdout once per *segment*, so one decoded
+                # window can arrive as a burst of writes milliseconds apart.
+                for seg in range(segments):
+                    if self.returncode is not None:  # killed — stop writing
                         return
+                    for target, payload in targets:
+                        try:
+                            target.write(payload)
+                            target.flush()
+                        except (ValueError, OSError):  # pragma: no cover
+                            return
+                    if seg + 1 < segments:
+                        time.sleep(burst_interval)
 
         self._thread = threading.Thread(target=drip, daemon=True)
         self._thread.start()
@@ -2090,6 +2134,7 @@ def test_streaming_learns_the_pace_and_keeps_a_slow_run_alive(
     # Floor below the drip interval: only the learned pace can save this run.
     monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
     monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
     monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
 
     with pytest.raises(subprocess.TimeoutExpired):
@@ -2130,8 +2175,40 @@ def test_pace_is_learned_whichever_pipe_reports_first(
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
     monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
     monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
     monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
 
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+        )
+
+
+def test_a_burst_of_segments_does_not_erase_the_learned_pace(
+    transcriber, tmp_path, monkeypatch
+):
+    """One decoded window can arrive as several writes, and those must not count
+    as windows of their own.
+
+    whisper flushes stdout per segment, so a 30 s window lands as a burst
+    milliseconds apart. Counting each as a gap fills the pace history with
+    zeros, evicts the real measurement and drops the window back to the floor —
+    the calibration undoing itself on exactly the slow machines it exists for.
+    """
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=10,
+        interval=0.4,  # the real per-window pace
+        segments=4,  # …delivered as four writes 0.02 s apart
+        stream="stdout",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.15)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.2)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
+
+    # Healthy: only the timeout may end it, never the stall detector.
     with pytest.raises(subprocess.TimeoutExpired):
         transcriber._run_whisper_streaming(
             ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
@@ -2155,6 +2232,7 @@ def test_one_slow_window_does_not_blind_the_detector_for_the_rest_of_the_run(
     monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
     monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
     monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.03)
     monkeypatch.setattr(type(transcriber), "_STALL_PACE_WINDOW", 2)
     monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
 
