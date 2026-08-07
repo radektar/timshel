@@ -96,24 +96,34 @@ def importable(module_name: str) -> bool:
         return False
 
 
-def _needs_repin(module_name: str, spec: str) -> bool:
-    """True when OUR auto-install of the module drifted off a ``==`` pin.
+def _warn_if_pin_drifted(module_name: str, spec: str) -> None:
+    """Log once when an already-imported module sits off its ``==`` pin.
 
-    Only fires for modules that resolved from RUNTIME_DEPS_DIR — a copy coming
-    from the bundle or a dev venv is not ours to manage, and re-pinning it
-    into the runtime dir would shadow the venv on sys.path.
+    Deliberately does NOT re-install: pip-ing over a package that is already
+    imported swaps the native extension under the live Python wrapper (for
+    sqlite-vec that means a 0.1.6 wrapper calling a 0.1.9 ``vec0`` — exactly
+    the skew the pin exists to prevent). The drift is repaired by deleting the
+    runtime-deps dir, which the next launch reinstalls at the pinned version.
     """
     if "==" not in spec:
-        return False
+        return
     module = sys.modules.get(module_name)
-    origin = getattr(module, "__file__", None) or ""
-    if not origin.startswith(str(RUNTIME_DEPS_DIR)):
-        return False
+    origin = getattr(module, "__file__", None)
+    if not origin or not Path(origin).is_relative_to(RUNTIME_DEPS_DIR):
+        return  # bundle or dev venv — not ours to manage
     dist_name, pinned = spec.split("==", 1)
     try:
-        return _importlib_metadata.version(dist_name) != pinned
+        installed = _importlib_metadata.version(dist_name)
     except _importlib_metadata.PackageNotFoundError:  # pragma: no cover
-        return False
+        return
+    if installed != pinned:
+        logger.warning(
+            "%s in runtime deps is %s, pinned at %s — delete %s to re-pin",
+            module_name,
+            installed,
+            pinned,
+            RUNTIME_DEPS_DIR,
+        )
 
 
 def ensure_importable(module_name: str) -> bool:
@@ -127,11 +137,8 @@ def ensure_importable(module_name: str) -> bool:
     except ImportError:
         pass
     else:
-        # Importable, but a pre-pin auto-install may hold a drifted version:
-        # re-pin it (outside the bundle, where pip can actually run).
-        if spec and not _is_bundled_app() and _needs_repin(module_name, spec):
-            logger.info("Re-pinning %s to %s", module_name, spec)
-            _pip_install(spec, RUNTIME_DEPS_DIR)
+        if spec and not _is_bundled_app():
+            _warn_if_pin_drifted(module_name, spec)
         return True
 
     if not spec:
@@ -142,9 +149,7 @@ def ensure_importable(module_name: str) -> bool:
         # The bundled interpreter ships without pip — `python -m pip` can only
         # fail (and used to log an ERROR on every launch). Optional deps stay
         # unavailable in the bundle until they ship inside it.
-        logger.debug(
-            "Skipping pip auto-install for %s — bundled app has no pip", spec
-        )
+        logger.debug("Skipping pip auto-install for %s — bundled app has no pip", spec)
         return False
 
     if not _pip_install(spec, RUNTIME_DEPS_DIR):

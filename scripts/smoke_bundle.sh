@@ -46,10 +46,11 @@ SMOKE_HOME="$(mktemp -d /tmp/timshel-smoke.XXXXXX)"
 LOG="$SMOKE_HOME/Library/Application Support/Timshel/logs/timshel.log"
 
 echo "--- Launching bundle under fresh HOME=$SMOKE_HOME (${WAIT}s) ---"
-# PYTHONDONTWRITEBYTECODE: a dynamically imported module missing from py2app's
-# precompiled __pycache__ would otherwise write fresh .pyc INTO the signed
-# bundle during this very launch — breaking the seal the check above verified.
-HOME="$SMOKE_HOME" PYTHONDONTWRITEBYTECODE=1 "$BIN" &
+# Launched with NO bytecode suppression on purpose: if a dynamically imported
+# module ever starts writing fresh .pyc into the bundle, that breaks the seal
+# on a tester's Mac — so the run must be able to reproduce it (verified again
+# after the run, below).
+HOME="$SMOKE_HOME" "$BIN" &
 PID=$!
 sleep "$WAIT"
 
@@ -90,7 +91,18 @@ else
     fi
 fi
 
-# 4. No crash report written for this run.
+# 4. The seal must ALSO survive the run: a launch that writes .pyc back into
+# the bundle breaks it silently here, and the tester meets it as a Gatekeeper
+# rejection on second launch. Verified empirically today (nothing is written),
+# so this asserts the property rather than papering over it.
+if codesign --verify --strict --deep "$APP" 2>&1; then
+    echo "OK   codesign seal intact after run"
+else
+    note_fail "codesign seal broken BY THE RUN (bundle wrote into itself?)"
+    find "$APP" -name '*.pyc' -newer "$SMOKE_HOME" 2>/dev/null | head -5
+fi
+
+# 5. No crash report written for this run.
 CRASHES="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'Timshel-*.ips' -newer "$SMOKE_HOME" 2>/dev/null)"
 if [[ -n "$CRASHES" ]]; then
     note_fail "crash report(s) written: $CRASHES"

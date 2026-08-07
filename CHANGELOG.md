@@ -26,15 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `sqlite-vec` pinned to 0.1.9 and `fastembed` to 0.8.0 (both pre-1.0) for
-  runtime auto-installs and the dev suite alike; installs that predate the pin
-  are re-pinned on next launch.
+  source-run auto-installs and the dev suite alike. An older auto-install that
+  drifted off the pin is reported in the log with the directory to delete, not
+  silently re-installed — pip-ing over a package that is already imported would
+  swap the native extension under the running wrapper. The shipped app has no
+  pip and no dense stack, so this affects source runs only.
 - Tester onboarding privacy note now states that exported digests include
   short quotes from notes cited as evidence.
 
-Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
-(May–August 2026) and ships for the first time in the beta.18 tester DMG.
+---
 
-### Added
+Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
+(May–August 2026) and ships for the first time in the beta.18 tester DMG. The
+sections are kept as originally written, so heading types repeat below.
+
+### Added (beta.8–beta.17)
 - **In-app markdown reader (Konstelacja).** Clicking a connection's source
   chip or a row in the Notatki section now renders the note inside the window
   (summary on top, "Przejdź do transkrypcji" jump, GFM tables), instead of
@@ -49,7 +55,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   window states (incl. the reader) to `dist/preview/` PNGs for pixel review
   before any UI change is shown.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Insights window — pixel-perfect port of the Claude Design component redesign.**
   Implements `design-system/pages/insights-window-components-redesign.html` 1:1:
   one **radius family** (controls 6px, checkbox 5px, rows/cards 12px); the triage
@@ -63,7 +69,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   Zachowaj (now with a bookmark glyph) against a ghost Odrzuć; palette aligned to
   the on-dark design tokens (`--terra #D9542A`, `--terra-deep #C24010`).
 
-### Fixed
+### Fixed (beta.8–beta.17)
 - **A hung transcription died after an hour instead of being rescued.** The
   previous fix covers GPU failures that announce themselves; a GPU that simply
   wedges says nothing, so the recording sat there until the 60-minute timeout
@@ -106,7 +112,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   existing (false) verdicts are invalidated automatically, so every install
   re-probes the GPU once.
 
-### Added
+### Added (beta.8–beta.17)
 - **Triage navigation — Nowe / Zachowane / Odrzucone.** The rail now has a
   segmented control (count over label) to switch among the three triage views,
   so Zachowaj and Odrzuć finally lead somewhere: kept connections have a home to
@@ -120,7 +126,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   has its own empty state. (This model is a deliberate extension; it is not in
   the current Claude Design reference, which only specs per-insight triage.)
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Insights buttons now read as interactive — hover, pressed, cursor.** Per the
   Claude Design system (which specs `cursor:pointer`, a hover brighten + lift,
   and a pressed state), the action bar and footer were inert borderless buttons
@@ -147,14 +153,14 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   comfortable. The direction **checkbox** is now vertically centred on the first
   text line instead of sitting low on multi-line rows.
 
-### Removed
+### Removed (beta.8–beta.17)
 - **Gemini dropped as a handoff LLM.** It exposes no public prompt-prefill URL,
   so its handoff silently degraded to copy-and-paste while looking identical to
   the one-click Claude / ChatGPT flow. The connected-LLM switcher now cycles only
   the prefill-capable tools (Claude ↔ ChatGPT); a stale `gemini` in saved config
   falls back to Claude. The clipboard fallback still covers over-long payloads.
 
-### Added
+### Added (beta.8–beta.17)
 - **The action-rate KPI is now measurable — `make signal-report`.** The
   action-engine writes `action_taken` events; this is the read side that closes
   the loop. It folds `signal.jsonl` into **action-rate** — the share of *engaged*
@@ -195,7 +201,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   shared rare token) so the synthesis sees combinations pure similarity retrieval
   cannot surface — the source of surprising, cross-time/cross-domain connections.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Menu-bar menu cleaned up to Docker-level.** Trailing "…" now follows the
   macOS HIG — it stays only on commands that need more input in a dialog
   ("Import audio…", "Settings…") and is dropped from items that act immediately
@@ -220,7 +226,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   rationale. `SYNTHESIS_MAX_TOKENS` raised 2048 → 4096 (the old verbose prompt
   truncated mid tool-call at 2048 and returned zero connections).
 
-### Removed
+### Removed (beta.8–beta.17)
 - **Retired status-panel popover surface.** `src/ui/status_panel.py` and
   `src/ui/status_panel_model.py` (plus their tests) backed the old left-click
   `NSPopover`, replaced by the native menu + Insights window. They were dead at
@@ -230,7 +236,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
   (`_row_buttons` accumulator, the ignored `_label(weight=)` parameter) and the
   now-orphaned `license_manager` / `FeatureTier` imports.
 
-### Fixed
+### Fixed (beta.8–beta.17)
 - **Dependency download/repair updated the menu bar off the main thread.** The
   `done`/`error` callbacks correctly hopped to the main thread via
   `_run_on_main_thread`, but the `progress` callbacks set `status_item.title`
@@ -283,7 +289,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
 - **Crash (SIGSEGV) when closing the Settings window.** The native settings `NSWindow` was released by both AppKit (on close) and Python; the deferred close animation (`-[_NSWindowTransformAnimation dealloc]`) then dereferenced freed memory (`EXC_BAD_ACCESS`). Fixed with `setReleasedWhenClosed_(False)`, dismissing via `orderOut_` instead of the animated `close()`, and retaining the window/delegate past the runloop turn that tears them down.
 - **m4a / wma / aac recordings silently failed to transcribe.** whisper-cli only decodes 16 kHz WAV (plus mp3/flac/ogg in this build); the pipeline fed it the raw file and never converted, so common recorder formats — notably m4a/aac from iPhone Voice Memos — failed with `failed to read audio data as wav` and no clear error. `Transcriber._convert_to_wav` now normalises every input to 16 kHz mono WAV via ffmpeg before whisper (also fixing non-16 kHz / stereo sources). Surfaced and guarded by the new L2 scenario tests — see `Docs/TESTING-E2E-STRATEGY.md` §F1.
 
-### Added
+### Added (beta.8–beta.17)
 - **Connection synthesis — the "Zestawianie" digest (local-first, BYO-Claude).** Malinche now reads the whole transcript corpus together and, on a calm weekly cadence (pulled forward when enough new material lands), writes a digest note into the vault (`Malinche Digests/`) surfacing *emergent connections* across recordings — shared threads, **contradictions in your stance over time**, and latent ideas — each with `[[wikilinks]]` back to the sources and 2–4 non-prescriptive directions. This is the differentiating value above transcription/recall (Whisper/MacWhisper/NotebookLM are commodity): a system that *composes something of its own* from notes that otherwise lie dead. 100% local — candidates are assembled with **no embeddings** (recency window + shared-tag bridges + a small in-process BM25 over summaries, bounded to a token budget; `bm25s` is the documented drop-in at scale), and a single forced-tool-use Claude pass returns a strict, Pydantic-validated result (note ids are normalized so any model's `[[..]]` framing maps cleanly to the known notes / dismiss signatures / wikilinks). Model-agnostic per stage (`LLM_MODEL_SYNTHESIS`, default Haiku) with a model-comparison harness (`make eval-synthesis`) that scores Opus 4.8 vs Sonnet 4.6 vs Haiku on six discriminating gold cases. Dismiss anything that misses by adding its number to the digest's `dismissed:` frontmatter list — the next run respects it (Obsidian-native, no UI needed). Gated behind PRO or a BYOK key; reuses the existing summarizer/tagger client + session circuit breaker so a billing trip degrades through the same menu-bar alert. Menu: "Generate digest now…" / "Open latest digest…". New `src/connections/` package + `src/llm/model_router.py`; hooks at the post-index seam in `transcriber.py` and the periodic tick in `app_core.py`. See `Docs/POSITIONING.md` (the value ladder).
 - **New app icon — a terracotta waveform on a cream squircle.** The old skeuomorphic "M" monogram (heavy terracotta→black gradient, fret corners, jade dots — illegible and off-brand at 32 px) is replaced by a mark that extends the menu-bar `waveform` SF Symbol into the bundle icon: eleven flat-topped bars in a lively, dipping rhythm that reads as both an equalizer and a stepped *talud-tablero* pyramid, so the Aztec reference lives in the form rather than as glued-on ornament. Generated programmatically (vector-precise, reproducible) by `assets/gen_icon.py` (`make icon`); the greca step-fret now lives only on packaging surfaces (DMG background). The retired monogram generator (`scripts/gen_aztec_icon.py`), its `malinche.iconset/`, and the placeholder `assets/create_icon.sh` were removed. See `Docs/VISUAL-IDENTITY.md`.
 - **Native macOS UI redesign (L4).** A real design system (`src/ui/style.py`: 8pt spacing grid, type scale, restrained palette — system colours + one terracotta accent, jade for "ready", system red for errors) drives every surface. Menu-bar status icons are now rendered from **SF Symbols** (guaranteed on macOS 12+) instead of shipped PNGs that could go missing and fall back to emoji. The menu-bar item opens an **`NSPopover` status panel** (vibrant material, status + current file + recent transcripts, hover states) on left-click and keeps the native menu on right-click. See `Docs/UI-REDESIGN-L4-PLAN.md`.
@@ -292,7 +298,7 @@ Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
 - **Manual "Import audio…" — a fallback when auto-detection misses a file.** A new menu-bar action opens a file picker (filtered to the supported audio formats); the chosen file is copied into the local staging area (collision-safe — the original is never touched) and run through the full single-file pipeline (`Transcriber.stage_audio_file` / `import_audio_file`). Lets you transcribe anything the recorder/SD watcher didn't pick up, without waiting for a remount.
 - **End-to-end / scenario test layers (L1–L3)** under `tests/e2e/` and `tests/fixtures/`: a deterministic audio sample factory (macOS `say` + ffmpeg, all 7 formats + edge cases), real-whisper pipeline tests (per-format, multilingual, WER-scored), and real-Claude summary-quality tests (structural + LLM-as-judge), with `make test-pipeline` / `make test-e2e` / `make test-ui` targets. See `Docs/TESTING-E2E-STRATEGY.md`. L3 is now live-validated against the real API, with added guards for output-language fidelity and non-fabrication.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **The app no longer appears in the Dock** — it is menu-bar only (see the accessory-policy fix above).
 - **Licensing defaults to PRO during the beta.** With no licensing backend yet, every install is granted the full PRO feature set; `LicenseManager._verify_license` returns PRO unless a still-valid local cache says otherwise. At GA this flips back to FREE with real verification. (The misleading "always FREE" docstring and a dead code branch were removed.)
 - **Retired the shipped `assets/menu_bar/*.png` status icons** — icons are rendered at runtime from SF Symbols, so the static PNG set (and its Pillow-based test) was dead weight and has been removed.
