@@ -15,9 +15,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
+from src.app_status import AppStatus
 from src.config import config as default_config
 from src.config.config import Config
+from src.config.settings import UserSettings
+from src.fingerprint import compute_fingerprint
+from src.hostinfo import get_hostname
 from src.logger import logger
+from src.markdown_frontmatter import read_frontmatter
+from src.markdown_generator import MarkdownGenerator
+from src.stance_guard import guard_stance_subjects
+from src.state_manager import get_last_sync_time, save_sync_time
 from src.summarizer import (
     APIBillingError,
     BaseSummarizer,
@@ -26,22 +34,34 @@ from src.summarizer import (
     is_fallback_summary,
     transcript_coverage,
 )
-from src.markdown_generator import MarkdownGenerator
-from src.app_status import AppStatus
-from src.state_manager import get_last_sync_time, save_sync_time
-from src.stance_guard import guard_stance_subjects
 from src.tag_index import GENERATED_TAG, TagIndex
 from src.tagger import BaseTagger, get_tagger
-from src.vocabulary import VocabularyIndex, find_alias_misses
-from src.fingerprint import compute_fingerprint
-from src.hostinfo import get_hostname
 from src.vault_index import IndexEntry, VaultIndex
-from src.config.settings import UserSettings
-from src.markdown_frontmatter import read_frontmatter
+from src.vocabulary import VocabularyIndex, find_alias_misses
 from src.volume_utils import find_matching_volumes
 
 # whisper-cli with -pp prints "whisper_print_progress_callback: progress =  NN%".
 _PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
+
+
+class WhisperRun(subprocess.CompletedProcess):
+    """A finished whisper-cli run, plus why it finished.
+
+    ``stalled`` is True only when *we* killed the process for going silent —
+    something no exit code can express, and something the caller must handle
+    differently from a failure whisper reported itself (see
+    ``_STALL_SILENCE_SECONDS``). ``stalled_after`` carries how long that silence
+    actually was, so the error the user reads is the measured number and not
+    whichever threshold the code happens to quote. Callers that only know about
+    :class:`subprocess.CompletedProcess` keep working unchanged.
+    """
+
+    def __init__(
+        self, *args, stalled: bool = False, stalled_after: float = 0.0, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.stalled = stalled
+        self.stalled_after = stalled_after
 
 
 class NoteMeter(NamedTuple):
@@ -230,6 +250,11 @@ class Transcriber:
         self._ai_disabled_reason: Optional[str] = None
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
         self._session_failed_fingerprints: set = set()
+        # Recordings already lost to a stall once. A stall is treated as
+        # transient (a busy CPU, a disk waking up, a backup running) and gets a
+        # second chance on the next cycle — but only one, or a genuinely wedged
+        # machine would retry the same recording forever.
+        self._stalled_once: set = set()
         self._gpu_disabled_in_session: bool = False
         self._load_persisted_gpu_disabled()
         self._last_run_was_transient_failure: bool = False
@@ -730,7 +755,7 @@ class Transcriber:
         audio_file: Path,
         use_gpu: bool = True,
         source_audio: Optional[Path] = None,
-    ) -> subprocess.CompletedProcess:
+    ) -> WhisperRun:
         """Run whisper.cpp transcription.
 
         Args:
@@ -808,7 +833,11 @@ class Transcriber:
         )
 
         return self._run_whisper_streaming(
-            whisper_cmd, env=None, use_gpu=use_gpu, audio_file=audio_file
+            whisper_cmd,
+            env=None,
+            use_gpu=use_gpu,
+            audio_file=audio_file,
+            audio_duration=self._audio_duration_seconds(whisper_input),
         )
 
     @staticmethod
@@ -822,6 +851,138 @@ class Transcriber:
         cores = os.cpu_count() or 4
         return max(1, cores - 2)
 
+    # How long whisper may produce nothing at all before we call it wedged.
+    #
+    # A GPU that fails loudly is handled by _METAL_FAIL_MARKERS; this covers the
+    # one that just stops. Silence is a weaker signal than an error message, so
+    # the threshold sits far above any legitimate quiet period.
+    #
+    # Segments are the *fast* heartbeat (one per ~30 s window of audio, 0.7–5 s
+    # apart on an M2 Pro with medium + Core ML) but not a guaranteed one:
+    # whisper emits none for a window it classifies as no-speech, so a quiet
+    # stretch of the recording is silent on stdout. The guaranteed heartbeat is
+    # `progress = NN%`, printed every 5% of the *file position* whatever the
+    # audio contains — which fixes the floor: one step is at most 5% of the
+    # run's compute, so a run that would legitimately finish inside
+    # TRANSCRIPTION_TIMEOUT (3600 s) cannot be silent for longer than one step
+    # (180 s). The floor carries half a step of margin on top, because a run
+    # pacing to only just fit the budget produces exactly that gap and the
+    # comparison is `>=` — landing on the boundary would kill a healthy run.
+    _STALL_SILENCE_SECONDS = 270
+
+    # …but that argument only holds when one progress step is a small slice of
+    # the run. whisper decodes in ~30 s windows and reports progress per window,
+    # so on a *short* recording a single window is a large share of the file and
+    # its compute is a large share of a legitimate run: an old dual-core on
+    # `medium` with the GPU off can need minutes for one window of a 4-minute
+    # memo and still finish far inside the hour. The window scales for that
+    # from two numbers known before whisper starts — the audio duration and the
+    # time budget. The slowest machine still worth waiting for is the one that
+    # spends the whole TRANSCRIPTION_TIMEOUT on this recording; its time for
+    # one decode window is TIMEOUT * (window / duration), and that is the
+    # longest silence a run that can still succeed will ever produce. Anything
+    # quieter is wedged — or too slow to finish inside the budget, which ends
+    # the same way. Static by design: an earlier adaptive version measured the
+    # machine's pace from the output stream and produced eight review findings
+    # (fd ordering, segment bursts, a compile banked as pace, ...) — including
+    # one where the learned value switched the detector off entirely.
+    _WHISPER_DECODE_WINDOW_SECONDS = 30.0
+
+    # Before the first decoded window, silence is normal: whisper loads the
+    # model and says nothing until the first segment comes out.
+    _STALL_GRACE_SECONDS = 900
+
+    # The one phase that can be silent far longer: the first Core ML run for a
+    # model on a device compiles the encoder (whisper warns "first run on a
+    # device may take a while"), and on `large` that compile can outlast the
+    # grace window on older hardware. whisper announces the phase, so it is
+    # detected rather than guessed at — and only *this* window is generous. The
+    # run as a whole is still bounded by TRANSCRIPTION_TIMEOUT.
+    _STALL_COMPILE_SECONDS = 1800
+    _COREML_COMPILE_START = "loading Core ML model"
+    _COREML_COMPILE_END = "Core ML model loaded"
+
+    def _stall_limit(
+        self,
+        decoding_started: bool,
+        *,
+        coreml_compiling: bool = False,
+        audio_duration: float = 0.0,
+    ) -> float:
+        """How long this phase of the run may stay silent.
+
+        Args:
+            decoding_started: True once whisper has emitted a segment or a
+                progress line — i.e. it is past model load and Core ML compile,
+                so the generous grace window no longer applies.
+            coreml_compiling: True between whisper announcing the Core ML load
+                and confirming it — a first-run encoder compile lives here.
+            audio_duration: Length of the recording in seconds (0 = unknown,
+                which keeps the floor). See _WHISPER_DECODE_WINDOW_SECONDS for
+                why the window widens for short recordings.
+        """
+        if decoding_started:
+            # Whatever the flags say, output means the compile is behind us.
+            limit = float(self._STALL_SILENCE_SECONDS)
+            if audio_duration > 0:
+                budget = max(self.config.TRANSCRIPTION_TIMEOUT, 0)
+                windows = audio_duration / self._WHISPER_DECODE_WINDOW_SECONDS
+                # Capped at the startup grace: a clip of a few windows would
+                # otherwise be handed most of the hour budget — for a 30 s memo
+                # the whole of it — which is the "you lose an hour" this feature
+                # removes. Tolerating more silence while decoding than while
+                # starting up would be backwards in any case.
+                limit = min(
+                    max(limit, budget / windows), float(self._STALL_GRACE_SECONDS)
+                )
+            return limit
+        if coreml_compiling:
+            return self._STALL_COMPILE_SECONDS
+        return self._STALL_GRACE_SECONDS
+
+    def _is_stalled(
+        self,
+        *,
+        silent_for: float,
+        decoding_started: bool,
+        coreml_compiling: bool = False,
+        audio_duration: float = 0.0,
+    ) -> bool:
+        """Whether a live whisper has been quiet long enough to count as wedged.
+
+        Args:
+            silent_for: Seconds since the last byte on *either* pipe.
+            decoding_started: See :meth:`_stall_limit`.
+            coreml_compiling: See :meth:`_stall_limit`.
+            audio_duration: See :meth:`_stall_limit`.
+        """
+        return silent_for >= self._stall_limit(
+            decoding_started,
+            coreml_compiling=coreml_compiling,
+            audio_duration=audio_duration,
+        )
+
+    @staticmethod
+    def _audio_duration_seconds(audio_path: Optional[Path]) -> float:
+        """Duration of a WAV in seconds, 0.0 when unknown.
+
+        Only the converted 16 kHz mono WAV ever lands here (whisper always
+        receives one, see _convert_to_wav), so the wave module suffices; any
+        failure just means the stall window stays at its floor.
+        """
+        if audio_path is None:
+            return 0.0
+        import wave
+
+        try:
+            with wave.open(str(audio_path), "rb") as handle:
+                rate = handle.getframerate()
+                if rate <= 0:
+                    return 0.0
+                return handle.getnframes() / rate
+        except (OSError, wave.Error, EOFError):
+            return 0.0
+
     def _run_whisper_streaming(
         self,
         cmd: List[str],
@@ -829,10 +990,11 @@ class Transcriber:
         env: Optional[dict],
         use_gpu: bool,
         audio_file: Path,
-    ) -> subprocess.CompletedProcess:
+        audio_duration: float = 0.0,
+    ) -> WhisperRun:
         """Run whisper-cli with live stderr streaming.
 
-        Replaces a blocking ``subprocess.run(capture_output=True)`` to fix two
+        Replaces a blocking ``subprocess.run(capture_output=True)`` to fix three
         bugs at once:
           1. **Early Metal abort.** whisper.cpp prints the Metal error
              at backend init; the old post-hoc stderr check only saw it after the
@@ -840,12 +1002,19 @@ class Transcriber:
              detect the marker live and kill the process within seconds.
           2. **Progress heartbeat.** With ``-pp`` whisper emits ``progress = NN%``
              to stderr; we log it so a long run is visibly alive.
+          3. **Stall detection.** A GPU that wedges says nothing at all, so
+             neither of the above sees it and the recording used to die on
+             TRANSCRIPTION_TIMEOUT an hour later. Silence on *both* pipes is
+             the signal (see ``_is_stalled``).
 
-        stdout → DEVNULL (whisper writes the TXT via ``-otxt``); this also avoids
-        a pipe-buffer deadlock while we block on stderr. Returns a
-        :class:`subprocess.CompletedProcess` (stdout always ``""``) so the caller
-        is unchanged, and raises :class:`subprocess.TimeoutExpired` on the
-        deadline to preserve the old contract.
+        Both pipes are read: stderr for markers and progress, stdout purely as a
+        sign of life — whisper prints each decoded segment there, far more often
+        than it prints progress, and the content is redundant (the TXT comes
+        from ``-otxt``) so it is read and dropped. Reading both is also what
+        keeps the old pipe-buffer deadlock away now that stdout is no longer
+        DEVNULL. Returns a :class:`WhisperRun` (stdout always ``""``) so the
+        caller is unchanged, and raises :class:`subprocess.TimeoutExpired` on
+        the deadline to preserve the old contract.
 
         encoding/errors are critical under py2app (ASCII locale) — whisper prints
         UTF-8 paths / Polish chars to stderr.
@@ -862,7 +1031,7 @@ class Transcriber:
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,  # read purely as a sign of life, then dropped
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -878,17 +1047,44 @@ class Transcriber:
         last_logged_pct = -1
         last_heartbeat = time.time()
         started = time.time()
+        # Liveness is tracked separately from the heartbeat above: that one only
+        # moves when a heartbeat is actually *logged* (throttled to every 10
+        # points / 20 s), so reusing it would let the logging policy decide when
+        # a healthy run counts as hung.
+        last_activity = started
+        decoding_started = False
+        coreml_compiling = False
         metal_failed = False
+        stalled = False
+        stalled_after = 0.0
 
         assert proc.stderr is not None  # stderr=PIPE above guarantees it
+        assert proc.stdout is not None  # stdout=PIPE above guarantees it
         stderr_fd = proc.stderr.fileno()
+        stdout_fd = proc.stdout.fileno()
         os.set_blocking(stderr_fd, False)
+        os.set_blocking(stdout_fd, False)
+        open_fds = {stderr_fd, stdout_fd}
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         pending = ""  # text accumulated until a newline arrives
 
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
             nonlocal metal_failed, last_logged_pct, last_heartbeat
+            nonlocal coreml_compiling
+            # The Core ML encoder compile is the one silence that can outlast
+            # the grace window (first run of a model on a device). whisper
+            # brackets it, so the phase is known instead of guessed.
+            if self._COREML_COMPILE_END in line or self._coreml_load_failed(line):
+                # The failure line ("failed to load Core ML model") also ends
+                # the phase: it neither matches the success marker nor repeats
+                # the start one, so without this the flag latches and the whole
+                # run gets the 30-minute compile window — on a build that
+                # continues past the failure, the wedged machine this feature
+                # exists for would take 30 minutes to detect instead of 3.
+                coreml_compiling = False
+            elif self._COREML_COMPILE_START in line:
+                coreml_compiling = True
             if use_gpu and any(m in line for m in self._METAL_FAIL_MARKERS):
                 metal_failed = True
                 logger.warning(
@@ -902,6 +1098,7 @@ class Transcriber:
             if match:
                 pct = int(match.group(1))
                 now = time.time()
+                start_decoding()
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
                         "⏳ Transkrypcja %d%% — %s",
@@ -912,8 +1109,25 @@ class Transcriber:
                     last_heartbeat = now
             return False
 
+        def mark_activity() -> None:
+            """Whisper said something: reset the stall clock.
+
+            Deliberately just a clock. An earlier version also *learned* the
+            machine's pace from these reads; that adaptive layer produced eight
+            review findings (fd ordering, segment bursts, a Core ML compile
+            banked as pace...) and was replaced by the static duration-based
+            limit — see _WHISPER_DECODE_WINDOW_SECONDS.
+            """
+            nonlocal last_activity
+            last_activity = time.time()
+
+        def start_decoding() -> None:
+            """First sign the decode loop is running, from either pipe."""
+            nonlocal decoding_started
+            decoding_started = True
+
         def read_chunk() -> Optional[str]:
-            """One non-blocking read. Text (possibly ''), or None on EOF."""
+            """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
             try:
                 chunk = os.read(stderr_fd, 65536)
             except BlockingIOError:
@@ -922,7 +1136,27 @@ class Transcriber:
                 return None
             if not chunk:
                 return None
+            mark_activity()
             return decoder.decode(chunk)
+
+        def drain_stdout() -> Optional[int]:
+            """One non-blocking stdout read, discarded. Bytes read, None on EOF.
+
+            whisper writes the transcript itself (``-otxt``); what we want here
+            is only the *timing* of each decoded segment, so nothing is kept and
+            a long recording costs no memory.
+            """
+            try:
+                chunk = os.read(stdout_fd, 65536)
+            except BlockingIOError:
+                return 0
+            except OSError:  # pragma: no cover - defensive (closed fd)
+                return None
+            if not chunk:
+                return None
+            mark_activity()
+            start_decoding()  # a segment on stdout = the decode loop runs
+            return len(chunk)
 
         def process_remaining() -> None:
             """Flush the decoder and run marker/progress logic on every
@@ -950,6 +1184,8 @@ class Transcriber:
                             break
                         stderr_chunks.append(text)
                         pending += text
+                    while drain_stdout():
+                        pass
                     process_remaining()
                     break
 
@@ -960,31 +1196,98 @@ class Transcriber:
                         cmd, self.config.TRANSCRIPTION_TIMEOUT
                     )
 
-                ready, _, _ = select.select([stderr_fd], [], [], min(1.0, remaining))
+                silent_for = time.time() - last_activity
+                if self._is_stalled(
+                    silent_for=silent_for,
+                    decoding_started=decoding_started,
+                    coreml_compiling=coreml_compiling,
+                    audio_duration=audio_duration,
+                ):
+                    # Last look before killing it: bytes written between the
+                    # empty select() and this check are still in the pipes, and
+                    # if they carry the "transcript written" marker the run
+                    # actually finished — discarding them would cost a whole
+                    # re-transcription and delete a complete TXT.
+                    while True:
+                        text = read_chunk()
+                        if not text:
+                            break
+                        stderr_chunks.append(text)
+                        pending += text
+                    while drain_stdout():
+                        pass
+                    stalled = True
+                    stalled_after = silent_for
+                    # Whisper may have written a marker without a trailing
+                    # newline and *then* wedged; without this its stderr would
+                    # reach the caller as a plain stall and a genuine Metal
+                    # failure would never be recorded.
+                    process_remaining()
+                    if not metal_failed:
+                        logger.warning(
+                            "⚠️  whisper produced nothing for %.0fs (%s, %.0fs "
+                            "into the run) — killing it as stalled",
+                            silent_for,
+                            (
+                                "compiling the Core ML encoder"
+                                if coreml_compiling
+                                else "decoding" if decoding_started else "starting up"
+                            ),
+                            time.time() - started,
+                        )
+                    proc.kill()
+                    break
+
+                # Never sleep past the moment the run would count as stalled:
+                # the check only runs between selects, so a longer sleep would
+                # let the poll interval, not the threshold, decide when a wedged
+                # GPU is noticed.
+                until_stall = (
+                    self._stall_limit(
+                        decoding_started,
+                        coreml_compiling=coreml_compiling,
+                        audio_duration=audio_duration,
+                    )
+                    - silent_for
+                )
+                wait = max(min(1.0, remaining, until_stall), 0.01)
+                ready, _, _ = select.select(list(open_fds), [], [], wait)
                 if not ready:
                     continue
 
-                text = read_chunk()
-                if text is None:
-                    # EOF: the write end closed — flush any final partial line.
-                    process_remaining()
-                    break
-                if not text:
-                    continue
+                for fd in ready:
+                    if fd == stdout_fd:
+                        if drain_stdout() is None:
+                            open_fds.discard(stdout_fd)
+                        continue
 
-                stderr_chunks.append(text)
-                pending += text
-                while "\n" in pending:
-                    line, pending = pending.split("\n", 1)
-                    if handle_line(line):
+                    text = read_chunk()
+                    if text is None:
+                        # EOF: the write end closed — flush any final partial
+                        # line. stderr closing ends the run; whatever stdout
+                        # still holds is output we deliberately discard.
+                        process_remaining()
                         stop = True
                         break
+                    if not text:
+                        continue
+
+                    stderr_chunks.append(text)
+                    pending += text
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        if handle_line(line):
+                            stop = True
+                            break
+                    if stop:
+                        break
         finally:
-            try:
-                if proc.stderr is not None:
-                    proc.stderr.close()
-            except Exception:  # pragma: no cover - defensive
-                pass
+            for pipe in (proc.stderr, proc.stdout):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:  # pragma: no cover - defensive
+                    pass
             if proc.poll() is None:
                 try:
                     proc.wait(timeout=5)
@@ -997,12 +1300,17 @@ class Transcriber:
                 self._active_whisper_proc = None
 
         returncode = proc.returncode if proc.returncode is not None else -1
-        if metal_failed and returncode == 0:
-            # Ensure the caller treats an early-aborted GPU run as a failure
+        if (metal_failed or stalled) and returncode == 0:
+            # Ensure the caller treats a run we aborted ourselves as a failure
             # so the CPU fallback fires.
             returncode = -1
-        return subprocess.CompletedProcess(
-            args=cmd, returncode=returncode, stdout="", stderr="".join(stderr_chunks)
+        return WhisperRun(
+            args=cmd,
+            returncode=returncode,
+            stdout="",
+            stderr="".join(stderr_chunks),
+            stalled=stalled,
+            stalled_after=stalled_after,
         )
 
     def stop(self) -> None:
@@ -1291,6 +1599,16 @@ class Transcriber:
     # just burns another full run; surface an actionable error instead.
     _COREML_LOAD_FAIL_MARKERS = ("failed to load Core ML model",)
 
+    # Proof that whisper finished writing the transcript. File existence is not
+    # that proof: `fout = std::ofstream{fname_out}` creates and truncates the
+    # TXT *before* whisper prints "saving output to", and the content follows.
+    # A wedge during that write (a stalled iCloud writeback on the synced output
+    # dir is exactly the kind of stall this feature exists for) leaves an empty
+    # or truncated file behind. whisper prints its timings only after the
+    # ofstream has gone out of scope — i.e. after the file was flushed and
+    # closed — so this marker, and only this marker, means "the text is on disk".
+    _TRANSCRIPT_WRITTEN_MARKER = "whisper_print_timings"
+
     def _coreml_load_failed(self, stderr: Optional[str]) -> bool:
         """True when whisper aborted because the Core ML encoder wouldn't load."""
         if not stderr:
@@ -1520,11 +1838,73 @@ class Transcriber:
         except OSError:
             return False
 
-    def _run_macwhisper(self, audio_file: Path) -> Optional[Path]:
+    def _stall_key(self, audio_file: Path, fingerprint: Optional[str] = None) -> str:
+        """Identity of a recording for the one-retry-after-a-stall rule.
+
+        The caller's fingerprint whenever there is one: computing our own would
+        omit ``recording_datetime``, and for a tagless .m4a that falls back to
+        mtime — which iCloud rewrites on re-sync. The key would then differ on
+        every cycle, the second stall would never be recognised as a repeat, and
+        the recording would run whisper twice per cycle forever: exactly the
+        loop this counter exists to stop.
+
+        Content, not filename: recorders reuse names (`DS300001.WAV` on every
+        card), so a stem would let one recording spend the second chance that
+        belongs to another. Falls back to the path when the file cannot be
+        fingerprinted — a weaker key must never be worse than raising here.
+        """
+        if fingerprint:
+            return fingerprint
+        try:
+            return compute_fingerprint(audio_file)
+        except Exception as exc:  # noqa: BLE001 - identity is best-effort
+            logger.debug("Could not fingerprint %s for stall key: %s", audio_file, exc)
+            return str(audio_file.resolve())
+
+    def _record_stall_strike(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> None:
+        """Give a stalled recording one more cycle — but only one.
+
+        The same reasoning that keeps the GPU verdict unwritten applies to the
+        recording: if a backup or a sleeping disk wedged this run, the note is
+        fine and deserves the next cycle. The second stall on the same recording
+        makes it permanent, so a truly wedged machine does not retry forever.
+
+        Keyed by content, not by name (see :meth:`_stall_key`).
+        """
+        stall_key = self._stall_key(audio_file, fingerprint)
+        if stall_key in self._stalled_once:
+            logger.warning(
+                "  Stalled twice — %s will not be retried this session",
+                audio_file.name,
+            )
+            return
+        self._stalled_once.add(stall_key)
+        self._last_run_was_transient_failure = True
+
+    def _retire_stall(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> None:
+        """A run that finished retires the earlier stall.
+
+        The next stall is a first stall again, not a second one inherited from a
+        problem the machine has evidently recovered from. Guarded so the normal
+        path — nothing ever stalled — never pays for computing a key.
+        """
+        if self._stalled_once:
+            self._stalled_once.discard(self._stall_key(audio_file, fingerprint))
+
+    def _run_macwhisper(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> Optional[Path]:
         """Run whisper.cpp transcription and return path to TXT file.
 
         Args:
             audio_file: Path to the audio file to transcribe
+            fingerprint: The recording's canonical identity, when the caller
+                already has it. Used to key the one-retry-after-a-stall rule
+                (see :meth:`_stall_key`).
 
         Returns:
             Path to created TXT file, or None if transcription failed.
@@ -1565,6 +1945,14 @@ class Transcriber:
         self._update_state(AppStatus.TRANSCRIBING, audio_file.name)
 
         wav_for_whisper: Optional[Path] = None
+        # A stalled run can leave a truncated TXT behind (whisper creates the
+        # file before writing it). Tracked across the whole call, not at the
+        # exit that noticed the stall: the Core ML diagnosis and the timeout
+        # both return earlier, and a fragment left on disk is adopted by the
+        # crash-recovery path on the next cycle and filed as the finished note,
+        # with whisper never re-running. Bound before the try so `finally` can
+        # read it however we leave.
+        stalled_unconfirmed = False
         try:
             # Ensure output directory exists
             self.config.TRANSCRIBE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1586,6 +1974,16 @@ class Transcriber:
             # actually attempted: passing a hardcoded True to the retry check
             # made a GPU-less run look like a failed GPU run, so every single
             # transcription ran twice, start to finish.
+            def note_run(res: subprocess.CompletedProcess) -> None:
+                nonlocal stalled_unconfirmed
+                wrote = self._TRANSCRIPT_WRITTEN_MARKER in (res.stderr or "")
+                if getattr(res, "stalled", False) and not wrote:
+                    stalled_unconfirmed = True
+                elif wrote or res.returncode == 0:
+                    # A later complete run overwrites whatever the stalled one
+                    # left: the file on disk is a transcript again.
+                    stalled_unconfirmed = False
+
             gpu_attempted = not self._gpu_disabled_in_session
             if gpu_attempted:
                 logger.info("🔄 Attempting transcription with GPU acceleration")
@@ -1594,6 +1992,7 @@ class Transcriber:
             result = self._run_whisper_transcription(
                 audio_file, use_gpu=gpu_attempted, source_audio=wav_for_whisper
             )
+            note_run(result)
 
             logger.debug(
                 f"Transcription attempt completed - "
@@ -1601,8 +2000,36 @@ class Transcriber:
                 f"stderr length: {len(result.stderr) if result.stderr else 0}"
             )
 
-            # If Metal failed, retry with the GPU off
-            if self._should_retry_without_gpu(
+            def stalled_after_finishing() -> bool:
+                """A stall that came *after* the transcript was safely written.
+
+                Then the work is done and the wedge was in the teardown (a Metal
+                driver that never returns): re-running would redo a whole
+                transcription and lose the finished one if the retry stalled too.
+
+                Requires whisper's own proof of a completed write
+                (``_TRANSCRIPT_WRITTEN_MARKER``), not just a file on disk — see
+                that constant for why existence means nothing here.
+                """
+                if not getattr(result, "stalled", False):
+                    return False
+                # Deliberately not "and output_file.exists()": whisper sometimes
+                # writes under a different basename, which the verification
+                # below already recovers. The marker says the stream was
+                # flushed and closed; finding the file is that block's job.
+                return self._TRANSCRIPT_WRITTEN_MARKER in (result.stderr or "")
+
+            # If Metal failed, retry with the GPU off. Checked *before* the
+            # stall branch: a GPU that reports an error and then wedges is a
+            # reported failure first — reading it as a plain stall would skip
+            # the verdict and leave every future recording to rediscover it.
+            #
+            # …unless the transcript is already written. Our own kill supplies
+            # rc=-9, and a GPU dying in teardown prints the same runtime markers
+            # (dead command buffer, pipeline), so this branch would otherwise
+            # re-transcribe over the finished file — and record a permanent
+            # verdict the stall path deliberately declines to record.
+            if not stalled_after_finishing() and self._should_retry_without_gpu(
                 result.stderr,
                 gpu_attempted=gpu_attempted,
                 returncode=result.returncode,
@@ -1625,7 +2052,31 @@ class Transcriber:
                 result = self._run_whisper_transcription(
                     audio_file, use_gpu=False, source_audio=wav_for_whisper
                 )
+                note_run(result)
                 logger.debug(f"CPU retry completed - returncode: {result.returncode}")
+
+            # A run we killed for going silent gets exactly one retry with the
+            # GPU off — and, unlike a reported Metal failure, leaves no verdict
+            # behind. A stall can come from outside Metal (a loaded CPU, a disk
+            # going to sleep, iCloud), so condemning the GPU on this evidence
+            # would be a guess; the `-ng` run is the experiment that tells us,
+            # and it costs one recording, not every future one.
+            elif (
+                getattr(result, "stalled", False)
+                and gpu_attempted
+                and not stalled_after_finishing()
+            ):
+                logger.warning(
+                    "⚠️  GPU attempt stalled for %s — retrying once with GPU off "
+                    "(no permanent verdict recorded)",
+                    audio_file.name,
+                )
+                result = self._run_whisper_transcription(
+                    audio_file, use_gpu=False, source_audio=wav_for_whisper
+                )
+                note_run(result)
+                logger.debug(f"Stall fallback completed - rc: {result.returncode}")
+
             elif gpu_attempted and result.returncode == 0:
                 # Working GPU — retire any earlier one-off failure on record.
                 self._clear_gpu_verdict()
@@ -1647,8 +2098,39 @@ class Transcriber:
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 
+            # Still silent after the fallback (or with the GPU already off):
+            # nothing left to try, and a generic "kod: -9" would send the user
+            # looking for a broken file instead of a wedged machine.
+            if getattr(result, "stalled", False) and not stalled_after_finishing():
+                # The measured silence, not a quoted threshold: a run killed
+                # during startup was quiet for far longer than the decode
+                # window, and saying "3 min" there is simply untrue.
+                minutes = max(1, round(getattr(result, "stalled_after", 0) / 60))
+                error_msg = (
+                    f"Transkrypcja utknęła (brak postępu przez {minutes} min)"
+                    if not gpu_attempted
+                    else f"Transkrypcja utknęła (brak postępu przez {minutes} min) "
+                    "także z wyłączonym GPU — sprawdź model i zależności"
+                )
+                logger.error(
+                    "✗ Transcription stalled after %.0fs: %s (GPU %s)",
+                    getattr(result, "stalled_after", 0),
+                    audio_file.name,
+                    "was already off" if not gpu_attempted else "off on the retry too",
+                )
+                self._record_stall_strike(audio_file, fingerprint)
+                self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
+                return None
+
+            if stalled_after_finishing():
+                logger.warning(
+                    "⚠️  whisper wedged after writing the transcript for %s — "
+                    "keeping the finished TXT instead of transcribing again",
+                    audio_file.name,
+                )
+
             # Check for errors
-            if result.returncode != 0:
+            elif result.returncode != 0:
                 error_msg = f"Transkrypcja nieudana (kod: {result.returncode})"
                 if result.stderr:
                     error_msg = result.stderr[:200]
@@ -1670,6 +2152,7 @@ class Transcriber:
             logger.info(f"Checking for output file: {output_file}")
             if output_file.exists() or self._wait_for_output_file(output_file):
                 logger.info(f"✓ Transcription TXT verified: {output_file.name}")
+                self._retire_stall(audio_file, fingerprint)
                 return output_file
             else:
                 logger.warning(
@@ -1692,6 +2175,7 @@ class Transcriber:
                     txt_files = [f for f in created_files if f.suffix == ".txt"]
                     if txt_files:
                         logger.debug(f"✓ Using found file: {txt_files[0]}")
+                        self._retire_stall(audio_file, fingerprint)
                         return txt_files[0]
 
                 logger.error(
@@ -1728,11 +2212,28 @@ class Transcriber:
                 return None
 
         except subprocess.TimeoutExpired:
-            error_msg = f"Timeout ({self.config.TRANSCRIPTION_TIMEOUT}s)"
-            logger.error(
-                f"✗ Transcription timeout ({self.config.TRANSCRIPTION_TIMEOUT}s): "
-                f"{audio_file.name}"
-            )
+            # A timeout on the attempt that *followed* a stall is still the
+            # stall's story: the deadline is per attempt, so a wedge late in a
+            # long recording hands the `-ng` re-run a full fresh hour it can
+            # plausibly exceed on CPU. Reporting a bare timeout here would drop
+            # both the diagnosis and the second chance the stall rule promises.
+            if stalled_unconfirmed:
+                error_msg = (
+                    "Transkrypcja utknęła, a ponowna próba nie zdążyła "
+                    f"w limicie ({self.config.TRANSCRIPTION_TIMEOUT}s)"
+                )
+                logger.error(
+                    "✗ Stalled, then the retry hit the timeout (%ss): %s",
+                    self.config.TRANSCRIPTION_TIMEOUT,
+                    audio_file.name,
+                )
+                self._record_stall_strike(audio_file, fingerprint)
+            else:
+                error_msg = f"Timeout ({self.config.TRANSCRIPTION_TIMEOUT}s)"
+                logger.error(
+                    f"✗ Transcription timeout ({self.config.TRANSCRIPTION_TIMEOUT}s): "
+                    f"{audio_file.name}"
+                )
             self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
             return None
 
@@ -1743,6 +2244,14 @@ class Transcriber:
             return None
 
         finally:
+            # Whatever exit we took, never leave a half-written transcript on
+            # disk: the adoption path would treat it as the finished note.
+            if stalled_unconfirmed and output_file.exists():
+                logger.warning(
+                    "  Removing unconfirmed transcript left by a stalled run: %s",
+                    output_file.name,
+                )
+                output_file.unlink(missing_ok=True)
             # Drop the temporary converted WAV (best-effort).
             if wav_for_whisper is not None:
                 wav_for_whisper.unlink(missing_ok=True)
@@ -2320,6 +2829,13 @@ Brak podsumowania AI. Możliwe przyczyny:
                 # poprzedniej nieudanej próby; bez czyszczenia kolejny scan
                 # by go pominął.
                 self._session_failed_fingerprints.discard(fingerprint)
+                # …i licznik zastojów: bez tego pierwszy zastój ręcznie
+                # wznowionej transkrypcji liczy się jako drugi i nagranie
+                # od razu wraca na blacklistę, choć user właśnie poprosił
+                # o kolejną szansę.
+                # Ten sam fingerprint co dwie linijki wyżej — liczenie
+                # własnego dawałoby inny klucz (i drugi odczyt 1 MB).
+                self._stalled_once.discard(self._stall_key(audio_file, fingerprint))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not clean vault_index entry before retranscribe: %s",
@@ -2521,7 +3037,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         # postprocess stays recoverable (adoption above) without stem-only
         # guessing.
         self._write_transcript_owner(transcript_path, audio_file, fingerprint)
-        transcript_path = self._run_macwhisper(audio_file)
+        transcript_path = self._run_macwhisper(audio_file, fingerprint=fingerprint)
 
         if transcript_path is None:
             if self._last_run_was_transient_failure:

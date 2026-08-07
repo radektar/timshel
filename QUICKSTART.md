@@ -135,6 +135,32 @@ failure is dropped as soon as a GPU run succeeds. Once the verdict stands the
 GPU is no longer tried, so it only lifts when whisper, the model, or macOS
 changes — or when you delete that file to force a re-probe.
 
+### Transcription hangs ("Transkrypcja utknęła")
+
+A GPU can also wedge without reporting anything. The app watches whisper's
+output — a decoded segment per ~30 s of audio, plus a progress line every 5% —
+and if **nothing** arrives for 4.5 minutes it kills the run and retries the
+recording once with the GPU off. For short recordings the window widens
+automatically — it is computed from the recording's length and the hour budget,
+so an old Mac grinding through a 4-minute memo gets 7.5 minutes of tolerance
+(capped at 15 minutes, however short the clip). Two phases are silent by nature and get their own budget: startup
+(15 minutes) and the first Core ML encoder compile for a model on this machine,
+which whisper announces in the log and which can take a while on `large`.
+
+If whisper wedges *after* saving the transcript — a Metal teardown that never
+returns — the finished file is kept and nothing is re-run. A wedge *during* the
+write leaves a partial file, which is discarded rather than kept: the recording
+is retried instead of being filed with a fragment of its content.
+
+Nothing is recorded permanently here: a stall can come from a loaded CPU or a
+sleeping disk just as easily as from Metal, so the GPU stays enabled for the
+next recording. If the retry with the GPU off stalls too, the message says so.
+Note that `-ng` moves only the decoder to the CPU — the encoder always runs
+through Core ML — so a stall that survives the retry points at the model or its
+Core ML encoder (try a smaller model, or **Settings → Maintenance →
+"Re-download dependencies"**) as much as at the machine (disk, memory, a stuck
+iCloud sync).
+
 Note there is no way to turn Core ML off: `WHISPER_COREML` and
 `GGML_METAL_DISABLE` are whisper.cpp *build* switches and do nothing in the
 environment. This build always runs the encoder through Core ML — `-ng` only
