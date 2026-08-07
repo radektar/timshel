@@ -46,7 +46,10 @@ SMOKE_HOME="$(mktemp -d /tmp/timshel-smoke.XXXXXX)"
 LOG="$SMOKE_HOME/Library/Application Support/Timshel/logs/timshel.log"
 
 echo "--- Launching bundle under fresh HOME=$SMOKE_HOME (${WAIT}s) ---"
-HOME="$SMOKE_HOME" "$BIN" &
+# PYTHONDONTWRITEBYTECODE: a dynamically imported module missing from py2app's
+# precompiled __pycache__ would otherwise write fresh .pyc INTO the signed
+# bundle during this very launch — breaking the seal the check above verified.
+HOME="$SMOKE_HOME" PYTHONDONTWRITEBYTECODE=1 "$BIN" &
 PID=$!
 sleep "$WAIT"
 

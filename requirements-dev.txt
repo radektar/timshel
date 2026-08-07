@@ -10,8 +10,8 @@ isort>=5.12.0
 
 # Local recall engine (dev/CI). In the shipped app these are auto-installed on
 # first use via runtime_deps, not bundled — see SAFEGUARDED_PACKAGES.
-fastembed>=0.3.0
-sqlite-vec>=0.1.6
+fastembed==0.8.0
+sqlite-vec==0.1.9
 
 # OpenAI — dev-only, used by scripts/resummarize_vault.py --provider openai
 # (one-off v2 corpus migration). Never imported by the shipped app.

@@ -37,6 +37,17 @@ if [ -f "${INFO_PLIST}" ]; then
     fi
 fi
 
+# A broken seal must never reach a DMG: Gatekeeper rejects it on the tester's
+# Mac with no useful message. Verify here — the release path (build-dmg /
+# release) does not run the smoke test, so this is its only signature gate.
+if ! codesign --verify --strict --deep "${APP_PATH}"; then
+    echo "❌ Error: codesign verification failed for ${APP_PATH}."
+    echo "   The bundle's seal is broken (a stray write into dist/?)."
+    echo "   Rebuild with scripts/build_app.sh before packaging."
+    exit 1
+fi
+echo "✅ Code signature verified"
+
 # Remove old DMG if exists
 rm -f "${DIST_DIR}/${DMG_FILENAME}"
 

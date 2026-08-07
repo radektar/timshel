@@ -89,7 +89,10 @@ jobs:
 
           rpaths="$(otool -l bundled/whisper-cli | awk '/LC_RPATH/{getline; getline; print $2}')"
           while IFS= read -r old_path; do
-            if [[ "$old_path" == *"/Users/runner/work/malinche/malinche/whisper.cpp/"* ]]; then
+            # Match any runner-workspace rpath (rename-proof: the repo path
+            # changes with every repo rename; the verify step greps the same
+            # /Users/runner prefix, so the two stay in lockstep).
+            if [[ "$old_path" == *"/Users/runner/"* ]]; then
               install_name_tool -delete_rpath "$old_path" bundled/whisper-cli
             fi
           done <<< "$rpaths"

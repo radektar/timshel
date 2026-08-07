@@ -25,10 +25,16 @@ CHECKSUMS = {
     "ggml-medium-encoder.mlmodelc.zip": "sha256:79b0b8d436d47d3f24dd3afc91f19447dd686a4f37521b2f6d9c30a642133fbd",
 }
 
+# Single source of truth for the deps-release repo. On the next rename, this
+# one constant is the only thing to touch — and the rename guard test no
+# longer allowlists this file, so a stale URL fails the suite instead of
+# riding a GitHub redirect until someone claims the old name.
+DEPS_REPO_BASE = "https://github.com/radektar/timshel/releases/download/deps-v1.1.0"
+
 # URLs dla pobierania
 URLS = {
-    "whisper": "https://github.com/radektar/timshel/releases/download/deps-v1.1.0/whisper-cli",
-    "ffmpeg": "https://github.com/radektar/timshel/releases/download/deps-v1.1.0/ffmpeg-arm64",
+    "whisper": f"{DEPS_REPO_BASE}/whisper-cli",
+    "ffmpeg": f"{DEPS_REPO_BASE}/ffmpeg-arm64",
     "model_tiny": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
     "model_base": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
     "model_small": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",

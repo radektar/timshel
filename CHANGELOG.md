@@ -9,13 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0-beta.18] - 2026-08-07
 
-Release hygiene cut: everything below accumulated in Unreleased across the
-beta.8–beta.17 series (May–August 2026) and ships in the beta.18 tester DMG.
-Beta.18 itself adds: `make clean` no longer reaches into `dist/` (it was
-silently breaking the codesign seal of a built bundle), the bundle smoke test
-verifies the signature before launching, engine download URLs point at the
-renamed `radektar/timshel` repo directly instead of riding a GitHub redirect,
-and sqlite-vec is pinned.
+### Fixed
+- `make clean` no longer reaches into `dist/` — deleting caches inside a built
+  `.app` was silently invalidating the codesign seal, and the broken bundle
+  would only surface as a Gatekeeper rejection on the tester's Mac.
+- The DMG build (`create_dmg.sh`) refuses to package a bundle whose signature
+  fails `codesign --verify`; the bundle smoke test verifies the seal before
+  launching and launches with `PYTHONDONTWRITEBYTECODE=1` so the smoke run
+  itself cannot write `.pyc` into the signed bundle.
+- Engine download URLs point at the renamed `radektar/timshel` repo directly
+  instead of riding a GitHub redirect from the old name; the rename-guard test
+  now covers `setup/checksums.py` so the next drift fails the suite.
+- The deps-building CI workflow (`build-whisper.yml`) strips any
+  runner-workspace rpath instead of a hardcoded pre-rename path that could
+  never match again.
+
+### Changed
+- `sqlite-vec` pinned to 0.1.9 and `fastembed` to 0.8.0 (both pre-1.0) for
+  runtime auto-installs and the dev suite alike; installs that predate the pin
+  are re-pinned on next launch.
+- Tester onboarding privacy note now states that exported digests include
+  short quotes from notes cited as evidence.
+
+Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
+(May–August 2026) and ships for the first time in the beta.18 tester DMG.
 
 ### Added
 - **In-app markdown reader (Konstelacja).** Clicking a connection's source

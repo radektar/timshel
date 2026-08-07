@@ -62,6 +62,63 @@ def test_ensure_importable_returns_false_when_pip_fails(monkeypatch):
     assert runtime_deps.ensure_importable("anthropic") is False
 
 
+def test_repin_fires_for_drifted_runtime_dir_install(monkeypatch):
+    """A pre-pin auto-install in RUNTIME_DEPS_DIR is re-pinned on next use."""
+    stale = MagicMock()
+    stale.__file__ = str(runtime_deps.RUNTIME_DEPS_DIR / "sqlite_vec" / "__init__.py")
+    monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", stale)
+    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+    monkeypatch.setattr(
+        runtime_deps._importlib_metadata, "version", lambda _dist: "0.0.1"
+    )
+    pip_calls = []
+    monkeypatch.setattr(
+        runtime_deps, "_pip_install", lambda spec, _t: pip_calls.append(spec) or True
+    )
+
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert pip_calls == [runtime_deps.SAFEGUARDED_PACKAGES["sqlite_vec"]]
+
+
+def test_repin_leaves_venv_installs_alone(monkeypatch):
+    """A module resolved outside RUNTIME_DEPS_DIR is never re-pinned — pip
+    would shadow the venv copy on sys.path."""
+    venv_mod = MagicMock()
+    venv_mod.__file__ = "/some/venv/site-packages/sqlite_vec/__init__.py"
+    monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", venv_mod)
+    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+    monkeypatch.setattr(
+        runtime_deps._importlib_metadata, "version", lambda _dist: "0.0.1"
+    )
+    pip_calls = []
+    monkeypatch.setattr(
+        runtime_deps, "_pip_install", lambda spec, _t: pip_calls.append(spec) or True
+    )
+
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert pip_calls == []
+
+
+def test_repin_skips_matching_pin(monkeypatch):
+    """A runtime-dir install already at the pinned version is left alone."""
+    pinned_mod = MagicMock()
+    pinned_mod.__file__ = str(
+        runtime_deps.RUNTIME_DEPS_DIR / "sqlite_vec" / "__init__.py"
+    )
+    monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", pinned_mod)
+    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+    monkeypatch.setattr(
+        runtime_deps._importlib_metadata, "version", lambda _dist: "0.1.9"
+    )
+    pip_calls = []
+    monkeypatch.setattr(
+        runtime_deps, "_pip_install", lambda spec, _t: pip_calls.append(spec) or True
+    )
+
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert pip_calls == []
+
+
 def test_runtime_dir_added_to_sys_path_once(monkeypatch):
     """Runtime path should not be duplicated in sys.path."""
     original = list(runtime_deps.sys.path)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from importlib import metadata as _importlib_metadata
 from pathlib import Path
 
 from src.logger import logger
@@ -20,9 +21,10 @@ RUNTIME_DEPS_DIR = (
 SAFEGUARDED_PACKAGES = {
     "anthropic": "anthropic==0.75.0",
     # Local recall engine — auto-installed on first use (like whisper.cpp/ffmpeg),
-    # NOT a hard requirement, so the base install stays light. sqlite-vec is
-    # pre-1.0, so it is pinned to the version the suite runs against.
-    "fastembed": "fastembed",
+    # NOT a hard requirement, so the base install stays light. Both are pre-1.0,
+    # so they are pinned to the versions the suite runs against
+    # (requirements-dev.txt carries the same pins).
+    "fastembed": "fastembed==0.8.0",
     "sqlite_vec": "sqlite-vec==0.1.9",
 }
 
@@ -94,17 +96,44 @@ def importable(module_name: str) -> bool:
         return False
 
 
+def _needs_repin(module_name: str, spec: str) -> bool:
+    """True when OUR auto-install of the module drifted off a ``==`` pin.
+
+    Only fires for modules that resolved from RUNTIME_DEPS_DIR — a copy coming
+    from the bundle or a dev venv is not ours to manage, and re-pinning it
+    into the runtime dir would shadow the venv on sys.path.
+    """
+    if "==" not in spec:
+        return False
+    module = sys.modules.get(module_name)
+    origin = getattr(module, "__file__", None) or ""
+    if not origin.startswith(str(RUNTIME_DEPS_DIR)):
+        return False
+    dist_name, pinned = spec.split("==", 1)
+    try:
+        return _importlib_metadata.version(dist_name) != pinned
+    except _importlib_metadata.PackageNotFoundError:  # pragma: no cover
+        return False
+
+
 def ensure_importable(module_name: str) -> bool:
     """Ensure module can be imported, installing best-effort if needed."""
     _ensure_runtime_dir_on_path()
 
+    spec = SAFEGUARDED_PACKAGES.get(module_name)
+
     try:
         __import__(module_name)
-        return True
     except ImportError:
         pass
+    else:
+        # Importable, but a pre-pin auto-install may hold a drifted version:
+        # re-pin it (outside the bundle, where pip can actually run).
+        if spec and not _is_bundled_app() and _needs_repin(module_name, spec):
+            logger.info("Re-pinning %s to %s", module_name, spec)
+            _pip_install(spec, RUNTIME_DEPS_DIR)
+        return True
 
-    spec = SAFEGUARDED_PACKAGES.get(module_name)
     if not spec:
         logger.warning("No install spec registered for %s", module_name)
         return False
