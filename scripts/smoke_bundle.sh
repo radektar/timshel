@@ -31,6 +31,17 @@ fi
 
 [[ -x "$BIN" ]] || { echo "SMOKE FAIL: no bundle binary at $BIN"; exit 1; }
 
+# The seal must be intact BEFORE we bother launching: a `make clean` between
+# build and smoke strips __pycache__ out of the bundle and silently breaks
+# the ad-hoc signature (Gatekeeper then rejects the DMG on the tester's Mac).
+echo "--- Verifying code signature ---"
+if codesign --verify --strict --deep "$APP" 2>&1; then
+    echo "OK   codesign seal intact"
+else
+    echo "SMOKE FAIL: codesign verification failed (did make clean touch dist/?)"
+    exit 1
+fi
+
 SMOKE_HOME="$(mktemp -d /tmp/timshel-smoke.XXXXXX)"
 LOG="$SMOKE_HOME/Library/Application Support/Timshel/logs/timshel.log"
 

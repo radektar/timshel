@@ -20,10 +20,10 @@ RUNTIME_DEPS_DIR = (
 SAFEGUARDED_PACKAGES = {
     "anthropic": "anthropic==0.75.0",
     # Local recall engine — auto-installed on first use (like whisper.cpp/ffmpeg),
-    # NOT a hard requirement, so the base install stays light. Pin sqlite-vec
-    # before shipping — it is pre-1.0.
+    # NOT a hard requirement, so the base install stays light. sqlite-vec is
+    # pre-1.0, so it is pinned to the version the suite runs against.
     "fastembed": "fastembed",
-    "sqlite_vec": "sqlite-vec",
+    "sqlite_vec": "sqlite-vec==0.1.9",
 }
 
 

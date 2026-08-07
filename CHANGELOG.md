@@ -1,11 +1,21 @@
 # Changelog
 
-All notable changes to Malinche will be documented in this file.
+All notable changes to Timshel (formerly Malinche) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.0.0-beta.18] - 2026-08-07
+
+Release hygiene cut: everything below accumulated in Unreleased across the
+beta.8–beta.17 series (May–August 2026) and ships in the beta.18 tester DMG.
+Beta.18 itself adds: `make clean` no longer reaches into `dist/` (it was
+silently breaking the codesign seal of a built bundle), the bundle smoke test
+verifies the signature before launching, engine download URLs point at the
+renamed `radektar/timshel` repo directly instead of riding a GitHub redirect,
+and sqlite-vec is pinned.
 
 ### Added
 - **In-app markdown reader (Konstelacja).** Clicking a connection's source

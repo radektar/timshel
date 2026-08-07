@@ -27,8 +27,8 @@ CHECKSUMS = {
 
 # URLs dla pobierania
 URLS = {
-    "whisper": "https://github.com/radektar/malinche/releases/download/deps-v1.1.0/whisper-cli",
-    "ffmpeg": "https://github.com/radektar/malinche/releases/download/deps-v1.1.0/ffmpeg-arm64",
+    "whisper": "https://github.com/radektar/timshel/releases/download/deps-v1.1.0/whisper-cli",
+    "ffmpeg": "https://github.com/radektar/timshel/releases/download/deps-v1.1.0/ffmpeg-arm64",
     "model_tiny": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
     "model_base": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
     "model_small": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",

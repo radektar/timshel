@@ -7,7 +7,7 @@ from setuptools import setup
 import py2app
 from pathlib import Path
 
-APP_VERSION = "2.0.0-beta.17"
+APP_VERSION = "2.0.0-beta.18"
 
 
 def _build_stamp() -> str:

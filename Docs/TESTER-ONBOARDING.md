@@ -16,8 +16,10 @@ archiwum i wyciąga nieoczywiste połączenia oraz sprzeczności między
 notatkami. Testujesz, czy ta warstwa Insights jest coś warta.
 
 **Prywatność:** cotygodniowy plik z feedbackiem, który odsyłasz, zawiera
-wyłącznie tekst digestów, tytuły notatek i Twój słownik osobisty — nic
-więcej. Nagrania i treść notatek nigdy nie opuszczają Twojego Maca.
+wyłącznie tekst digestów (w tym krótkie cytaty z notatek, które digest
+przywołuje jako dowód połączenia), tytuły notatek i Twój słownik osobisty —
+nic więcej. Nagrania i pełna treść notatek nigdy nie opuszczają Twojego Maca;
+zanim wyślesz zip, możesz go otworzyć i przejrzeć każdy plik.
 
 ## Wymagania
 

@@ -135,9 +135,11 @@ status:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	find . -type f -name "*.pyo" -delete
+	# dist/ is pruned: deleting __pycache__/.pyc inside a built .app rips files
+	# out from under the codesign seal and silently invalidates the signature.
+	find . -path ./dist -prune -o -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -path ./dist -prune -o -type f -name "*.pyc" -exec rm -f {} + 2>/dev/null || true
+	find . -path ./dist -prune -o -type f -name "*.pyo" -exec rm -f {} + 2>/dev/null || true
 	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
