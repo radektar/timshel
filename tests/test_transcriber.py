@@ -1459,6 +1459,9 @@ def test_run_macwhisper_stall_falls_back_to_cpu_for_this_recording_only(
     assert mock_runner.call_args_list[1].kwargs["use_gpu"] is False
     assert transcriber._gpu_disabled_in_session is False
     assert not transcriber._gpu_flag_path().exists()
+    # The fallback overwrote whatever the stalled attempt left, so the file on
+    # disk is a transcript again — the fragment cleanup must not take it.
+    assert (transcript_dir / "sample.txt").exists()
 
 
 def test_a_metal_error_that_ends_in_silence_is_still_a_metal_error(
@@ -2185,6 +2188,145 @@ def test_a_transcript_left_half_written_by_a_stall_is_not_kept(
     assert transcriber._run_macwhisper(audio_file) is None
     assert "utknęła" in _reported_error(transcriber)
     assert not partial.exists()  # nothing left for the adoption path to find
+
+
+def test_a_fragment_survives_no_exit_of_a_stalled_call(
+    transcriber, tmp_path, monkeypatch
+):
+    """The half-written TXT must be gone whichever way the call ends.
+
+    The cleanup used to sit in the branch that noticed the stall, but a stall
+    can leave through earlier exits: here the `-ng` retry (handed a fresh full
+    hour) hits the timeout. The fragment would then stay on disk, and the
+    crash-recovery path adopts it on the next cycle — filing a real recording as
+    the placeholder "no recognisable speech" note without whisper re-running.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    partial = transcript_dir / "sample.txt"
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
+            partial.write_text("[00:00:00 --> 00:00:02] half a sen")
+            return _stalled_run()  # no proof of a completed write
+        raise subprocess.TimeoutExpired(["whisper"], 3600)
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+    transcriber._update_state = MagicMock()  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert not partial.exists()
+    # The timeout that followed a stall is still the stall's story…
+    assert "utknęła" in _reported_error(transcriber)
+    # …including the second chance the stall rule promises.
+    assert transcriber._last_run_was_transient_failure is True
+
+
+def test_a_fragment_is_removed_when_the_core_ml_diagnosis_ends_the_call(
+    transcriber, tmp_path, monkeypatch
+):
+    """Same for the other early exit: a broken Core ML encoder is terminal, and
+    the fragment from the stalled first attempt must not outlive the call."""
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    partial = transcript_dir / "sample.txt"
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        if use_gpu:
+            partial.write_text("fragment")
+            return _stalled_run()
+        return subprocess.CompletedProcess(
+            args=["whisper"],
+            returncode=3,
+            stdout="",
+            stderr="whisper_init_state: failed to load Core ML model from 'x'",
+        )
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+    transcriber._update_state = MagicMock()  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert not partial.exists()
+
+
+def test_output_written_just_before_the_kill_is_not_thrown_away(
+    transcriber, tmp_path, monkeypatch
+):
+    """Bytes that arrive between the last empty select() and the stall check are
+    still in the pipe, and one of them can be the proof that the transcript was
+    written. Killing without a final drain would discard it and cost a whole
+    re-transcription of a run that had in fact finished.
+
+    select() is stubbed to report nothing ready, so only the final drain can
+    recover what the process wrote.
+    """
+    import select as _select
+
+    proc = _FakePipeProc(_WROTE_TRANSCRIPT, hold_open=True)
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(_select, "select", lambda r, w, x, t=None: ([], [], []))
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.stalled is True
+    assert transcriber._TRANSCRIPT_WRITTEN_MARKER in result.stderr
+
+
+def test_a_finished_transcript_under_another_name_is_still_finished(
+    transcriber, tmp_path, monkeypatch
+):
+    """The proof of a completed write is whisper's marker, not the presence of
+    the file we asked for.
+
+    whisper occasionally writes the TXT under a different basename, which the
+    pipeline already recovers. Requiring our expected name here would read a
+    finished run as an unfinished stall and re-transcribe it.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample_out.txt").write_text("the finished transcript")
+        return _stalled_run(stderr=_WROTE_TRANSCRIPT)
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+    monkeypatch.setattr(transcriber, "_wait_for_output_file", lambda *a, **k: False)
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample_out.txt"
+    assert mock_runner.call_count == 1
 
 
 def test_a_metal_error_during_teardown_does_not_redo_a_finished_transcript(

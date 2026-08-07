@@ -35,7 +35,8 @@ Sygnałem jest **brak jakiegokolwiek wyjścia**, nie całkowity czas.
    whisper wypisuje na stdout **każdy zdekodowany segment**, jeden na ~30 s
    audio. Oba pipe'y są czytane tą samą nieblokującą pętlą `select`, treść
    stdout jest wyrzucana — liczy się sam fakt aktywności. Dzięki temu okno
-   zastoju zeszło z zakładanych 10 min do **3 min**.
+   zastoju zeszło z zakładanych 10 min do **3 min** (dziś 4,5 min — patrz
+   sekcja o marginesie podłogi niżej).
 2. **Znacznik `last_activity`** aktualizowany przy każdym odczycie >0 bajtów z
    któregokolwiek kanału — świadomie NIE `last_heartbeat`, który przesuwa się
    tylko wtedy, gdy heartbeat faktycznie poszedł do logu (dławienie co 10
@@ -44,8 +45,7 @@ Sygnałem jest **brak jakiegokolwiek wyjścia**, nie całkowity czas.
 3. **Karencja 15 min do pierwszego wyjścia** (`_STALL_GRACE_SECONDS`): pierwsze
    uruchomienie Core ML na maszynie kompiluje enkoder w ciszy, whisper sam
    ostrzega „first run on a device may take a while". Po pierwszym segmencie
-   albo pierwszej linii postępu obowiązuje już okno 3 min
-   (`_STALL_SILENCE_SECONDS`).
+   albo pierwszej linii postępu obowiązuje już okno `_STALL_SILENCE_SECONDS`.
 4. **`select()` nigdy nie śpi dłużej niż do progu zastoju** — inaczej to
    interwał odpytywania, a nie próg, decydowałby o czasie reakcji. Wyszło przy
    mutacji: test karencji był zielony na zepsutym kodzie, bo detektor był
@@ -76,7 +76,7 @@ zastąpiona regułą statyczną z dwóch liczb znanych przed startem whispera:
   moduł `wave`; błąd odczytu → 0 → podłoga),
 - budżet czasu: `TRANSCRIPTION_TIMEOUT`.
 
-Okno = `max(180 s, TIMEOUT / liczba_okien_30s)`. Najwolniejsza maszyna warta
+Okno = `min(max(podłoga, TIMEOUT / liczba_okien_30s), karencja)`. Najwolniejsza maszyna warta
 czekania to ta, która zużywa cały budżet; jej czas na jedno okno dekodowania
 to najdłuższa legalna cisza. Cichszy bieg jest zawieszony — albo za wolny, by
 zmieścić się w budżecie, co kończy się tak samo. Fałszywy alarm na zdrowym
@@ -91,11 +91,19 @@ biegu jest niereprezentowalny, a nie „załatany".
 Sufit = karencja startowa (15 min): bez niego 30-sekundowy klip dostawał cały
 budżet godziny, czyli dokładnie „stracisz godzinę", które ta funkcja usuwa —
 a tolerowanie dłuższej ciszy w trakcie dekodowania niż na starcie byłoby
-odwrotnością sensu. Podłoga 270 s = półtora kroku postępu (5% z 3600 s = 180 s). Margines jest
+odwrotnością sensu. Podłoga 270 s = półtora kroku postępu (5% z 3600 s =
+180 s). Margines jest
 konieczny, bo bieg mieszczący się w budżecie *dokładnie* produkuje ciszę równą
 jednemu krokowi, a porównanie jest `>=` — podłoga równa krokowi zabijałaby go na
 styku. Związek z budżetem pilnuje osobny test, żeby podniesienie
 `TRANSCRIPTION_TIMEOUT` nie wywróciło niezmiennika po cichu.
+
+**Sprzątanie po zastoju:** urwany TXT jest kasowany w `finally`, nie w gałęzi,
+która zauważyła zastój — wyjścia przez diagnozę Core ML i timeout omijały tamtą
+gałąź i zostawiały fragment, który ścieżka odzyskiwania adoptowała jako gotową
+notę. Timeout następujący po zastoju zachowuje diagnozę zastoju i jego regułę
+„jeszcze jeden cykl" (deadline jest per próba, więc fallback dostaje pełną
+świeżą godzinę i potrafi ją przekroczyć na CPU).
 
 **Zapis transkryptu:** istnienie pliku nie dowodzi, że tekst jest na dysku —
 whisper tworzy i obcina TXT *przed* komunikatem o zapisie, więc zawis w trakcie
@@ -122,9 +130,10 @@ git log gałęzi `feat/gpu-stall-detection`, commity bb1ea15..db933fb.
 | pierwszy segment na stdout | 6,9 s (+5,1 s) |
 | drugi segment | 7,7 s (+0,7 s) |
 
-Najgorsza legalna cisza = czas przeżucia jednego okna 30 s audio. Okno 3 min
-toleruje maszynę ~6× wolniejszą niż realtime — taka i tak nie zmieściłaby się
-w `TRANSCRIPTION_TIMEOUT`.
+Najgorsza legalna cisza = czas przeżucia jednego okna 30 s audio, a przy
+gwarantowanym pulsie (postęp co 5% pozycji) — jeden krok postępu, czyli 180 s
+przy limicie 3600 s. Podłoga 270 s trzyma nad tym półtorakrotny margines; bieg,
+który milczy dłużej, nie zmieściłby się w `TRANSCRIPTION_TIMEOUT`.
 
 ## Powiązane
 

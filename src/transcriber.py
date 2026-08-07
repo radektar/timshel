@@ -1203,6 +1203,19 @@ class Transcriber:
                     coreml_compiling=coreml_compiling,
                     audio_duration=audio_duration,
                 ):
+                    # Last look before killing it: bytes written between the
+                    # empty select() and this check are still in the pipes, and
+                    # if they carry the "transcript written" marker the run
+                    # actually finished — discarding them would cost a whole
+                    # re-transcription and delete a complete TXT.
+                    while True:
+                        text = read_chunk()
+                        if not text:
+                            break
+                        stderr_chunks.append(text)
+                        pending += text
+                    while drain_stdout():
+                        pass
                     stalled = True
                     stalled_after = silent_for
                     # Whisper may have written a marker without a trailing
@@ -1848,6 +1861,28 @@ class Transcriber:
             logger.debug("Could not fingerprint %s for stall key: %s", audio_file, exc)
             return str(audio_file.resolve())
 
+    def _record_stall_strike(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> None:
+        """Give a stalled recording one more cycle — but only one.
+
+        The same reasoning that keeps the GPU verdict unwritten applies to the
+        recording: if a backup or a sleeping disk wedged this run, the note is
+        fine and deserves the next cycle. The second stall on the same recording
+        makes it permanent, so a truly wedged machine does not retry forever.
+
+        Keyed by content, not by name (see :meth:`_stall_key`).
+        """
+        stall_key = self._stall_key(audio_file, fingerprint)
+        if stall_key in self._stalled_once:
+            logger.warning(
+                "  Stalled twice — %s will not be retried this session",
+                audio_file.name,
+            )
+            return
+        self._stalled_once.add(stall_key)
+        self._last_run_was_transient_failure = True
+
     def _retire_stall(
         self, audio_file: Path, fingerprint: Optional[str] = None
     ) -> None:
@@ -1910,6 +1945,14 @@ class Transcriber:
         self._update_state(AppStatus.TRANSCRIBING, audio_file.name)
 
         wav_for_whisper: Optional[Path] = None
+        # A stalled run can leave a truncated TXT behind (whisper creates the
+        # file before writing it). Tracked across the whole call, not at the
+        # exit that noticed the stall: the Core ML diagnosis and the timeout
+        # both return earlier, and a fragment left on disk is adopted by the
+        # crash-recovery path on the next cycle and filed as the finished note,
+        # with whisper never re-running. Bound before the try so `finally` can
+        # read it however we leave.
+        stalled_unconfirmed = False
         try:
             # Ensure output directory exists
             self.config.TRANSCRIBE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1931,6 +1974,16 @@ class Transcriber:
             # actually attempted: passing a hardcoded True to the retry check
             # made a GPU-less run look like a failed GPU run, so every single
             # transcription ran twice, start to finish.
+            def note_run(res: subprocess.CompletedProcess) -> None:
+                nonlocal stalled_unconfirmed
+                wrote = self._TRANSCRIPT_WRITTEN_MARKER in (res.stderr or "")
+                if getattr(res, "stalled", False) and not wrote:
+                    stalled_unconfirmed = True
+                elif wrote or res.returncode == 0:
+                    # A later complete run overwrites whatever the stalled one
+                    # left: the file on disk is a transcript again.
+                    stalled_unconfirmed = False
+
             gpu_attempted = not self._gpu_disabled_in_session
             if gpu_attempted:
                 logger.info("🔄 Attempting transcription with GPU acceleration")
@@ -1939,6 +1992,7 @@ class Transcriber:
             result = self._run_whisper_transcription(
                 audio_file, use_gpu=gpu_attempted, source_audio=wav_for_whisper
             )
+            note_run(result)
 
             logger.debug(
                 f"Transcription attempt completed - "
@@ -1959,10 +2013,11 @@ class Transcriber:
                 """
                 if not getattr(result, "stalled", False):
                     return False
-                return (
-                    self._TRANSCRIPT_WRITTEN_MARKER in (result.stderr or "")
-                    and output_file.exists()
-                )
+                # Deliberately not "and output_file.exists()": whisper sometimes
+                # writes under a different basename, which the verification
+                # below already recovers. The marker says the stream was
+                # flushed and closed; finding the file is that block's job.
+                return self._TRANSCRIPT_WRITTEN_MARKER in (result.stderr or "")
 
             # If Metal failed, retry with the GPU off. Checked *before* the
             # stall branch: a GPU that reports an error and then wedges is a
@@ -1997,6 +2052,7 @@ class Transcriber:
                 result = self._run_whisper_transcription(
                     audio_file, use_gpu=False, source_audio=wav_for_whisper
                 )
+                note_run(result)
                 logger.debug(f"CPU retry completed - returncode: {result.returncode}")
 
             # A run we killed for going silent gets exactly one retry with the
@@ -2018,6 +2074,7 @@ class Transcriber:
                 result = self._run_whisper_transcription(
                     audio_file, use_gpu=False, source_audio=wav_for_whisper
                 )
+                note_run(result)
                 logger.debug(f"Stall fallback completed - rc: {result.returncode}")
 
             elif gpu_attempted and result.returncode == 0:
@@ -2061,36 +2118,7 @@ class Transcriber:
                     audio_file.name,
                     "was already off" if not gpu_attempted else "off on the retry too",
                 )
-                # The same reasoning that keeps the GPU verdict unwritten applies
-                # to the recording: if a backup or a sleeping disk wedged this
-                # run, the note is fine and deserves the next cycle. Only the
-                # second stall on the same recording makes it permanent, so a
-                # truly wedged machine does not retry forever.
-                # Keyed by content, not by name: recorders reuse filenames
-                # aggressively (DS300001.WAV on every card), so a stem would let
-                # one recording's stall spend the second chance that belongs to
-                # an unrelated one from another card.
-                stall_key = self._stall_key(audio_file, fingerprint)
-                # A stalled run may have created the TXT and died mid-write.
-                # Left there, the crash-recovery path adopts it on the next
-                # cycle and a fragment becomes the note, with whisper never
-                # re-running. The write was not confirmed, so the file is not a
-                # transcript.
-                if output_file.exists():
-                    logger.warning(
-                        "  Removing unconfirmed transcript left by the stalled "
-                        "run: %s",
-                        output_file.name,
-                    )
-                    output_file.unlink(missing_ok=True)
-                if stall_key in self._stalled_once:
-                    logger.warning(
-                        "  Stalled twice — %s will not be retried this session",
-                        audio_file.name,
-                    )
-                else:
-                    self._stalled_once.add(stall_key)
-                    self._last_run_was_transient_failure = True
+                self._record_stall_strike(audio_file, fingerprint)
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 
@@ -2184,11 +2212,28 @@ class Transcriber:
                 return None
 
         except subprocess.TimeoutExpired:
-            error_msg = f"Timeout ({self.config.TRANSCRIPTION_TIMEOUT}s)"
-            logger.error(
-                f"✗ Transcription timeout ({self.config.TRANSCRIPTION_TIMEOUT}s): "
-                f"{audio_file.name}"
-            )
+            # A timeout on the attempt that *followed* a stall is still the
+            # stall's story: the deadline is per attempt, so a wedge late in a
+            # long recording hands the `-ng` re-run a full fresh hour it can
+            # plausibly exceed on CPU. Reporting a bare timeout here would drop
+            # both the diagnosis and the second chance the stall rule promises.
+            if stalled_unconfirmed:
+                error_msg = (
+                    "Transkrypcja utknęła, a ponowna próba nie zdążyła "
+                    f"w limicie ({self.config.TRANSCRIPTION_TIMEOUT}s)"
+                )
+                logger.error(
+                    "✗ Stalled, then the retry hit the timeout (%ss): %s",
+                    self.config.TRANSCRIPTION_TIMEOUT,
+                    audio_file.name,
+                )
+                self._record_stall_strike(audio_file, fingerprint)
+            else:
+                error_msg = f"Timeout ({self.config.TRANSCRIPTION_TIMEOUT}s)"
+                logger.error(
+                    f"✗ Transcription timeout ({self.config.TRANSCRIPTION_TIMEOUT}s): "
+                    f"{audio_file.name}"
+                )
             self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
             return None
 
@@ -2199,6 +2244,14 @@ class Transcriber:
             return None
 
         finally:
+            # Whatever exit we took, never leave a half-written transcript on
+            # disk: the adoption path would treat it as the finished note.
+            if stalled_unconfirmed and output_file.exists():
+                logger.warning(
+                    "  Removing unconfirmed transcript left by a stalled run: %s",
+                    output_file.name,
+                )
+                output_file.unlink(missing_ok=True)
             # Drop the temporary converted WAV (best-effort).
             if wav_for_whisper is not None:
                 wav_for_whisper.unlink(missing_ok=True)
