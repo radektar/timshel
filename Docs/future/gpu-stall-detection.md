@@ -86,7 +86,14 @@ biegu jest niereprezentowalny, a nie „załatany".
 |---|---|
 | 3 h | 180 s (podłoga) |
 | 4 min | 450 s |
-| 60 s | 1800 s |
+| 60 s | 900 s (sufit) |
+
+Sufit = karencja startowa (15 min): bez niego 30-sekundowy klip dostawał cały
+budżet godziny, czyli dokładnie „stracisz godzinę", które ta funkcja usuwa —
+a tolerowanie dłuższej ciszy w trakcie dekodowania niż na starcie byłoby
+odwrotnością sensu. Podłoga 180 s jest związana z budżetem (5% z 3600 s = jeden
+krok postępu) i pilnuje tego osobny test, żeby podniesienie
+`TRANSCRIPTION_TIMEOUT` nie wywróciło niezmiennika po cichu.
 
 Koszt: zawis przy krótkiej notce wykrywany w minuty, nie sekundy — świadomie
 zaakceptowany (krótki plik = mały absolutny koszt czekania; po drugiej stronie

@@ -755,7 +755,7 @@ class Transcriber:
         audio_file: Path,
         use_gpu: bool = True,
         source_audio: Optional[Path] = None,
-    ) -> subprocess.CompletedProcess:
+    ) -> WhisperRun:
         """Run whisper.cpp transcription.
 
         Args:
@@ -923,8 +923,15 @@ class Transcriber:
             limit = float(self._STALL_SILENCE_SECONDS)
             if audio_duration > 0:
                 budget = max(self.config.TRANSCRIPTION_TIMEOUT, 0)
-                windows = max(audio_duration / self._WHISPER_DECODE_WINDOW_SECONDS, 1.0)
-                limit = max(limit, budget / windows)
+                windows = audio_duration / self._WHISPER_DECODE_WINDOW_SECONDS
+                # Capped at the startup grace: a clip of a few windows would
+                # otherwise be handed most of the hour budget — for a 30 s memo
+                # the whole of it — which is the "you lose an hour" this feature
+                # removes. Tolerating more silence while decoding than while
+                # starting up would be backwards in any case.
+                limit = min(
+                    max(limit, budget / windows), float(self._STALL_GRACE_SECONDS)
+                )
             return limit
         if coreml_compiling:
             return self._STALL_COMPILE_SECONDS
@@ -981,7 +988,7 @@ class Transcriber:
         use_gpu: bool,
         audio_file: Path,
         audio_duration: float = 0.0,
-    ) -> subprocess.CompletedProcess:
+    ) -> WhisperRun:
         """Run whisper-cli with live stderr streaming.
 
         Replaces a blocking ``subprocess.run(capture_output=True)`` to fix three
@@ -1926,6 +1933,17 @@ class Transcriber:
                 f"stderr length: {len(result.stderr) if result.stderr else 0}"
             )
 
+            def stalled_after_finishing() -> bool:
+                """A stall with the transcript already on disk.
+
+                whisper writes the TXT via ``-otxt`` only once decoding is done,
+                so the file being there means the work is complete and the wedge
+                came afterwards (a Metal teardown that never returns). Running
+                the fallback then would redo a whole transcription — and lose
+                the finished one if the retry stalled too.
+                """
+                return getattr(result, "stalled", False) and output_file.exists()
+
             # If Metal failed, retry with the GPU off. Checked *before* the
             # stall branch: a GPU that reports an error and then wedges is a
             # reported failure first — reading it as a plain stall would skip
@@ -1961,7 +1979,11 @@ class Transcriber:
             # going to sleep, iCloud), so condemning the GPU on this evidence
             # would be a guess; the `-ng` run is the experiment that tells us,
             # and it costs one recording, not every future one.
-            elif getattr(result, "stalled", False) and gpu_attempted:
+            elif (
+                getattr(result, "stalled", False)
+                and gpu_attempted
+                and not stalled_after_finishing()
+            ):
                 logger.warning(
                     "⚠️  GPU attempt stalled for %s — retrying once with GPU off "
                     "(no permanent verdict recorded)",
@@ -1996,7 +2018,7 @@ class Transcriber:
             # Still silent after the fallback (or with the GPU already off):
             # nothing left to try, and a generic "kod: -9" would send the user
             # looking for a broken file instead of a wedged machine.
-            if getattr(result, "stalled", False):
+            if getattr(result, "stalled", False) and not stalled_after_finishing():
                 # The measured silence, not a quoted threshold: a run killed
                 # during startup was quiet for far longer than the decode
                 # window, and saying "3 min" there is simply untrue.
@@ -2034,8 +2056,15 @@ class Transcriber:
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
 
+            if stalled_after_finishing():
+                logger.warning(
+                    "⚠️  whisper wedged after writing the transcript for %s — "
+                    "keeping the finished TXT instead of transcribing again",
+                    audio_file.name,
+                )
+
             # Check for errors
-            if result.returncode != 0:
+            elif result.returncode != 0:
                 error_msg = f"Transkrypcja nieudana (kod: {result.returncode})"
                 if result.stderr:
                     error_msg = result.stderr[:200]
@@ -2713,7 +2742,9 @@ Brak podsumowania AI. Możliwe przyczyny:
                 # wznowionej transkrypcji liczy się jako drugi i nagranie
                 # od razu wraca na blacklistę, choć user właśnie poprosił
                 # o kolejną szansę.
-                self._stalled_once.discard(self._stall_key(audio_file))
+                # Ten sam fingerprint co dwie linijki wyżej — liczenie
+                # własnego dawałoby inny klucz (i drugi odczyt 1 MB).
+                self._stalled_once.discard(self._stall_key(audio_file, fingerprint))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not clean vault_index entry before retranscribe: %s",

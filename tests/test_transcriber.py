@@ -2047,8 +2047,15 @@ def test_stall_window_widens_for_short_recordings(transcriber, monkeypatch):
     assert transcriber._stall_limit(True, audio_duration=3 * 3600.0) == 180.0
     # Unknown duration keeps the floor rather than guessing.
     assert transcriber._stall_limit(True, audio_duration=0.0) == 180.0
-    # Shorter than one window never divides by less than one window.
-    assert transcriber._stall_limit(True, audio_duration=10.0) == 3600.0
+    # A clip of a few windows is capped at the startup grace rather than
+    # being handed most of the hour — tolerating more silence while decoding
+    # than while starting up would be backwards.
+    assert transcriber._stall_limit(True, audio_duration=10.0) == float(
+        transcriber._STALL_GRACE_SECONDS
+    )
+    assert transcriber._stall_limit(True, audio_duration=60.0) == float(
+        transcriber._STALL_GRACE_SECONDS
+    )
 
 
 def test_a_slow_machine_on_a_short_memo_is_not_killed(
@@ -2080,6 +2087,53 @@ def test_a_slow_machine_on_a_short_memo_is_not_killed(
             # 4 windows → tolerated silence = 2.0 / 4 = 0.5 s > 0.3 s drip.
             audio_duration=4 * 30.0,
         )
+
+
+def test_the_silence_floor_still_covers_a_progress_step(transcriber):
+    """The floor is only defensible while it exceeds one progress step.
+
+    whisper prints `progress = NN%` every 5% of file position, so on a run that
+    fills the whole budget the guaranteed heartbeat arrives every 5% of
+    TRANSCRIPTION_TIMEOUT. Raising the budget without revisiting the floor would
+    let a healthy long run go quieter than the floor allows and be killed as
+    wedged — this pins the two together.
+    """
+    progress_step_seconds = transcriber.config.TRANSCRIPTION_TIMEOUT * 0.05
+
+    assert transcriber._STALL_SILENCE_SECONDS >= progress_step_seconds
+
+
+def test_a_finished_transcript_is_not_thrown_away_by_the_stall_fallback(
+    transcriber, tmp_path, monkeypatch
+):
+    """A wedge *after* the transcript is written must not cost a second run.
+
+    whisper saves the TXT via -otxt only once decoding is done, so a stall with
+    the file already on disk means the work is complete and the driver hung on
+    teardown. Re-running would redo the whole transcription — and lose the
+    finished one if the retry stalled too.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        # Decoding finished and the TXT landed; the wedge came afterwards.
+        (transcript_dir / "sample.txt").write_text("ok")
+        return _stalled_run()
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 1  # no pointless second transcription
 
 
 def test_audio_duration_is_read_from_the_converted_wav(transcriber, tmp_path):
