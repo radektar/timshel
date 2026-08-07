@@ -41,9 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous fix covers GPU failures that announce themselves; a GPU that simply
   wedges says nothing, so the recording sat there until the 60-minute timeout
   and then failed outright — no fallback, no diagnosis. whisper's output is now
-  watched as a sign of life (each decoded segment on stdout, roughly one per
-  30 s of audio, plus the progress line every 5%): 3 minutes of complete silence
-  ends the run and retries the recording once with the GPU off. That window
+  watched as a sign of life: each decoded segment on stdout (roughly one per
+  30 s of audio, though a quiet stretch of the recording produces none) and the
+  progress line every 5% of file position, which arrives whatever the audio
+  contains. Three minutes of
+  complete silence ends the run and retries the recording once with the GPU
+  off. That window
   adapts to the machine — a box that has been taking two minutes per window is
   measured against its own recent pace (counted in decoded windows, not in
   reads — whisper flushes each segment separately) — and the phases that are

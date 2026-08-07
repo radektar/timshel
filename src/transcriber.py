@@ -862,11 +862,16 @@ class Transcriber:
     #
     # A GPU that fails loudly is handled by _METAL_FAIL_MARKERS; this covers the
     # one that just stops. Silence is a weaker signal than an error message, so
-    # the threshold sits far above any legitimate quiet period. Measured on an
-    # M2 Pro (medium + Core ML): whisper emits a decoded segment on stdout after
-    # every ~30 s window of audio — 0.7–5 s apart — and a `progress = NN%` line
-    # on stderr every 5% of the run. Both count as a sign of life, so the worst
-    # legitimate gap is the time to chew one 30 s window.
+    # the threshold sits far above any legitimate quiet period.
+    #
+    # Segments are the *fast* heartbeat (one per ~30 s window of audio, 0.7–5 s
+    # apart on an M2 Pro with medium + Core ML) but not a guaranteed one:
+    # whisper emits none for a window it classifies as no-speech, so a quiet
+    # stretch of the recording is silent on stdout. The guaranteed heartbeat is
+    # `progress = NN%`, printed every 5% of the *file position* whatever the
+    # audio contains — which fixes the floor: one step is at most 5% of the
+    # run's compute, so a run that would legitimately finish inside
+    # TRANSCRIPTION_TIMEOUT (3600 s) cannot be silent for longer than this.
     _STALL_SILENCE_SECONDS = 180
 
     # …but this floor is measured on fast hardware, and "one 30 s window" is
@@ -923,11 +928,14 @@ class Transcriber:
             recent_gap: Longest silence among the last few decoded windows, used
                 to calibrate the window to the machine rather than to an M2.
         """
+        if decoding_started:
+            # Whatever the flags say, output means the compile is behind us.
+            return max(
+                self._STALL_SILENCE_SECONDS, recent_gap * self._STALL_GAP_MULTIPLIER
+            )
         if coreml_compiling:
             return self._STALL_COMPILE_SECONDS
-        if not decoding_started:
-            return self._STALL_GRACE_SECONDS
-        return max(self._STALL_SILENCE_SECONDS, recent_gap * self._STALL_GAP_MULTIPLIER)
+        return self._STALL_GRACE_SECONDS
 
     def _is_stalled(
         self,
@@ -1030,6 +1038,11 @@ class Transcriber:
         # becomes a pace measurement once we know decoding had begun — which
         # can be decided by a line read *after* it.
         pending_gap = 0.0
+        # Progress lines are the only heartbeat whisper guarantees (segments
+        # stop during a no-speech stretch), so the interval between them is the
+        # true upper bound on legitimate silence. Tracked separately: during
+        # speech the segments in between hide it from the gap measurements.
+        last_progress_at = 0.0
         metal_failed = False
         stalled = False
         stalled_after = 0.0
@@ -1047,11 +1060,17 @@ class Transcriber:
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
             nonlocal metal_failed, last_logged_pct, last_heartbeat
-            nonlocal coreml_compiling
+            nonlocal coreml_compiling, last_progress_at
             # The Core ML encoder compile is the one silence that can outlast
             # the grace window (first run of a model on a device). whisper
             # brackets it, so the phase is known instead of guessed.
-            if self._COREML_COMPILE_END in line:
+            if self._COREML_COMPILE_END in line or self._coreml_load_failed(line):
+                # The failure line ("failed to load Core ML model") also ends
+                # the phase: it neither matches the success marker nor repeats
+                # the start one, so without this the flag latches and the whole
+                # run gets the 30-minute compile window — on a build that
+                # continues past the failure, the wedged machine this feature
+                # exists for would take 30 minutes to detect instead of 3.
                 coreml_compiling = False
             elif self._COREML_COMPILE_START in line:
                 coreml_compiling = True
@@ -1069,6 +1088,14 @@ class Transcriber:
                 pct = int(match.group(1))
                 now = time.time()
                 start_decoding()
+                # One progress step is the longest this run can legitimately go
+                # without saying anything, so it calibrates the window directly
+                # — and does so *before* a quiet stretch arrives, which is the
+                # only warning a machine slower than the floor assumes ever
+                # gets. Measured from the start for the first line: that
+                # interval includes the model load, which only widens it.
+                record_gap(now - (last_progress_at or started))
+                last_progress_at = now
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
                         "⏳ Transkrypcja %d%% — %s",
@@ -1106,8 +1133,11 @@ class Transcriber:
                 # is decided by the line this read contained, which is parsed
                 # after the fact. Held here rather than dropped — that dropped
                 # gap was the whole calibration on a slow machine, and which
-                # pipe delivered it first is decided by fd numbering.
-                pending_gap = gap
+                # pipe delivered it first is decided by fd numbering. Kept as a
+                # maximum because one select batch can deliver both pipes: the
+                # second read would otherwise overwrite the real measurement
+                # with the ~0 gap between two reads of the same instant.
+                pending_gap = max(pending_gap, gap)
             last_activity = now
 
         def start_decoding() -> None:
@@ -1117,10 +1147,11 @@ class Transcriber:
             first 30 s window — the only pace measurement available before the
             floor would kill a slow run, so it is banked here.
             """
-            nonlocal decoding_started
+            nonlocal decoding_started, pending_gap
             if not decoding_started:
                 decoding_started = True
                 record_gap(pending_gap)
+                pending_gap = 0.0
 
         def read_chunk() -> Optional[str]:
             """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
@@ -1811,6 +1842,20 @@ class Transcriber:
         except OSError:
             return False
 
+    def _stall_key(self, audio_file: Path) -> str:
+        """Identity of a recording for the one-retry-after-a-stall rule.
+
+        The fingerprint, so two cards holding a `DS300001.WAV` each are two
+        recordings; it is only computed on the rare stall path, never in the
+        normal flow. Falls back to the path when the file cannot be read — a
+        wrong key must never be worse than raising here.
+        """
+        try:
+            return compute_fingerprint(audio_file)
+        except Exception as exc:  # noqa: BLE001 - identity is best-effort
+            logger.debug("Could not fingerprint %s for stall key: %s", audio_file, exc)
+            return str(audio_file.resolve())
+
     def _run_macwhisper(self, audio_file: Path) -> Optional[Path]:
         """Run whisper.cpp transcription and return path to TXT file.
 
@@ -1984,13 +2029,18 @@ class Transcriber:
                 # run, the note is fine and deserves the next cycle. Only the
                 # second stall on the same recording makes it permanent, so a
                 # truly wedged machine does not retry forever.
-                if file_id in self._stalled_once:
+                # Keyed by content, not by name: recorders reuse filenames
+                # aggressively (DS300001.WAV on every card), so a stem would let
+                # one recording's stall spend the second chance that belongs to
+                # an unrelated one from another card.
+                stall_key = self._stall_key(audio_file)
+                if stall_key in self._stalled_once:
                     logger.warning(
                         "  Stalled twice — %s will not be retried this session",
                         audio_file.name,
                     )
                 else:
-                    self._stalled_once.add(file_id)
+                    self._stalled_once.add(stall_key)
                     self._last_run_was_transient_failure = True
                 self._update_state(AppStatus.ERROR, audio_file.name, error_msg)
                 return None
@@ -2021,7 +2071,7 @@ class Transcriber:
                 # A run that finished retires the earlier stall: the next one is
                 # a first stall again, not a second one inherited from a problem
                 # the machine has evidently recovered from.
-                self._stalled_once.discard(file_id)
+                self._stalled_once.discard(self._stall_key(audio_file))
                 return output_file
             else:
                 logger.warning(
@@ -2676,7 +2726,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                 # wznowionej transkrypcji liczy się jako drugi i nagranie
                 # od razu wraca na blacklistę, choć user właśnie poprosił
                 # o kolejną szansę.
-                self._stalled_once.discard(audio_file.stem)
+                self._stalled_once.discard(self._stall_key(audio_file))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not clean vault_index entry before retranscribe: %s",

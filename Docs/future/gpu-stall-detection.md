@@ -121,6 +121,27 @@ istnieją. Stąd:
   drugi i nota od razu wracała na sesyjną blacklistę — odwrotność reguły
   „jeden zastój = jeszcze jeden cykl".
 
+## Poprawki po review (runda 4)
+
+- **Segmenty NIE są gwarantowanym pulsem.** whisper nie emituje ich dla okna
+  uznanego za ciszę (`is_no_speech`), więc cichy fragment nagrania milczy na
+  stdout. Gwarantowany jest tylko `progress = NN%` — drukowany co 5% pozycji w
+  pliku niezależnie od treści. To ustala podłogę: jeden krok to najwyżej 5%
+  czasu biegu, więc bieg mieszczący się w `TRANSCRIPTION_TIMEOUT` (3600 s) nie
+  może milczeć dłużej niż 180 s. Dodatkowo **odstęp między liniami postępu
+  kalibruje okno** — mierzony w trakcie mowy, czyli zanim cichy fragment
+  nadejdzie; wcześniej tempo liczyło się tylko z segmentów, które w ciszy nie
+  przychodzą.
+- **Nieudane ładowanie Core ML zatrzaskiwało okno kompilacji.** Linia
+  `failed to load Core ML model` nie pasuje ani do markera końca, ani startu, a
+  bieg dostawał 30 min zamiast 3. Teraz kończy fazę, a fakt, że dekodowanie
+  ruszyło, ma pierwszeństwo nad flagą kompilacji.
+- **Pomiar pierwszego okna nie ginie** pod odczytem z tej samej chwili
+  (`pending_gap` trzymany jako maksimum).
+- **Licznik zastojów kluczowany odciskiem pliku**, nie nazwą: dyktafony
+  recyklują nazwy (`DS300001.WAV` na każdej karcie), więc nagranie z jednej
+  karty wydawało drugą szansę należącą do innego.
+
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 
 | zdarzenie | czas od startu |
