@@ -1777,7 +1777,7 @@ def test_run_whisper_transcription_disables_gpu_with_ng_flag(
 
     captured = {}
 
-    def fake_stream(cmd, *, env, use_gpu, audio_file):
+    def fake_stream(cmd, *, env, use_gpu, audio_file, audio_duration=0.0):
         captured["cmd"] = cmd
         captured["env"] = env
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1810,7 +1810,7 @@ def test_run_whisper_transcription_injects_glossary_prompt(
 
     captured = {}
 
-    def fake_stream(cmd, *, env, use_gpu, audio_file):
+    def fake_stream(cmd, *, env, use_gpu, audio_file, audio_duration=0.0):
         captured["cmd"] = cmd
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
@@ -2026,6 +2026,121 @@ class _DripPipeProc(_FakePipeProc):
         self._thread.start()
 
 
+def test_stall_window_widens_for_short_recordings(transcriber, monkeypatch):
+    """The window is derived from two known numbers, not learned at runtime.
+
+    On a short recording one ~30 s decode window is a big share of a legitimate
+    run: an old dual-core on `medium` with the GPU off can need minutes per
+    window of a 4-minute memo and still finish far inside the hour. The slowest
+    machine still worth waiting for spends the whole TRANSCRIPTION_TIMEOUT on
+    the file, so its per-window time — budget / number of windows — is the
+    longest legitimate silence. Anything quieter is wedged, or too slow to
+    finish inside the budget, which ends the same way.
+    """
+    monkeypatch.setattr(
+        transcriber.config, "TRANSCRIPTION_TIMEOUT", 3600, raising=False
+    )
+
+    # 4-minute memo: 8 windows → 3600 / 8 = 450 s of tolerated silence.
+    assert transcriber._stall_limit(True, audio_duration=240.0) == 450.0
+    # 3-hour meeting: hundreds of windows → the 180 s floor applies.
+    assert transcriber._stall_limit(True, audio_duration=3 * 3600.0) == 180.0
+    # Unknown duration keeps the floor rather than guessing.
+    assert transcriber._stall_limit(True, audio_duration=0.0) == 180.0
+    # Shorter than one window never divides by less than one window.
+    assert transcriber._stall_limit(True, audio_duration=10.0) == 3600.0
+
+
+def test_a_slow_machine_on_a_short_memo_is_not_killed(
+    transcriber, tmp_path, monkeypatch
+):
+    """The scenario the static window exists for, end to end.
+
+    A machine pacing slower than the floor, on a recording short enough that
+    the duration-derived window covers it, must run to the timeout — never be
+    declared stalled.
+    """
+    proc = _DripPipeProc(
+        "[00:00:30.000 --> 00:00:32.000]   text\n",
+        count=6,
+        interval=0.3,  # slower than the floor below
+        stream="stdout",
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.5)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 2.0, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        transcriber._run_whisper_streaming(
+            ["whisper"],
+            env=None,
+            use_gpu=True,
+            audio_file=tmp_path / "rec.wav",
+            # 4 windows → tolerated silence = 2.0 / 4 = 0.5 s > 0.3 s drip.
+            audio_duration=4 * 30.0,
+        )
+
+
+def test_audio_duration_is_read_from_the_converted_wav(transcriber, tmp_path):
+    """The duration comes from the WAV whisper actually receives; anything
+    unreadable degrades to 0 (= keep the floor), never to an exception."""
+    import wave
+
+    wav_path = tmp_path / "sample.whisper16k.wav"
+    with wave.open(str(wav_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000 * 3)  # 3 s of silence
+
+    assert transcriber._audio_duration_seconds(wav_path) == pytest.approx(3.0)
+
+    garbage = tmp_path / "garbage.wav"
+    garbage.write_bytes(b"not a wav at all")
+    assert transcriber._audio_duration_seconds(garbage) == 0.0
+    assert transcriber._audio_duration_seconds(tmp_path / "missing.wav") == 0.0
+    assert transcriber._audio_duration_seconds(None) == 0.0
+
+
+def test_run_whisper_transcription_passes_the_duration_to_the_stall_watchdog(
+    transcriber, tmp_path, monkeypatch
+):
+    """The wiring: the converted WAV's duration must reach the streaming loop,
+    or the widened window silently never applies and short recordings on slow
+    machines are back to being judged by the floor."""
+    import wave
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    wav = tmp_path / "sample.whisper16k.wav"
+    with wave.open(str(wav), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 16000 * 2)  # 2 s
+
+    update_transcriber_config(
+        transcriber,
+        monkeypatch,
+        WHISPER_CPP_MODELS_DIR=tmp_path,
+        WHISPER_MODEL="small",
+        WHISPER_CPP_PATH=tmp_path / "whisper-cli",
+        TRANSCRIBE_DIR=tmp_path,
+    )
+    captured = {}
+
+    def fake_stream(cmd, *, env, use_gpu, audio_file, audio_duration=0.0):
+        captured["duration"] = audio_duration
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(transcriber, "_run_whisper_streaming", fake_stream)
+
+    transcriber._run_whisper_transcription(audio_file, use_gpu=True, source_audio=wav)
+
+    assert captured["duration"] == pytest.approx(2.0)
+
+
 def test_is_stalled_waits_out_a_slow_cold_start(transcriber):
     """Before the first output, silence is normal: the first Core ML run on a
     device compiles the encoder and whisper says nothing while it does.
@@ -2091,199 +2206,6 @@ def test_is_stalled_gives_the_coreml_compile_its_own_window(transcriber):
     )
 
 
-def test_is_stalled_scales_the_window_to_a_slow_machine(transcriber):
-    """The 3-minute floor is measured on an M2. An old box on `medium` with the
-    GPU off can legitimately need minutes per 30 s window, and a short memo
-    would be killed inside a run it was going to finish — so the window also
-    scales with the pace this run has actually shown."""
-    slow_gap = transcriber._STALL_SILENCE_SECONDS - 20  # under the floor, but slow
-
-    assert (
-        transcriber._is_stalled(
-            silent_for=transcriber._STALL_SILENCE_SECONDS + 60,
-            decoding_started=True,
-            recent_gap=slow_gap,
-        )
-        is False
-    )
-    # A machine that fast never buys extra room: the floor still applies.
-    assert (
-        transcriber._is_stalled(
-            silent_for=transcriber._STALL_SILENCE_SECONDS + 1,
-            decoding_started=True,
-            recent_gap=0.5,
-        )
-        is True
-    )
-
-
-def test_streaming_learns_the_pace_and_keeps_a_slow_run_alive(
-    transcriber, tmp_path, monkeypatch
-):
-    """The pace has to be measured from the run itself, not assumed.
-
-    A machine whose segments land just inside the window must widen it, or the
-    first slightly slower window kills the recording.
-    """
-    proc = _DripPipeProc(
-        "[00:00:30.000 --> 00:00:32.000]   text\n",
-        count=6,
-        interval=0.25,
-        stream="stdout",
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    # Floor below the drip interval: only the learned pace can save this run.
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-        )
-
-
-def test_pace_is_learned_whichever_pipe_reports_first(
-    transcriber, tmp_path, monkeypatch
-):
-    """Which pipe `select` hands back first must not decide whether the run's
-    pace is measured at all.
-
-    whisper prints a segment (stdout) and a progress line (stderr) at nearly the
-    same moment, and the ready list comes from a set of two ints — so the order
-    flips with the file descriptors the process happens to get. If the stderr
-    read consumed the gap without banking it, calibration silently never
-    happened and slow machines were back to being judged by the 3-minute floor.
-    """
-    import select as _select
-
-    real_select = _select.select
-
-    def stderr_first(rlist, wlist, xlist, timeout=None):
-        ready, w, x = real_select(rlist, wlist, xlist, timeout)
-        return sorted(ready, reverse=True), w, x  # stderr fd is the higher one
-
-    monkeypatch.setattr(_select, "select", stderr_first)
-
-    proc = _DripPipeProc(
-        "[00:00:30.000 --> 00:00:32.000]   text\n",
-        count=6,
-        interval=0.25,
-        stream="both",
-        stderr_chunk="whisper_print_progress_callback: progress =  20%\n",
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.4)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-        )
-
-
-def test_a_burst_of_segments_does_not_erase_the_learned_pace(
-    transcriber, tmp_path, monkeypatch
-):
-    """One decoded window can arrive as several writes, and those must not count
-    as windows of their own.
-
-    whisper flushes stdout per segment, so a 30 s window lands as a burst
-    milliseconds apart. Counting each as a gap fills the pace history with
-    zeros, evicts the real measurement and drops the window back to the floor —
-    the calibration undoing itself on exactly the slow machines it exists for.
-    """
-    proc = _DripPipeProc(
-        "[00:00:30.000 --> 00:00:32.000]   text\n",
-        count=10,
-        interval=0.4,  # the real per-window pace
-        segments=4,  # …delivered as four writes 0.02 s apart
-        stream="stdout",
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.15)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.0)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.2)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
-
-    # Healthy: only the timeout may end it, never the stall detector.
-    with pytest.raises(subprocess.TimeoutExpired):
-        transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-        )
-
-
-class _SpeechThenSilenceProc(_FakePipeProc):
-    """whisper transcribing speech, then reaching a quiet stretch of the audio.
-
-    While there is speech, segments pour onto stdout and the run looks lively.
-    In a no-speech stretch whisper emits **no segments at all** (`is_no_speech`
-    gates them), and the only thing still arriving is the progress line every
-    5% of file position — which is why the interval between *those* is the real
-    bound on legitimate silence.
-    """
-
-    def __init__(self, segment_gap: float, progress_gap: float, speech_for: float):
-        import threading
-
-        super().__init__("", hold_open=True)
-
-        def drip() -> None:
-            end = time.time() + speech_for
-            next_progress = time.time() + progress_gap
-            while time.time() < end:
-                if self.returncode is not None:
-                    return
-                try:
-                    self._out_wf.write("[00:00:30.000 --> 00:00:32.000]  t\n")
-                    self._out_wf.flush()
-                    if time.time() >= next_progress:
-                        self._wf.write(
-                            "whisper_print_progress_callback: progress =  25%\n"
-                        )
-                        self._wf.flush()
-                        next_progress = time.time() + progress_gap
-                except (ValueError, OSError):  # pragma: no cover - pipe closed
-                    return
-                time.sleep(segment_gap)
-            # …and now the quiet stretch: nothing at all until the next progress
-            # line would be due.
-
-        threading.Thread(target=drip, daemon=True).start()
-
-
-def test_a_quiet_stretch_of_the_recording_is_not_a_stall(
-    transcriber, tmp_path, monkeypatch
-):
-    """Segments are not a guaranteed heartbeat: whisper emits none for a window
-    it classifies as no-speech, so a quiet stretch of a recording goes silent on
-    stdout for as long as the quiet lasts.
-
-    The segment pace measured during speech is useless here — it is far shorter
-    than the silence that follows. Only the progress cadence bounds it, so that
-    is what has to calibrate the window, and it has to do so *before* the quiet
-    stretch arrives.
-    """
-    proc = _SpeechThenSilenceProc(
-        segment_gap=0.02,  # lively while there is speech…
-        progress_gap=0.4,  # …but progress only every 0.4 s
-        speech_for=1.0,
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.15)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.5)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 2.0, raising=False)
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-        )
-
-
 def test_a_failed_coreml_load_does_not_latch_the_compile_window(
     transcriber, tmp_path, monkeypatch
 ):
@@ -2312,131 +2234,6 @@ def test_a_failed_coreml_load_does_not_latch_the_compile_window(
 
     assert result.stalled is True
     assert time.time() - started < 2.0  # the grace window, not the compile one
-
-
-class _StartupThenSegmentProc(_FakePipeProc):
-    """A startup line on stderr immediately before the first decoded segment.
-
-    Both land in the reader within microseconds of each other, after the real
-    first-window silence — so the gap that measures this machine's pace is the
-    one ending at the *stderr* read, and the stdout read that follows sees ~0.
-    """
-
-    def __init__(self, first_window: float, then_every: float, count: int):
-        import threading
-
-        super().__init__("", hold_open=True)
-
-        def drip() -> None:
-            time.sleep(first_window)
-            try:
-                self._wf.write("whisper_init: preparing to decode\n")
-                self._wf.flush()
-                self._out_wf.write("[00:00:00.000 --> 00:00:02.000]  t\n")
-                self._out_wf.flush()
-            except (ValueError, OSError):  # pragma: no cover - pipe closed
-                return
-            for _ in range(count):
-                time.sleep(then_every)
-                if self.returncode is not None:
-                    return
-                try:
-                    self._out_wf.write("[00:00:30.000 --> 00:00:32.000]  t\n")
-                    self._out_wf.flush()
-                except (ValueError, OSError):  # pragma: no cover - pipe closed
-                    return
-
-        threading.Thread(target=drip, daemon=True).start()
-
-
-def test_the_first_window_measurement_survives_a_second_read_of_the_same_instant(
-    transcriber, tmp_path, monkeypatch
-):
-    """The first window's measurement must not be overwritten by a read that
-    happens microseconds later.
-
-    whisper prints a startup line and then the first segment back to back; the
-    second read sees a ~0 gap, and keeping only the latest value would replace
-    the machine's one pace measurement with zero — leaving it uncalibrated
-    exactly when the next window is about to exceed the floor.
-    """
-    proc = _StartupThenSegmentProc(first_window=0.3, then_every=0.3, count=8)
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.2)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 0.5)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.1)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 1.6, raising=False)
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        transcriber._run_whisper_streaming(
-            ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-        )
-
-
-class _ScriptedProc(_FakePipeProc):
-    """A fake whisper that emits a scripted timeline of output.
-
-    ``events`` are ``(delay_before, stream, text)``; the pipes stay open after
-    the script runs out, so what happens next is silence.
-    """
-
-    def __init__(self, events):
-        import threading
-
-        super().__init__("", hold_open=True)
-
-        def play() -> None:
-            for delay, stream, text in events:
-                time.sleep(delay)
-                if self.returncode is not None:
-                    return
-                target = self._out_wf if stream == "stdout" else self._wf
-                try:
-                    target.write(text)
-                    target.flush()
-                except (ValueError, OSError):  # pragma: no cover - pipe closed
-                    return
-
-        threading.Thread(target=play, daemon=True).start()
-
-
-def test_a_first_run_core_ml_compile_is_not_mistaken_for_the_pace(
-    transcriber, tmp_path, monkeypatch
-):
-    """The startup silence must not be banked as a decoding window twice.
-
-    A first-run Core ML compile is allowed to take up to _STALL_COMPILE_SECONDS.
-    Measuring the first progress line from process start would enter that whole
-    span as a "pace" sample — and four times a 30-minute pace puts the stall
-    window past TRANSCRIPTION_TIMEOUT, switching the detector off for the rest
-    of the run. The startup silence is already banked once, by start_decoding().
-    """
-    proc = _ScriptedProc(
-        [
-            # The compile: announced, then a long silence, then confirmed.
-            (0.0, "stderr", "whisper_init_state: loading Core ML model from 'x'\n"),
-            (0.6, "stderr", "whisper_init_state: Core ML model loaded\n"),
-            (0.05, "stderr", "system_info: n_threads = 6 | COREML = 1\n"),
-            (0.05, "stderr", "whisper_print_progress_callback: progress =   5%\n"),
-            # …and then nothing at all: a wedged GPU.
-        ]
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.3)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.5)
-    monkeypatch.setattr(type(transcriber), "_STALL_COMPILE_SECONDS", 5)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.04)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
-
-    started = time.time()
-    result = transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-    )
-
-    assert result.stalled is True
-    # The wedge must be caught on the floor. Banking the 0.7 s from process
-    # start as a "pace" would buy the run four times that instead.
-    assert time.time() - started < 1.7
 
 
 def test_stall_key_prefers_the_caller_s_fingerprint(transcriber, tmp_path):
@@ -2511,37 +2308,6 @@ def test_stall_key_separates_recordings_that_share_a_filename(transcriber, tmp_p
     assert transcriber._stall_key(card_a / "DS300001.WAV") != transcriber._stall_key(
         card_b / "DS300001.WAV"
     )
-
-
-def test_one_slow_window_does_not_blind_the_detector_for_the_rest_of_the_run(
-    transcriber, tmp_path, monkeypatch
-):
-    """The pace is the *recent* pace. A single slow first window — a model
-    paging in, a disk waking up — must not buy the run a blind spot: with an
-    all-time maximum, a GPU wedging later would burn minutes of the hour budget
-    before the fallback started."""
-    proc = _DripPipeProc(
-        "[00:00:30.000 --> 00:00:32.000]   text\n",
-        count=4,
-        # One slow window, then a fast run — the slow one must age out.
-        intervals=[0.6, 0.05, 0.05, 0.05],
-        stream="stdout",
-    )
-    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.1)
-    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.0)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.03)
-    monkeypatch.setattr(type(transcriber), "_STALL_PACE_WINDOW", 2)
-    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
-
-    started = time.time()
-    result = transcriber._run_whisper_streaming(
-        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
-    )
-
-    assert result.stalled is True
-    # Drip ends at ~0.75s; the window there is 4 * 0.05 = 0.2s, not 4 * 0.6.
-    assert time.time() - started < 1.6
 
 
 def test_streaming_waits_out_the_coreml_compile(transcriber, tmp_path, monkeypatch):

@@ -140,12 +140,12 @@ changes — or when you delete that file to force a re-probe.
 A GPU can also wedge without reporting anything. The app watches whisper's
 output — a decoded segment per ~30 s of audio, plus a progress line every 5% —
 and if **nothing** arrives for 3 minutes it kills the run and retries the
-recording once with the GPU off. On a slow machine that window widens
-automatically to the pace the run has been keeping, so an old Mac grinding
-through `medium` is not mistaken for a hung one. Two phases are silent by
-nature and get their own budget: startup (15 minutes) and the first Core ML
-encoder compile for a model on this machine, which whisper announces in the log
-and which can take a while on `large`.
+recording once with the GPU off. For short recordings the window widens
+automatically — it is computed from the recording's length and the hour budget,
+so an old Mac grinding through a 4-minute memo gets 7.5 minutes of tolerance,
+not 3. Two phases are silent by nature and get their own budget: startup
+(15 minutes) and the first Core ML encoder compile for a model on this machine,
+which whisper announces in the log and which can take a while on `large`.
 
 Nothing is recorded permanently here: a stall can come from a loaded CPU or a
 sleeping disk just as easily as from Metal, so the GPU stays enabled for the

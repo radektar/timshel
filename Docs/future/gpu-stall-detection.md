@@ -59,108 +59,43 @@ Sygnałem jest **brak jakiegokolwiek wyjścia**, nie całkowity czas.
    zmierzoną ciszę `stalled_after`: „ubiliśmy to sami" to informacja, której
    żaden kod wyjścia nie wyraża, a komunikat ma cytować pomiar, nie próg.
 
-## Poprawki po review (runda 1)
+## Decyzja: okno statyczne zamiast kalibracji adaptacyjnej (2026-08-07)
 
-Review wskazało, że próg 3 min i karencja 15 min były mierzone wyłącznie na
-ciepłym starcie `medium` na M2 — czyli nie na scenariuszach, dla których
-istnieją. Stąd:
+Rundy 1–5 review wygenerowały ~16 znalezisk, z czego **8 dotyczyło kalibracji
+tempa** — warstwy, która uczyła się szybkości maszyny ze strumienia wyjścia
+(kolejność fd, bursty segmentów, monotoniczne maksimum, bankowanie kompilacji
+jako tempa, w tym jedno znalezisko, gdzie nauczona wartość wyłączała detektor
+całkowicie). Warstwy stabilne od początku: okna faz (karencja / kompilacja
+Core ML), fallback `-ng` bez werdyktu, licznik zastojów.
 
-- **Okno zastoju skaluje się do tempa biegu**: `max(180 s, 4 × najdłuższa
-  dotychczasowa przerwa)`. Stary próg zabijał krótkie nagranie na wolnej
-  maszynie (`medium`, 2 wątki, bez GPU — okno 30 s audio potrafi tam zająć
-  minuty), która i tak zmieściłaby się w godzinie. Tempo liczone jest już od
-  **pierwszego** segmentu (mierzone od ostatniej linii startowej) — inaczej
-  wolna maszyna ginęła zanim zdążyła się „przedstawić". To wyszło dopiero przy
-  teście: pierwsza wersja adaptacji nie miała z czego się uczyć.
-- **Kompilacja Core ML dostała własne okno** (`_STALL_COMPILE_SECONDS`, 30 min).
-  `large` jest wybieralny w ustawieniach, a pierwsza kompilacja enkodera na
-  starszym sprzęcie potrafi przekroczyć 15 min karencji. Faza jest wykrywana, bo
-  whisper ją oznacza (`loading Core ML model` → `Core ML model loaded`), nie
-  zgadywana.
-- **Zgłoszona awaria Metala wygrywa z zastojem.** Marker mógł przyjść bez
-  końcowego `\n` i dopiero potem proces milkł — wtedy `handle_line` go nie
-  widział, a gałąź zastoju przejmowała bieg i werdykt nigdy nie był zapisany.
-  Teraz zabicie na zastoju najpierw domyka częściową linię, a sprawdzenie
-  markerów jest przed sprawdzeniem zastoju.
-- **Komunikat mówi zmierzoną ciszę** — bieg ubity na karencji milczał 15 min,
-  a błąd twierdził „3 min".
-- **Fallback `-ng` nie rusza enkodera** (Core ML jest zawsze), więc komunikat
-  i QUICKSTART kierują przy podwójnym zastoju także na model/zależności, nie
-  wyłącznie na dysk i pamięć.
+Wniosek architektoniczny: kalibracja zgadywała wielkość znaną z góry. Decyzją
+produktową (Radek: „Zróbmy statyczne na teraz. Potrzebuję sprawny mechanizm")
+zastąpiona regułą statyczną z dwóch liczb znanych przed startem whispera:
 
-## Poprawki po review (runda 2)
+- długość audio: WAV zawsze 16 kHz/mono/s16 (`_audio_duration_seconds`,
+  moduł `wave`; błąd odczytu → 0 → podłoga),
+- budżet czasu: `TRANSCRIPTION_TIMEOUT`.
 
-- **Kalibracja tempa zależała od numeracji deskryptorów.** Segment (stdout) i
-  linia postępu (stderr) przychodzą w tej samej chwili, a `select` zwraca
-  gotowe fd jako zbiór — o kolejności decydowało to, jakie numery dostał
-  proces. Gdy pierwszy szedł stderr, przerwa była „zjadana" bez zapisania i
-  adaptacja po cichu nie działała: wolna maszyna wracała pod próg 3 min.
-  Teraz przerwa startowa jest przechowywana (`pending_gap`) i księgowana w
-  momencie, w którym wiadomo, że dekodowanie ruszyło — niezależnie od tego,
-  który kanał to zgłosił.
-- **Tempo liczy się z ostatnich kilku okien**, nie z maksimum całego biegu
-  (`_STALL_PACE_WINDOW`). Jedno wolne pierwsze okno kupowało wcześniej ślepotę
-  do końca nagrania — GPU zawieszone później czekałoby wielokrotność progu.
-- **Zastój nie skreśla nagrania od razu na całą sesję.** Ta sama przesłanka, dla
-  której nie zapisujemy werdyktu GPU (backup, budzący się dysk), każe dać nocie
-  jeszcze jeden cykl. Drugi zastój tego samego nagrania jest już trwały, żeby
-  realnie zawieszona maszyna nie kręciła się w pętli.
+Okno = `max(180 s, TIMEOUT / liczba_okien_30s)`. Najwolniejsza maszyna warta
+czekania to ta, która zużywa cały budżet; jej czas na jedno okno dekodowania
+to najdłuższa legalna cisza. Cichszy bieg jest zawieszony — albo za wolny, by
+zmieścić się w budżecie, co kończy się tak samo. Fałszywy alarm na zdrowym
+biegu jest niereprezentowalny, a nie „załatany".
 
-## Poprawki po review (runda 3)
+| nagranie | okno |
+|---|---|
+| 3 h | 180 s (podłoga) |
+| 4 min | 450 s |
+| 60 s | 1800 s |
 
-- **Burst segmentów kasował kalibrację.** whisper robi `fflush` po każdym
-  segmencie, więc jedno okno 30 s przychodzi jako kilka zapisów w odstępie
-  milisekund. Przerwy między nimi wpadały do historii tempa i wypychały z niej
-  realny pomiar — okno wracało do sztywnej podłogi 180 s dokładnie na wolnych
-  maszynach, dla których adaptacja powstała. Teraz do historii trafiają tylko
-  przerwy dłuższe niż `_STALL_PACE_MIN_GAP` (1 s): maszyna, której okno naprawdę
-  trwa poniżej sekundy, i tak nie potrzebuje kalibracji, bo podłoga jest o rzędy
-  wielkości wyżej. `_STALL_PACE_WINDOW` liczy więc okna, nie odczyty.
-- **Licznik zastojów jest zerowany** po udanym przebiegu i przy ręcznej
-  retranskrypcji. Bez tego pierwszy zastój wznowionego nagrania liczył się jako
-  drugi i nota od razu wracała na sesyjną blacklistę — odwrotność reguły
-  „jeden zastój = jeszcze jeden cykl".
+Koszt: zawis przy krótkiej notce wykrywany w minuty, nie sekundy — świadomie
+zaakceptowany (krótki plik = mały absolutny koszt czekania; po drugiej stronie
+było 8 bugów i stan zbierany w pętli). Usunięte: `recent_gaps`, `pending_gap`,
+`record_gap`, `_STALL_PACE_WINDOW`, `_STALL_PACE_MIN_GAP`, `last_progress_at`
+i ~8 testów pilnujących przypadków, które przestały istnieć.
 
-## Poprawki po review (runda 4)
-
-- **Segmenty NIE są gwarantowanym pulsem.** whisper nie emituje ich dla okna
-  uznanego za ciszę (`is_no_speech`), więc cichy fragment nagrania milczy na
-  stdout. Gwarantowany jest tylko `progress = NN%` — drukowany co 5% pozycji w
-  pliku niezależnie od treści. To ustala podłogę: jeden krok to najwyżej 5%
-  czasu biegu, więc bieg mieszczący się w `TRANSCRIPTION_TIMEOUT` (3600 s) nie
-  może milczeć dłużej niż 180 s. Dodatkowo **odstęp między liniami postępu
-  kalibruje okno** — mierzony w trakcie mowy, czyli zanim cichy fragment
-  nadejdzie; wcześniej tempo liczyło się tylko z segmentów, które w ciszy nie
-  przychodzą.
-- **Nieudane ładowanie Core ML zatrzaskiwało okno kompilacji.** Linia
-  `failed to load Core ML model` nie pasuje ani do markera końca, ani startu, a
-  bieg dostawał 30 min zamiast 3. Teraz kończy fazę, a fakt, że dekodowanie
-  ruszyło, ma pierwszeństwo nad flagą kompilacji.
-- **Pomiar pierwszego okna nie ginie** pod odczytem z tej samej chwili
-  (`pending_gap` trzymany jako maksimum).
-- **Licznik zastojów kluczowany odciskiem pliku**, nie nazwą: dyktafony
-  recyklują nazwy (`DS300001.WAV` na każdej karcie), więc nagranie z jednej
-  karty wydawało drugą szansę należącą do innego.
-
-## Poprawki po review (runda 5)
-
-- **Kalibracja mogła wyłączyć detektor na cały bieg.** Pierwsza linia postępu
-  bankowała odstęp liczony od startu procesu, czyli razem z ładowaniem modelu i
-  kompilacją Core ML (dozwolone 30 min). Czterokrotność takiej „próbki tempa"
-  przekracza `TRANSCRIPTION_TIMEOUT` — detekcja przestawała istnieć. Teraz
-  kalibruje dopiero odstęp **między** liniami postępu. Przy okazji wyszła
-  głębsza forma tego samego: `pending_gap` trzymany jako maksimum (poprawka z
-  rundy 2) akumulował całą fazę startu razem z kompilacją. Regułą jest teraz:
-  nowa realna cisza zastępuje kandydata, a odczyt z tej samej chwili go nie
-  kasuje — jedno i drugie chronione osobnym testem.
-- **Klucz zastoju to fingerprint wołającego.** Własne liczenie pomijało
-  `recording_datetime`, a dla .m4a bez tagów fallbackiem jest mtime, który
-  iCloud przepisuje przy re-syncu: klucz zmieniałby się co cykl, druga próba
-  nigdy nie wyglądałaby na powtórkę i nagranie kręciłoby po dwa przebiegi
-  whispera w nieskończoność.
-- **Fingerprint nie jest liczony na ścieżce sukcesu** (guard `if
-  self._stalled_once`), a ścieżka „whisper zapisał TXT pod inną nazwą" też
-  kasuje strike.
+Historia rund 1–5 (w tym poprawki kalibracji, które ta decyzja unieważniła):
+git log gałęzi `feat/gpu-stall-detection`, commity bb1ea15..db933fb.
 
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 

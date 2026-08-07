@@ -11,20 +11,9 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Deque,
-    Dict,
-    Iterator,
-    List,
-    NamedTuple,
-    Optional,
-    Tuple,
-)
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
 from src.app_status import AppStatus
 from src.config import config as default_config
@@ -844,7 +833,11 @@ class Transcriber:
         )
 
         return self._run_whisper_streaming(
-            whisper_cmd, env=None, use_gpu=use_gpu, audio_file=audio_file
+            whisper_cmd,
+            env=None,
+            use_gpu=use_gpu,
+            audio_file=audio_file,
+            audio_duration=self._audio_duration_seconds(whisper_input),
         )
 
     @staticmethod
@@ -874,27 +867,23 @@ class Transcriber:
     # TRANSCRIPTION_TIMEOUT (3600 s) cannot be silent for longer than this.
     _STALL_SILENCE_SECONDS = 180
 
-    # …but this floor is measured on fast hardware, and "one 30 s window" is
-    # whatever the machine makes of it: an old dual-core on `medium` with the
-    # GPU off can legitimately need minutes per window, and a short memo would
-    # be killed well inside a run it was going to finish. So the window also
-    # scales with the pace this particular run has shown — a machine that has
-    # been taking 150 s per window gets 150 s * this factor before we call it
-    # wedged, instead of being measured against an M2.
-    _STALL_GAP_MULTIPLIER = 4
-
-    # …but only the *recent* pace counts. One slow first window (model paging
-    # in, a disk waking up) must not widen the window for the rest of the run:
-    # an all-time maximum would let a 5-minute cold window buy a 20-minute
-    # blind spot, and a GPU wedging later would burn a third of the hour budget
-    # before the fallback starts. Counted in windows, which is why the burst
-    # filter below matters: without it this counts reads instead.
-    _STALL_PACE_WINDOW = 3
-
-    # Shortest silence that can be a decoded window rather than the gap between
-    # two writes of the same one. A machine whose windows really are this fast
-    # needs no calibration at all — the floor is orders of magnitude above it.
-    _STALL_PACE_MIN_GAP = 1.0
+    # …but that argument only holds when one progress step is a small slice of
+    # the run. whisper decodes in ~30 s windows and reports progress per window,
+    # so on a *short* recording a single window is a large share of the file and
+    # its compute is a large share of a legitimate run: an old dual-core on
+    # `medium` with the GPU off can need minutes for one window of a 4-minute
+    # memo and still finish far inside the hour. The window scales for that
+    # from two numbers known before whisper starts — the audio duration and the
+    # time budget. The slowest machine still worth waiting for is the one that
+    # spends the whole TRANSCRIPTION_TIMEOUT on this recording; its time for
+    # one decode window is TIMEOUT * (window / duration), and that is the
+    # longest silence a run that can still succeed will ever produce. Anything
+    # quieter is wedged — or too slow to finish inside the budget, which ends
+    # the same way. Static by design: an earlier adaptive version measured the
+    # machine's pace from the output stream and produced eight review findings
+    # (fd ordering, segment bursts, a compile banked as pace, ...) — including
+    # one where the learned value switched the detector off entirely.
+    _WHISPER_DECODE_WINDOW_SECONDS = 30.0
 
     # Before the first decoded window, silence is normal: whisper loads the
     # model and says nothing until the first segment comes out.
@@ -915,7 +904,7 @@ class Transcriber:
         decoding_started: bool,
         *,
         coreml_compiling: bool = False,
-        recent_gap: float = 0.0,
+        audio_duration: float = 0.0,
     ) -> float:
         """How long this phase of the run may stay silent.
 
@@ -925,14 +914,18 @@ class Transcriber:
                 so the generous grace window no longer applies.
             coreml_compiling: True between whisper announcing the Core ML load
                 and confirming it — a first-run encoder compile lives here.
-            recent_gap: Longest silence among the last few decoded windows, used
-                to calibrate the window to the machine rather than to an M2.
+            audio_duration: Length of the recording in seconds (0 = unknown,
+                which keeps the floor). See _WHISPER_DECODE_WINDOW_SECONDS for
+                why the window widens for short recordings.
         """
         if decoding_started:
             # Whatever the flags say, output means the compile is behind us.
-            return max(
-                self._STALL_SILENCE_SECONDS, recent_gap * self._STALL_GAP_MULTIPLIER
-            )
+            limit = float(self._STALL_SILENCE_SECONDS)
+            if audio_duration > 0:
+                budget = max(self.config.TRANSCRIPTION_TIMEOUT, 0)
+                windows = max(audio_duration / self._WHISPER_DECODE_WINDOW_SECONDS, 1.0)
+                limit = max(limit, budget / windows)
+            return limit
         if coreml_compiling:
             return self._STALL_COMPILE_SECONDS
         return self._STALL_GRACE_SECONDS
@@ -943,7 +936,7 @@ class Transcriber:
         silent_for: float,
         decoding_started: bool,
         coreml_compiling: bool = False,
-        recent_gap: float = 0.0,
+        audio_duration: float = 0.0,
     ) -> bool:
         """Whether a live whisper has been quiet long enough to count as wedged.
 
@@ -951,13 +944,34 @@ class Transcriber:
             silent_for: Seconds since the last byte on *either* pipe.
             decoding_started: See :meth:`_stall_limit`.
             coreml_compiling: See :meth:`_stall_limit`.
-            recent_gap: See :meth:`_stall_limit`.
+            audio_duration: See :meth:`_stall_limit`.
         """
         return silent_for >= self._stall_limit(
             decoding_started,
             coreml_compiling=coreml_compiling,
-            recent_gap=recent_gap,
+            audio_duration=audio_duration,
         )
+
+    @staticmethod
+    def _audio_duration_seconds(audio_path: Optional[Path]) -> float:
+        """Duration of a WAV in seconds, 0.0 when unknown.
+
+        Only the converted 16 kHz mono WAV ever lands here (whisper always
+        receives one, see _convert_to_wav), so the wave module suffices; any
+        failure just means the stall window stays at its floor.
+        """
+        if audio_path is None:
+            return 0.0
+        import wave
+
+        try:
+            with wave.open(str(audio_path), "rb") as handle:
+                rate = handle.getframerate()
+                if rate <= 0:
+                    return 0.0
+                return handle.getnframes() / rate
+        except (OSError, wave.Error, EOFError):
+            return 0.0
 
     def _run_whisper_streaming(
         self,
@@ -966,6 +980,7 @@ class Transcriber:
         env: Optional[dict],
         use_gpu: bool,
         audio_file: Path,
+        audio_duration: float = 0.0,
     ) -> subprocess.CompletedProcess:
         """Run whisper-cli with live stderr streaming.
 
@@ -1029,20 +1044,6 @@ class Transcriber:
         last_activity = started
         decoding_started = False
         coreml_compiling = False
-        # Silences this run has already survived while decoding: the pace of
-        # *this* machine, used to widen the stall window rather than judging a
-        # slow box by a fast one's numbers. Bounded, so an early outlier ages
-        # out instead of blinding the detector for the rest of the run.
-        recent_gaps: Deque[float] = deque(maxlen=self._STALL_PACE_WINDOW)
-        # The silence that ended with the most recent startup output. It only
-        # becomes a pace measurement once we know decoding had begun — which
-        # can be decided by a line read *after* it.
-        pending_gap = 0.0
-        # Progress lines are the only heartbeat whisper guarantees (segments
-        # stop during a no-speech stretch), so the interval between them is the
-        # true upper bound on legitimate silence. Tracked separately: during
-        # speech the segments in between hide it from the gap measurements.
-        last_progress_at = 0.0
         metal_failed = False
         stalled = False
         stalled_after = 0.0
@@ -1060,7 +1061,7 @@ class Transcriber:
         def handle_line(line: str) -> bool:
             """Marker + progress logic for one stderr line. True = stop."""
             nonlocal metal_failed, last_logged_pct, last_heartbeat
-            nonlocal coreml_compiling, last_progress_at
+            nonlocal coreml_compiling
             # The Core ML encoder compile is the one silence that can outlast
             # the grace window (first run of a model on a device). whisper
             # brackets it, so the phase is known instead of guessed.
@@ -1088,20 +1089,6 @@ class Transcriber:
                 pct = int(match.group(1))
                 now = time.time()
                 start_decoding()
-                # One progress step is the longest this run can legitimately go
-                # without saying anything, so it calibrates the window directly
-                # — and does so *before* a quiet stretch arrives, which is the
-                # only warning a machine slower than the floor assumes ever
-                # gets. Only from the *second* line on: measuring the first one
-                # from process start would bank the model load and a first-run
-                # Core ML compile (up to _STALL_COMPILE_SECONDS) as if it were a
-                # decoding window — a 30-minute "pace" would put the stall
-                # window beyond TRANSCRIPTION_TIMEOUT and switch the detector
-                # off for the rest of the run. The same silence is already
-                # banked once by start_decoding().
-                if last_progress_at:
-                    record_gap(now - last_progress_at)
-                last_progress_at = now
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
                         "⏳ Transkrypcja %d%% — %s",
@@ -1112,57 +1099,22 @@ class Transcriber:
                     last_heartbeat = now
             return False
 
-        def record_gap(gap: float) -> None:
-            """Bank a silence as a measurement of how fast this machine decodes.
-
-            Only silences long enough to *be* a window count. whisper flushes
-            stdout once per decoded segment, so a single 30 s window arrives as
-            a burst of writes milliseconds apart; counting those as gaps would
-            fill the deque with zeros, evict the real measurement and drop the
-            window back to the floor — the calibration would quietly undo
-            itself exactly on the slow machines it exists for.
-            """
-            if gap >= self._STALL_PACE_MIN_GAP:
-                recent_gaps.append(gap)
-
         def mark_activity() -> None:
-            """Whisper said something: reset the clock, and learn its pace."""
-            nonlocal last_activity, pending_gap
-            now = time.time()
-            gap = now - last_activity
-            if decoding_started:
-                # Startup silences say nothing about decoding speed; only gaps
-                # that end in decoded output calibrate the window.
-                record_gap(gap)
-            else:
-                # Might turn out to be the first decoded window: whether it was
-                # is decided by the line this read contained, which is parsed
-                # after the fact. Held here rather than dropped — that dropped
-                # gap was the whole calibration on a slow machine, and which
-                # pipe delivered it first is decided by fd numbering.
-                #
-                # Only a real silence replaces the candidate. A follow-up read
-                # of the same instant (one select batch can deliver both pipes)
-                # must not overwrite it with ~0 — but neither may this become a
-                # maximum over the whole startup, or a first-run Core ML compile
-                # would be banked as if it were a decoding window and its four-
-                # fold would put the stall window past TRANSCRIPTION_TIMEOUT.
-                if gap >= self._STALL_PACE_MIN_GAP:
-                    pending_gap = gap
-            last_activity = now
+            """Whisper said something: reset the stall clock.
+
+            Deliberately just a clock. An earlier version also *learned* the
+            machine's pace from these reads; that adaptive layer produced eight
+            review findings (fd ordering, segment bursts, a Core ML compile
+            banked as pace...) and was replaced by the static duration-based
+            limit — see _WHISPER_DECODE_WINDOW_SECONDS.
+            """
+            nonlocal last_activity
+            last_activity = time.time()
 
         def start_decoding() -> None:
-            """First sign the decode loop is running, from either pipe.
-
-            The silence that ended with this output was this machine chewing its
-            first 30 s window — the only pace measurement available before the
-            floor would kill a slow run, so it is banked here.
-            """
-            nonlocal decoding_started, pending_gap
-            if not decoding_started:
-                decoding_started = True
-                record_gap(pending_gap)
-                pending_gap = 0.0
+            """First sign the decode loop is running, from either pipe."""
+            nonlocal decoding_started
+            decoding_started = True
 
         def read_chunk() -> Optional[str]:
             """One non-blocking stderr read. Text (possibly ''), or None on EOF."""
@@ -1239,7 +1191,7 @@ class Transcriber:
                     silent_for=silent_for,
                     decoding_started=decoding_started,
                     coreml_compiling=coreml_compiling,
-                    recent_gap=max(recent_gaps, default=0.0),
+                    audio_duration=audio_duration,
                 ):
                     stalled = True
                     stalled_after = silent_for
@@ -1271,7 +1223,7 @@ class Transcriber:
                     self._stall_limit(
                         decoding_started,
                         coreml_compiling=coreml_compiling,
-                        recent_gap=max(recent_gaps, default=0.0),
+                        audio_duration=audio_duration,
                     )
                     - silent_for
                 )
