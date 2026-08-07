@@ -7,12 +7,6 @@ from unittest.mock import MagicMock
 
 from src import runtime_deps
 
-# A sibling of the runtime deps dir sharing its name as a string prefix —
-# a plain startswith() check would wrongly claim it as ours.
-RUNTIME_DEPS_SIBLING = runtime_deps.RUNTIME_DEPS_DIR.with_name(
-    runtime_deps.RUNTIME_DEPS_DIR.name + "-backup"
-)
-
 
 def test_ensure_importable_already_available(monkeypatch):
     """Should return True and skip pip when import already works."""
@@ -68,15 +62,17 @@ def test_ensure_importable_returns_false_when_pip_fails(monkeypatch):
     assert runtime_deps.ensure_importable("anthropic") is False
 
 
-def _drift_probe(monkeypatch, origin: str, installed: str):
-    """Arrange an already-imported sqlite_vec at `origin` reporting `installed`."""
-    module = MagicMock()
-    module.__file__ = origin
-    monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", module)
-    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+def _drift_probe(monkeypatch, runtime_dir_version, *, already_loaded=False):
+    """Arrange a runtime-dir install at `runtime_dir_version` (None = absent)."""
     monkeypatch.setattr(
-        runtime_deps._importlib_metadata, "version", lambda _dist: installed
+        runtime_deps, "_runtime_dir_version", lambda _dist: runtime_dir_version
     )
+    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+    if already_loaded:
+        monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", MagicMock())
+    else:
+        monkeypatch.delitem(runtime_deps.sys.modules, "sqlite_vec", raising=False)
+    monkeypatch.setattr(runtime_deps, "_DRIFT_WARNED", set())
     pip_calls = []
     monkeypatch.setattr(
         runtime_deps, "_pip_install", lambda spec, _t: pip_calls.append(spec) or True
@@ -90,49 +86,53 @@ def _drift_probe(monkeypatch, origin: str, installed: str):
     return pip_calls, warnings
 
 
-def test_drifted_runtime_dir_install_warns_and_never_reinstalls(monkeypatch):
-    """Drift is reported, NOT repaired in place: pip-ing over a live import
-    swaps the native extension under the running wrapper."""
-    pip_calls, warnings = _drift_probe(
-        monkeypatch,
-        str(runtime_deps.RUNTIME_DEPS_DIR / "sqlite_vec" / "__init__.py"),
-        "0.1.6",
-    )
+def test_drifted_install_is_repinned_before_import(monkeypatch):
+    """A pre-pin auto-install is repaired while nothing of it is loaded."""
+    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.6")
 
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert pip_calls == [runtime_deps.SAFEGUARDED_PACKAGES["sqlite_vec"]]
+    assert warnings == []
+
+
+def test_loaded_module_is_never_repinned_in_place(monkeypatch):
+    """Once imported, pip would swap the native extension under the live
+    wrapper — so the drift is only reported, once."""
+    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.6", already_loaded=True)
+
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == []
-    assert any("0.1.6" in w and "0.1.9" in w for w in warnings)
+    assert len(warnings) == 1 and "0.1.6" in warnings[0] and "0.1.9" in warnings[0]
 
 
-def test_drift_check_ignores_installs_outside_runtime_dir(monkeypatch):
-    """A dev venv copy is not ours to manage — no warning, no pip."""
-    pip_calls, warnings = _drift_probe(
-        monkeypatch, "/some/venv/site-packages/sqlite_vec/__init__.py", "0.1.6"
-    )
+def test_no_action_when_dep_is_not_in_the_runtime_dir(monkeypatch):
+    """A dev venv or bundle copy is not ours to manage."""
+    pip_calls, warnings = _drift_probe(monkeypatch, None)
 
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == [] and warnings == []
 
 
-def test_drift_check_ignores_sibling_directory_prefix(monkeypatch):
-    """`python-deps-backup/` is a sibling, not a child, of the runtime dir."""
-    sibling = str(RUNTIME_DEPS_SIBLING / "sqlite_vec" / "__init__.py")
-    pip_calls, warnings = _drift_probe(monkeypatch, sibling, "0.1.6")
-
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
-    assert pip_calls == [] and warnings == []
-
-
-def test_no_warning_when_pin_matches(monkeypatch):
+def test_no_action_when_pin_matches(monkeypatch):
     """A runtime-dir install already at the pinned version is silent."""
-    pip_calls, warnings = _drift_probe(
-        monkeypatch,
-        str(runtime_deps.RUNTIME_DEPS_DIR / "sqlite_vec" / "__init__.py"),
-        "0.1.9",
-    )
+    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.9")
 
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == [] and warnings == []
+
+
+def test_runtime_dir_version_ignores_other_paths(monkeypatch, tmp_path):
+    """The version probe is scoped to the runtime dir, not the whole path."""
+    monkeypatch.setattr(runtime_deps, "RUNTIME_DEPS_DIR", tmp_path)
+    assert runtime_deps._runtime_dir_version("sqlite-vec") is None
+
+    dist_info = tmp_path / "sqlite_vec-0.1.6.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: sqlite-vec\nVersion: 0.1.6\n"
+    )
+    assert runtime_deps._runtime_dir_version("sqlite-vec") == "0.1.6"
 
 
 def test_runtime_dir_added_to_sys_path_once(monkeypatch):

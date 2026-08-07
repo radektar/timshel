@@ -6,7 +6,7 @@ Project-level guidance for Claude Code working on this repository. The global `~
 
 **Malinche** — automatic audio transcription system for macOS. Detects any USB recorder or SD card containing audio files, transcribes via whisper.cpp (Core ML on Apple Silicon), and writes transcripts as Markdown with YAML frontmatter.
 
-- Repo: https://github.com/radektar/malinche (remote: `origin`)
+- Repo: https://github.com/radektar/timshel (remote: `origin`)
 - Stack: Python 3.12+, whisper.cpp, ffmpeg, macOS LaunchAgent, native menu bar app
 - Current version: v2.0.0-beta.18 (dev) → v2.0.0 (in prep)
 

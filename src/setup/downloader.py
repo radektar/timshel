@@ -682,8 +682,8 @@ class DependencyDownloader:
         return self._download_whisper_static(force=force)
 
     def _download_whisper_bundled(self, force: bool = False) -> bool:
-        url = URLS["whisper"]
         archive_name = "whisper-bundled-arm64.tar.gz"
+        url = URLS["whisper_bundled"]
         archive_dest = self.downloads_dir / archive_name
         expected_size = SIZES.get(archive_name)
         expected_checksum = CHECKSUMS.get(archive_name)

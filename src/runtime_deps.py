@@ -28,6 +28,11 @@ SAFEGUARDED_PACKAGES = {
     "sqlite_vec": "sqlite-vec==0.1.9",
 }
 
+# Modules already loaded at a drifted version — warned about once per process,
+# because the callers construct stores and providers repeatedly and this log
+# is the one a tester is asked to read.
+_DRIFT_WARNED: set[str] = set()
+
 
 def _ensure_runtime_dir_on_path() -> None:
     """Prepend runtime deps directory to import path once."""
@@ -96,34 +101,54 @@ def importable(module_name: str) -> bool:
         return False
 
 
-def _warn_if_pin_drifted(module_name: str, spec: str) -> None:
-    """Log once when an already-imported module sits off its ``==`` pin.
+def _runtime_dir_version(dist_name: str) -> str | None:
+    """Version of ``dist_name`` as installed in RUNTIME_DEPS_DIR, if any.
 
-    Deliberately does NOT re-install: pip-ing over a package that is already
-    imported swaps the native extension under the live Python wrapper (for
-    sqlite-vec that means a 0.1.6 wrapper calling a 0.1.9 ``vec0`` — exactly
-    the skew the pin exists to prevent). The drift is repaired by deleting the
-    runtime-deps dir, which the next launch reinstalls at the pinned version.
+    Scoped to that directory on purpose: a bare ``metadata.version`` resolves
+    against the whole sys.path and would report a dev venv's copy.
+    """
+    try:
+        dists = _importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)])
+        for dist in dists:
+            name = dist.metadata["Name"] or ""
+            if name.replace("_", "-").lower() == dist_name.replace("_", "-").lower():
+                return dist.version
+    except OSError:  # pragma: no cover - unreadable runtime dir
+        return None
+    return None
+
+
+def _repin_if_drifted(module_name: str, spec: str) -> None:
+    """Reinstall an auto-installed dep that drifted off its ``==`` pin.
+
+    Called BEFORE the module is imported — that is the only safe moment.
+    Re-installing over a live import would swap the native extension under
+    the running Python wrapper (a 0.1.6 sqlite-vec wrapper calling a 0.1.9
+    ``vec0`` — the very skew the pin exists to prevent), so once something is
+    in ``sys.modules`` this backs off to a warning instead.
     """
     if "==" not in spec:
         return
-    module = sys.modules.get(module_name)
-    origin = getattr(module, "__file__", None)
-    if not origin or not Path(origin).is_relative_to(RUNTIME_DEPS_DIR):
-        return  # bundle or dev venv — not ours to manage
     dist_name, pinned = spec.split("==", 1)
-    try:
-        installed = _importlib_metadata.version(dist_name)
-    except _importlib_metadata.PackageNotFoundError:  # pragma: no cover
+    installed = _runtime_dir_version(dist_name)
+    if installed is None or installed == pinned:
+        return  # not ours to manage, or already at the pin
+
+    if module_name in sys.modules:
+        if module_name not in _DRIFT_WARNED:
+            _DRIFT_WARNED.add(module_name)
+            logger.warning(
+                "%s is loaded at %s, pinned at %s — restart the app to re-pin",
+                module_name,
+                installed,
+                pinned,
+            )
         return
-    if installed != pinned:
-        logger.warning(
-            "%s in runtime deps is %s, pinned at %s — delete %s to re-pin",
-            module_name,
-            installed,
-            pinned,
-            RUNTIME_DEPS_DIR,
-        )
+
+    logger.info(
+        "Re-pinning %s: %s installed, %s pinned", module_name, installed, pinned
+    )
+    _pip_install(spec, RUNTIME_DEPS_DIR)
 
 
 def ensure_importable(module_name: str) -> bool:
@@ -132,13 +157,15 @@ def ensure_importable(module_name: str) -> bool:
 
     spec = SAFEGUARDED_PACKAGES.get(module_name)
 
+    # Repair a pre-pin auto-install while nothing of it is loaded yet.
+    if spec and not _is_bundled_app():
+        _repin_if_drifted(module_name, spec)
+
     try:
         __import__(module_name)
     except ImportError:
         pass
     else:
-        if spec and not _is_bundled_app():
-            _warn_if_pin_drifted(module_name, spec)
         return True
 
     if not spec:

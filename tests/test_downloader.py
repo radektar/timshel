@@ -379,7 +379,13 @@ class TestDependencyDownloader:
         monkeypatch.setattr(downloader, "_whisper_distribution", lambda: "bundled")
         monkeypatch.setattr(downloader, "_download_file", _fake_download)
         monkeypatch.setattr(downloader, "verify_whisper_runtime", lambda: None)
-        monkeypatch.setattr("src.setup.downloader.URLS", {"whisper": "http://test"})
+        # The bundled distribution has its own asset URL; falling back to the
+        # bare whisper-cli URL downloaded a 3 MB binary and checked it against
+        # the tarball's checksum, so this path could never install.
+        monkeypatch.setattr(
+            "src.setup.downloader.URLS",
+            {"whisper": "http://test", "whisper_bundled": "http://test/bundle.tar.gz"},
+        )
         monkeypatch.setattr("src.setup.downloader.SIZES", {archive_name: 0})
         monkeypatch.setattr("src.setup.downloader.CHECKSUMS", {archive_name: ""})
         monkeypatch.setattr("platform.machine", lambda: "arm64")

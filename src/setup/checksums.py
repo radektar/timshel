@@ -34,6 +34,12 @@ DEPS_REPO_BASE = "https://github.com/radektar/timshel/releases/download/deps-v1.
 # URLs dla pobierania
 URLS = {
     "whisper": f"{DEPS_REPO_BASE}/whisper-cli",
+    # The "bundled" distribution's tarball. Dormant while
+    # VERSIONS["whisper_distribution"] is "static", but it must be listed:
+    # without it the bundled path fell back to the bare whisper-cli URL and
+    # verified a 3 MB binary against the 1.2 MB tarball's checksum, so
+    # flipping that one constant could never install.
+    "whisper_bundled": f"{DEPS_REPO_BASE}/whisper-bundled-arm64.tar.gz",
     "ffmpeg": f"{DEPS_REPO_BASE}/ffmpeg-arm64",
     "model_tiny": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
     "model_base": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
@@ -63,8 +69,7 @@ SIZES = {
     "ggml-medium.bin": 1_610_612_736,  # ~1.5GiB
     "ggml-large-v3.bin": 3_113_041_920,  # ~2.9GiB
     # CoreML encoder zips (verified from HuggingFace LFS)
-    "ggml-base-encoder.mlmodelc.zip": 37_922_638,   # ~36MB
+    "ggml-base-encoder.mlmodelc.zip": 37_922_638,  # ~36MB
     "ggml-small-encoder.mlmodelc.zip": 163_083_239,  # ~156MB
     "ggml-medium-encoder.mlmodelc.zip": 567_829_413,  # ~541MB
 }
-

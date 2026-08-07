@@ -1,6 +1,7 @@
 """Version consistency checks for release metadata."""
 
 import ast
+import re
 from pathlib import Path
 
 from src.ui.constants import APP_VERSION as UI_APP_VERSION
@@ -35,17 +36,26 @@ _VERSIONED_DOCS = (
     "Docs/ARCHITECTURE.md",
     "Docs/DEVELOPMENT.md",
     "Docs/TESTING-GUIDE.md",
+    "Docs/FULL_DISK_ACCESS_SETUP.md",
 )
+
+# Whole version tokens only. A substring check would pass `v2.0.0` against a
+# header still saying `v2.0.0-beta.18` — going blind at the GA bump, the one
+# release it most needs to catch.
+_VERSION_TOKEN = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
 
 
 def test_docs_headers_state_the_current_version() -> None:
     """Every doc header claiming a version must claim the current one."""
     repo = Path(__file__).resolve().parents[1]
     version = _read_setup_app_version()
-    stale = []
+    stale = {}
     for rel in _VERSIONED_DOCS:
         # The header is in the first few lines; later mentions are history.
         head = "\n".join((repo / rel).read_text(encoding="utf-8").splitlines()[:15])
-        if f"v{version}" not in head:
-            stale.append(rel)
+        tokens = set(_VERSION_TOKEN.findall(head))
+        # README/CLAUDE headers also name the GA target ("→ v2.0.0 (in prep)"),
+        # so the current version must be present, not merely some version.
+        if f"v{version}" not in tokens:
+            stale[rel] = sorted(tokens) or ["<no version token>"]
     assert not stale, f"doc headers not on v{version}: {stale}"

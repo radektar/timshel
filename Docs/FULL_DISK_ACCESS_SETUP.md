@@ -1,6 +1,6 @@
 # Full Disk Access setup for Malinche
 
-> **Version:** v2.0.0
+> **Version:** v2.0.0-beta.18 (development)
 >
 > **Related documents:**
 > - [README.md](../README.md) — project overview
