@@ -84,16 +84,25 @@ biegu jest niereprezentowalny, a nie „załatany".
 
 | nagranie | okno |
 |---|---|
-| 3 h | 180 s (podłoga) |
+| 3 h | 270 s (podłoga) |
 | 4 min | 450 s |
 | 60 s | 900 s (sufit) |
 
 Sufit = karencja startowa (15 min): bez niego 30-sekundowy klip dostawał cały
 budżet godziny, czyli dokładnie „stracisz godzinę", które ta funkcja usuwa —
 a tolerowanie dłuższej ciszy w trakcie dekodowania niż na starcie byłoby
-odwrotnością sensu. Podłoga 180 s jest związana z budżetem (5% z 3600 s = jeden
-krok postępu) i pilnuje tego osobny test, żeby podniesienie
+odwrotnością sensu. Podłoga 270 s = półtora kroku postępu (5% z 3600 s = 180 s). Margines jest
+konieczny, bo bieg mieszczący się w budżecie *dokładnie* produkuje ciszę równą
+jednemu krokowi, a porównanie jest `>=` — podłoga równa krokowi zabijałaby go na
+styku. Związek z budżetem pilnuje osobny test, żeby podniesienie
 `TRANSCRIPTION_TIMEOUT` nie wywróciło niezmiennika po cichu.
+
+**Zapis transkryptu:** istnienie pliku nie dowodzi, że tekst jest na dysku —
+whisper tworzy i obcina TXT *przed* komunikatem o zapisie, więc zawis w trakcie
+zapisu (np. zablokowany writeback iCloud na synchronizowanym katalogu wyjścia)
+zostawia plik pusty lub urwany. Dowodem jest `whisper_print_timings`, drukowane
+dopiero po zamknięciu strumienia. Zastój bez tego markera kasuje niepotwierdzony
+plik, żeby ścieżka odzyskiwania po awarii nie adoptowała fragmentu jako noty.
 
 Koszt: zawis przy krótkiej notce wykrywany w minuty, nie sekundy — świadomie
 zaakceptowany (krótki plik = mały absolutny koszt czekania; po drugiej stronie

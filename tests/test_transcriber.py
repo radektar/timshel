@@ -1405,6 +1405,11 @@ def _reported_error(transcriber) -> str:
     raise AssertionError("no ERROR state was reported")
 
 
+# whisper's proof that the transcript was flushed and closed; a stalled run
+# without it may have left a truncated file behind.
+_WROTE_TRANSCRIPT = "whisper_print_timings:     load time =  1018.93 ms\n"
+
+
 def _stalled_run(stderr: str = "", stalled_after: float = 180.0) -> WhisperRun:
     """What _run_whisper_streaming returns for a run it killed for silence."""
     return WhisperRun(
@@ -2041,12 +2046,14 @@ def test_stall_window_widens_for_short_recordings(transcriber, monkeypatch):
         transcriber.config, "TRANSCRIPTION_TIMEOUT", 3600, raising=False
     )
 
+    floor = float(transcriber._STALL_SILENCE_SECONDS)
+
     # 4-minute memo: 8 windows → 3600 / 8 = 450 s of tolerated silence.
     assert transcriber._stall_limit(True, audio_duration=240.0) == 450.0
-    # 3-hour meeting: hundreds of windows → the 180 s floor applies.
-    assert transcriber._stall_limit(True, audio_duration=3 * 3600.0) == 180.0
+    # 3-hour meeting: hundreds of windows → the floor applies.
+    assert transcriber._stall_limit(True, audio_duration=3 * 3600.0) == floor
     # Unknown duration keeps the floor rather than guessing.
-    assert transcriber._stall_limit(True, audio_duration=0.0) == 180.0
+    assert transcriber._stall_limit(True, audio_duration=0.0) == floor
     # A clip of a few windows is capped at the startup grace rather than
     # being handed most of the hour — tolerating more silence while decoding
     # than while starting up would be backwards.
@@ -2100,7 +2107,10 @@ def test_the_silence_floor_still_covers_a_progress_step(transcriber):
     """
     progress_step_seconds = transcriber.config.TRANSCRIPTION_TIMEOUT * 0.05
 
-    assert transcriber._STALL_SILENCE_SECONDS >= progress_step_seconds
+    # Strictly greater, with margin: a run pacing to only just fit the budget
+    # produces exactly one step of silence, and the comparison is `>=` — a floor
+    # equal to a step would kill it on the boundary.
+    assert transcriber._STALL_SILENCE_SECONDS >= progress_step_seconds * 1.5
 
 
 def test_a_finished_transcript_is_not_thrown_away_by_the_stall_fallback(
@@ -2125,15 +2135,92 @@ def test_a_finished_transcript_is_not_thrown_away_by_the_stall_fallback(
     )
 
     def run_side_effect(_, use_gpu=True, source_audio=None):
-        # Decoding finished and the TXT landed; the wedge came afterwards.
+        # Decoding finished, the TXT was flushed and closed (whisper printed
+        # its timings); the wedge came afterwards, in the driver teardown.
         (transcript_dir / "sample.txt").write_text("ok")
-        return _stalled_run()
+        return _stalled_run(stderr=_WROTE_TRANSCRIPT)
 
     mock_runner = MagicMock(side_effect=run_side_effect)
     transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
 
     assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
     assert mock_runner.call_count == 1  # no pointless second transcription
+
+
+def test_a_transcript_left_half_written_by_a_stall_is_not_kept(
+    transcriber, tmp_path, monkeypatch
+):
+    """A file on disk is not proof that the text is on disk.
+
+    whisper creates and truncates the TXT *before* it writes anything (and
+    before it announces the write), so a wedge during the write — a stalled
+    iCloud writeback on the synced output dir, exactly this feature's territory
+    — leaves an empty or partial file. Keeping it would turn a fragment into the
+    note and mark the recording done; leaving it on disk would be worse still,
+    because the crash-recovery path adopts it on the next cycle without whisper
+    ever re-running.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._gpu_disabled_in_session = True  # no fallback, so this is terminal
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+    partial = transcript_dir / "sample.txt"
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        partial.write_text("[00:00:00 --> 00:00:02] beginning of a sen")
+        return _stalled_run()  # no timings line: the write never completed
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+    transcriber._update_state = MagicMock()  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) is None
+    assert "utknęła" in _reported_error(transcriber)
+    assert not partial.exists()  # nothing left for the adoption path to find
+
+
+def test_a_metal_error_during_teardown_does_not_redo_a_finished_transcript(
+    transcriber, tmp_path, monkeypatch
+):
+    """A GPU dying in teardown prints the same runtime markers as one dying
+    mid-graph, and our own kill supplies rc=-9 — so the Metal branch would
+    re-transcribe over a finished file and record a permanent verdict the stall
+    path deliberately declines to record."""
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._boot_id = lambda: "boot:1"  # type: ignore[assignment]
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        (transcript_dir / "sample.txt").write_text("the finished transcript")
+        return _stalled_run(
+            stderr=_WROTE_TRANSCRIPT
+            + "ggml_metal_synchronize: error: command buffer 0 failed with status 5\n"
+        )
+
+    mock_runner = MagicMock(side_effect=run_side_effect)
+    transcriber._run_whisper_transcription = mock_runner  # type: ignore[assignment]
+
+    assert transcriber._run_macwhisper(audio_file) == transcript_dir / "sample.txt"
+    assert mock_runner.call_count == 1
+    assert (transcript_dir / "sample.txt").read_text() == "the finished transcript"
+    assert transcriber._gpu_disabled_in_session is False
+    assert not transcriber._gpu_flag_path().exists()
 
 
 def test_audio_duration_is_read_from_the_converted_wav(transcriber, tmp_path):

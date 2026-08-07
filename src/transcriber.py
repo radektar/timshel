@@ -864,8 +864,11 @@ class Transcriber:
     # `progress = NN%`, printed every 5% of the *file position* whatever the
     # audio contains — which fixes the floor: one step is at most 5% of the
     # run's compute, so a run that would legitimately finish inside
-    # TRANSCRIPTION_TIMEOUT (3600 s) cannot be silent for longer than this.
-    _STALL_SILENCE_SECONDS = 180
+    # TRANSCRIPTION_TIMEOUT (3600 s) cannot be silent for longer than one step
+    # (180 s). The floor carries half a step of margin on top, because a run
+    # pacing to only just fit the budget produces exactly that gap and the
+    # comparison is `>=` — landing on the boundary would kill a healthy run.
+    _STALL_SILENCE_SECONDS = 270
 
     # …but that argument only holds when one progress step is a small slice of
     # the run. whisper decodes in ~30 s windows and reports progress per window,
@@ -1583,6 +1586,16 @@ class Transcriber:
     # just burns another full run; surface an actionable error instead.
     _COREML_LOAD_FAIL_MARKERS = ("failed to load Core ML model",)
 
+    # Proof that whisper finished writing the transcript. File existence is not
+    # that proof: `fout = std::ofstream{fname_out}` creates and truncates the
+    # TXT *before* whisper prints "saving output to", and the content follows.
+    # A wedge during that write (a stalled iCloud writeback on the synced output
+    # dir is exactly the kind of stall this feature exists for) leaves an empty
+    # or truncated file behind. whisper prints its timings only after the
+    # ofstream has gone out of scope — i.e. after the file was flushed and
+    # closed — so this marker, and only this marker, means "the text is on disk".
+    _TRANSCRIPT_WRITTEN_MARKER = "whisper_print_timings"
+
     def _coreml_load_failed(self, stderr: Optional[str]) -> bool:
         """True when whisper aborted because the Core ML encoder wouldn't load."""
         if not stderr:
@@ -1934,21 +1947,34 @@ class Transcriber:
             )
 
             def stalled_after_finishing() -> bool:
-                """A stall with the transcript already on disk.
+                """A stall that came *after* the transcript was safely written.
 
-                whisper writes the TXT via ``-otxt`` only once decoding is done,
-                so the file being there means the work is complete and the wedge
-                came afterwards (a Metal teardown that never returns). Running
-                the fallback then would redo a whole transcription — and lose
-                the finished one if the retry stalled too.
+                Then the work is done and the wedge was in the teardown (a Metal
+                driver that never returns): re-running would redo a whole
+                transcription and lose the finished one if the retry stalled too.
+
+                Requires whisper's own proof of a completed write
+                (``_TRANSCRIPT_WRITTEN_MARKER``), not just a file on disk — see
+                that constant for why existence means nothing here.
                 """
-                return getattr(result, "stalled", False) and output_file.exists()
+                if not getattr(result, "stalled", False):
+                    return False
+                return (
+                    self._TRANSCRIPT_WRITTEN_MARKER in (result.stderr or "")
+                    and output_file.exists()
+                )
 
             # If Metal failed, retry with the GPU off. Checked *before* the
             # stall branch: a GPU that reports an error and then wedges is a
             # reported failure first — reading it as a plain stall would skip
             # the verdict and leave every future recording to rediscover it.
-            if self._should_retry_without_gpu(
+            #
+            # …unless the transcript is already written. Our own kill supplies
+            # rc=-9, and a GPU dying in teardown prints the same runtime markers
+            # (dead command buffer, pipeline), so this branch would otherwise
+            # re-transcribe over the finished file — and record a permanent
+            # verdict the stall path deliberately declines to record.
+            if not stalled_after_finishing() and self._should_retry_without_gpu(
                 result.stderr,
                 gpu_attempted=gpu_attempted,
                 returncode=result.returncode,
@@ -2045,6 +2071,18 @@ class Transcriber:
                 # one recording's stall spend the second chance that belongs to
                 # an unrelated one from another card.
                 stall_key = self._stall_key(audio_file, fingerprint)
+                # A stalled run may have created the TXT and died mid-write.
+                # Left there, the crash-recovery path adopts it on the next
+                # cycle and a fragment becomes the note, with whisper never
+                # re-running. The write was not confirmed, so the file is not a
+                # transcript.
+                if output_file.exists():
+                    logger.warning(
+                        "  Removing unconfirmed transcript left by the stalled "
+                        "run: %s",
+                        output_file.name,
+                    )
+                    output_file.unlink(missing_ok=True)
                 if stall_key in self._stalled_once:
                     logger.warning(
                         "  Stalled twice — %s will not be retried this session",

@@ -139,16 +139,18 @@ changes — or when you delete that file to force a re-probe.
 
 A GPU can also wedge without reporting anything. The app watches whisper's
 output — a decoded segment per ~30 s of audio, plus a progress line every 5% —
-and if **nothing** arrives for 3 minutes it kills the run and retries the
+and if **nothing** arrives for 4.5 minutes it kills the run and retries the
 recording once with the GPU off. For short recordings the window widens
 automatically — it is computed from the recording's length and the hour budget,
-so an old Mac grinding through a 4-minute memo gets 7.5 minutes of tolerance,
-not 3 (capped at 15 minutes, however short the clip). Two phases are silent by nature and get their own budget: startup
+so an old Mac grinding through a 4-minute memo gets 7.5 minutes of tolerance
+(capped at 15 minutes, however short the clip). Two phases are silent by nature and get their own budget: startup
 (15 minutes) and the first Core ML encoder compile for a model on this machine,
 which whisper announces in the log and which can take a while on `large`.
 
 If whisper wedges *after* saving the transcript — a Metal teardown that never
-returns — the finished file is kept and nothing is re-run.
+returns — the finished file is kept and nothing is re-run. A wedge *during* the
+write leaves a partial file, which is discarded rather than kept: the recording
+is retried instead of being filed with a fragment of its content.
 
 Nothing is recorded permanently here: a stall can come from a loaded CPU or a
 sleeping disk just as easily as from Metal, so the GPU stays enabled for the
