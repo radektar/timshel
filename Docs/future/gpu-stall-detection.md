@@ -142,6 +142,26 @@ istnieją. Stąd:
   recyklują nazwy (`DS300001.WAV` na każdej karcie), więc nagranie z jednej
   karty wydawało drugą szansę należącą do innego.
 
+## Poprawki po review (runda 5)
+
+- **Kalibracja mogła wyłączyć detektor na cały bieg.** Pierwsza linia postępu
+  bankowała odstęp liczony od startu procesu, czyli razem z ładowaniem modelu i
+  kompilacją Core ML (dozwolone 30 min). Czterokrotność takiej „próbki tempa"
+  przekracza `TRANSCRIPTION_TIMEOUT` — detekcja przestawała istnieć. Teraz
+  kalibruje dopiero odstęp **między** liniami postępu. Przy okazji wyszła
+  głębsza forma tego samego: `pending_gap` trzymany jako maksimum (poprawka z
+  rundy 2) akumulował całą fazę startu razem z kompilacją. Regułą jest teraz:
+  nowa realna cisza zastępuje kandydata, a odczyt z tej samej chwili go nie
+  kasuje — jedno i drugie chronione osobnym testem.
+- **Klucz zastoju to fingerprint wołającego.** Własne liczenie pomijało
+  `recording_datetime`, a dla .m4a bez tagów fallbackiem jest mtime, który
+  iCloud przepisuje przy re-syncu: klucz zmieniałby się co cykl, druga próba
+  nigdy nie wyglądałaby na powtórkę i nagranie kręciłoby po dwa przebiegi
+  whispera w nieskończoność.
+- **Fingerprint nie jest liczony na ścieżce sukcesu** (guard `if
+  self._stalled_once`), a ścieżka „whisper zapisał TXT pod inną nazwą" też
+  kasuje strike.
+
 ## Pomiary (M2 Pro, `medium` + Core ML, ciepły start)
 
 | zdarzenie | czas od startu |

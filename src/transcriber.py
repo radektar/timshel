@@ -1092,9 +1092,15 @@ class Transcriber:
                 # without saying anything, so it calibrates the window directly
                 # — and does so *before* a quiet stretch arrives, which is the
                 # only warning a machine slower than the floor assumes ever
-                # gets. Measured from the start for the first line: that
-                # interval includes the model load, which only widens it.
-                record_gap(now - (last_progress_at or started))
+                # gets. Only from the *second* line on: measuring the first one
+                # from process start would bank the model load and a first-run
+                # Core ML compile (up to _STALL_COMPILE_SECONDS) as if it were a
+                # decoding window — a 30-minute "pace" would put the stall
+                # window beyond TRANSCRIPTION_TIMEOUT and switch the detector
+                # off for the rest of the run. The same silence is already
+                # banked once by start_decoding().
+                if last_progress_at:
+                    record_gap(now - last_progress_at)
                 last_progress_at = now
                 if pct >= last_logged_pct + 10 or now - last_heartbeat >= 20:
                     logger.info(
@@ -1133,11 +1139,16 @@ class Transcriber:
                 # is decided by the line this read contained, which is parsed
                 # after the fact. Held here rather than dropped — that dropped
                 # gap was the whole calibration on a slow machine, and which
-                # pipe delivered it first is decided by fd numbering. Kept as a
-                # maximum because one select batch can deliver both pipes: the
-                # second read would otherwise overwrite the real measurement
-                # with the ~0 gap between two reads of the same instant.
-                pending_gap = max(pending_gap, gap)
+                # pipe delivered it first is decided by fd numbering.
+                #
+                # Only a real silence replaces the candidate. A follow-up read
+                # of the same instant (one select batch can deliver both pipes)
+                # must not overwrite it with ~0 — but neither may this become a
+                # maximum over the whole startup, or a first-run Core ML compile
+                # would be banked as if it were a decoding window and its four-
+                # fold would put the stall window past TRANSCRIPTION_TIMEOUT.
+                if gap >= self._STALL_PACE_MIN_GAP:
+                    pending_gap = gap
             last_activity = now
 
         def start_decoding() -> None:
@@ -1842,25 +1853,51 @@ class Transcriber:
         except OSError:
             return False
 
-    def _stall_key(self, audio_file: Path) -> str:
+    def _stall_key(self, audio_file: Path, fingerprint: Optional[str] = None) -> str:
         """Identity of a recording for the one-retry-after-a-stall rule.
 
-        The fingerprint, so two cards holding a `DS300001.WAV` each are two
-        recordings; it is only computed on the rare stall path, never in the
-        normal flow. Falls back to the path when the file cannot be read — a
-        wrong key must never be worse than raising here.
+        The caller's fingerprint whenever there is one: computing our own would
+        omit ``recording_datetime``, and for a tagless .m4a that falls back to
+        mtime — which iCloud rewrites on re-sync. The key would then differ on
+        every cycle, the second stall would never be recognised as a repeat, and
+        the recording would run whisper twice per cycle forever: exactly the
+        loop this counter exists to stop.
+
+        Content, not filename: recorders reuse names (`DS300001.WAV` on every
+        card), so a stem would let one recording spend the second chance that
+        belongs to another. Falls back to the path when the file cannot be
+        fingerprinted — a weaker key must never be worse than raising here.
         """
+        if fingerprint:
+            return fingerprint
         try:
             return compute_fingerprint(audio_file)
         except Exception as exc:  # noqa: BLE001 - identity is best-effort
             logger.debug("Could not fingerprint %s for stall key: %s", audio_file, exc)
             return str(audio_file.resolve())
 
-    def _run_macwhisper(self, audio_file: Path) -> Optional[Path]:
+    def _retire_stall(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> None:
+        """A run that finished retires the earlier stall.
+
+        The next stall is a first stall again, not a second one inherited from a
+        problem the machine has evidently recovered from. Guarded so the normal
+        path — nothing ever stalled — never pays for computing a key.
+        """
+        if self._stalled_once:
+            self._stalled_once.discard(self._stall_key(audio_file, fingerprint))
+
+    def _run_macwhisper(
+        self, audio_file: Path, fingerprint: Optional[str] = None
+    ) -> Optional[Path]:
         """Run whisper.cpp transcription and return path to TXT file.
 
         Args:
             audio_file: Path to the audio file to transcribe
+            fingerprint: The recording's canonical identity, when the caller
+                already has it. Used to key the one-retry-after-a-stall rule
+                (see :meth:`_stall_key`).
 
         Returns:
             Path to created TXT file, or None if transcription failed.
@@ -2033,7 +2070,7 @@ class Transcriber:
                 # aggressively (DS300001.WAV on every card), so a stem would let
                 # one recording's stall spend the second chance that belongs to
                 # an unrelated one from another card.
-                stall_key = self._stall_key(audio_file)
+                stall_key = self._stall_key(audio_file, fingerprint)
                 if stall_key in self._stalled_once:
                     logger.warning(
                         "  Stalled twice — %s will not be retried this session",
@@ -2068,10 +2105,7 @@ class Transcriber:
             logger.info(f"Checking for output file: {output_file}")
             if output_file.exists() or self._wait_for_output_file(output_file):
                 logger.info(f"✓ Transcription TXT verified: {output_file.name}")
-                # A run that finished retires the earlier stall: the next one is
-                # a first stall again, not a second one inherited from a problem
-                # the machine has evidently recovered from.
-                self._stalled_once.discard(self._stall_key(audio_file))
+                self._retire_stall(audio_file, fingerprint)
                 return output_file
             else:
                 logger.warning(
@@ -2094,6 +2128,7 @@ class Transcriber:
                     txt_files = [f for f in created_files if f.suffix == ".txt"]
                     if txt_files:
                         logger.debug(f"✓ Using found file: {txt_files[0]}")
+                        self._retire_stall(audio_file, fingerprint)
                         return txt_files[0]
 
                 logger.error(
@@ -2928,7 +2963,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         # postprocess stays recoverable (adoption above) without stem-only
         # guessing.
         self._write_transcript_owner(transcript_path, audio_file, fingerprint)
-        transcript_path = self._run_macwhisper(audio_file)
+        transcript_path = self._run_macwhisper(audio_file, fingerprint=fingerprint)
 
         if transcript_path is None:
             if self._last_run_was_transient_failure:

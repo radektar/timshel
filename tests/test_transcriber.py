@@ -467,7 +467,7 @@ def test_txt_adoption_rejected_without_ownership(transcriber, tmp_path, monkeypa
 
     fresh_txt = output_dir / "REC001.txt"
 
-    def fake_whisper(af):
+    def fake_whisper(af, fingerprint=None):
         fresh_txt.write_text("fresh transcript for card B")
         return fresh_txt
 
@@ -2371,6 +2371,128 @@ def test_the_first_window_measurement_survives_a_second_read_of_the_same_instant
         transcriber._run_whisper_streaming(
             ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
         )
+
+
+class _ScriptedProc(_FakePipeProc):
+    """A fake whisper that emits a scripted timeline of output.
+
+    ``events`` are ``(delay_before, stream, text)``; the pipes stay open after
+    the script runs out, so what happens next is silence.
+    """
+
+    def __init__(self, events):
+        import threading
+
+        super().__init__("", hold_open=True)
+
+        def play() -> None:
+            for delay, stream, text in events:
+                time.sleep(delay)
+                if self.returncode is not None:
+                    return
+                target = self._out_wf if stream == "stdout" else self._wf
+                try:
+                    target.write(text)
+                    target.flush()
+                except (ValueError, OSError):  # pragma: no cover - pipe closed
+                    return
+
+        threading.Thread(target=play, daemon=True).start()
+
+
+def test_a_first_run_core_ml_compile_is_not_mistaken_for_the_pace(
+    transcriber, tmp_path, monkeypatch
+):
+    """The startup silence must not be banked as a decoding window twice.
+
+    A first-run Core ML compile is allowed to take up to _STALL_COMPILE_SECONDS.
+    Measuring the first progress line from process start would enter that whole
+    span as a "pace" sample — and four times a 30-minute pace puts the stall
+    window past TRANSCRIPTION_TIMEOUT, switching the detector off for the rest
+    of the run. The startup silence is already banked once, by start_decoding().
+    """
+    proc = _ScriptedProc(
+        [
+            # The compile: announced, then a long silence, then confirmed.
+            (0.0, "stderr", "whisper_init_state: loading Core ML model from 'x'\n"),
+            (0.6, "stderr", "whisper_init_state: Core ML model loaded\n"),
+            (0.05, "stderr", "system_info: n_threads = 6 | COREML = 1\n"),
+            (0.05, "stderr", "whisper_print_progress_callback: progress =   5%\n"),
+            # …and then nothing at all: a wedged GPU.
+        ]
+    )
+    monkeypatch.setattr("src.transcriber.subprocess.Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(type(transcriber), "_STALL_SILENCE_SECONDS", 0.3)
+    monkeypatch.setattr(type(transcriber), "_STALL_GRACE_SECONDS", 1.5)
+    monkeypatch.setattr(type(transcriber), "_STALL_COMPILE_SECONDS", 5)
+    monkeypatch.setattr(type(transcriber), "_STALL_PACE_MIN_GAP", 0.04)
+    monkeypatch.setattr(transcriber.config, "TRANSCRIPTION_TIMEOUT", 30, raising=False)
+
+    started = time.time()
+    result = transcriber._run_whisper_streaming(
+        ["whisper"], env=None, use_gpu=True, audio_file=tmp_path / "rec.wav"
+    )
+
+    assert result.stalled is True
+    # The wedge must be caught on the floor. Banking the 0.7 s from process
+    # start as a "pace" would buy the run four times that instead.
+    assert time.time() - started < 1.7
+
+
+def test_stall_key_prefers_the_caller_s_fingerprint(transcriber, tmp_path):
+    """The key must be the identity the rest of the system uses.
+
+    Computing our own would drop ``recording_datetime``, and for a tagless .m4a
+    that falls back to mtime — which iCloud rewrites on re-sync. The key would
+    change every cycle, a repeat stall would never look like one, and the
+    recording would run whisper twice per cycle forever.
+    """
+    audio = tmp_path / "memo.m4a"
+    audio.write_bytes(b"audio")
+
+    assert transcriber._stall_key(audio, "sha256:canonical") == "sha256:canonical"
+    # …and without one it still produces a usable key rather than raising.
+    assert transcriber._stall_key(tmp_path / "missing.mp3")
+
+
+def test_a_stall_strike_is_retired_when_whisper_used_another_filename(
+    transcriber, tmp_path, monkeypatch
+):
+    """The alternate-output success path clears the strike too.
+
+    whisper occasionally writes the TXT under a different basename and the
+    pipeline adopts it. Without retiring the strike there, a recording that
+    stalled once and then succeeded this way would be blacklisted on its next
+    stall instead of getting the retry the rule promises.
+    """
+    transcript_dir = tmp_path / "output"
+    transcript_dir.mkdir()
+    update_transcriber_config(transcriber, monkeypatch, TRANSCRIBE_DIR=transcript_dir)
+    transcriber.whisper_available = True
+    transcriber._stalled_once.add("sha256:fp")
+
+    audio_file = tmp_path / "sample.mp3"
+    audio_file.touch()
+    transcriber._convert_to_wav = MagicMock(  # type: ignore[assignment]
+        return_value=tmp_path / "sample.whisper16k.wav"
+    )
+
+    def run_side_effect(_, use_gpu=True, source_audio=None):
+        # whisper wrote the TXT under a name we did not ask for.
+        (transcript_dir / "sample_out.txt").write_text("ok")
+        return subprocess.CompletedProcess(
+            args=["whisper"], returncode=0, stdout="", stderr=""
+        )
+
+    transcriber._run_whisper_transcription = MagicMock(  # type: ignore[assignment]
+        side_effect=run_side_effect
+    )
+    monkeypatch.setattr(transcriber, "_wait_for_output_file", lambda *a, **k: False)
+
+    result = transcriber._run_macwhisper(audio_file, fingerprint="sha256:fp")
+
+    assert result == transcript_dir / "sample_out.txt"
+    assert "sha256:fp" not in transcriber._stalled_once
 
 
 def test_stall_key_separates_recordings_that_share_a_filename(transcriber, tmp_path):
