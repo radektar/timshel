@@ -1,7 +1,54 @@
 # STATE — Malinche/Timshel
 
-Data: 2026-08-06 · Faza: kod → test
+Data: 2026-08-07 · Faza: kod → test
 Re-entry (wypełnia Radek przy powrocie): ___ min
+
+## Zawieszony GPU: ratunek zamiast straconej godziny (PR #106, MERGE 2026-08-07)
+
+Domknięcie backlogu z PR #104. Awarie Metala, które **się zgłaszają**, były już
+obsłużone; poza siatką został GPU, który **po prostu milknie** — nagranie umierało
+po godzinie na `TRANSCRIPTION_TIMEOUT`, bez próby ratunku i bez diagnozy.
+
+**Mechanizm:** sygnałem jest cisza na obu kanałach. stdout wrócił z `DEVNULL` jako
+oznaka życia (segment na ~30 s audio), gwarantowanym pulsem jest `progress = NN%`
+(co 5% pozycji, niezależnie od treści — segmenty milkną na ciszy w nagraniu).
+Zastój = kill + **jeden** przebieg `-ng` dla tego nagrania, **bez zapisu werdyktu
+GPU** (zawiesić potrafi też obciążony CPU czy usypiający dysk). Nagranie dostaje
+jeszcze jeden cykl; drugi zastój tego samego pliku jest trwały.
+
+**Kluczowa decyzja architektoniczna (2026-08-07).** Pierwsza wersja *uczyła się*
+tempa maszyny ze strumienia wyjścia. Przez 5 rund review ta jedna warstwa dała
+**8 z ~16 znalezisk** (kolejność deskryptorów, bursty segmentów, kompilacja Core ML
+zaksięgowana jako tempo — w tym przypadek, gdzie nauczona wartość **wyłączała
+detektor na cały bieg**). Reszta mechanizmu stabilizowała się po 1–2 poprawkach.
+Diagnoza: kalibracja zgadywała wielkość znaną z góry. Decyzja produktowa Radka
+(„Zróbmy statyczne na teraz. Potrzebuję sprawny mechanizm") → okno liczone
+**przed startem** z dwóch liczb: długości audio (WAV zawsze 16 kHz/mono/s16) i
+`TRANSCRIPTION_TIMEOUT`. Najwolniejsza maszyna warta czekania zużywa cały budżet;
+jej czas na jedno okno dekodowania to najdłuższa legalna cisza.
+
+`min(max(270 s, TIMEOUT / liczba_okien_30s), karencja 15 min)` — 3 h → 270 s,
+4 min → 450 s, 30 s → 900 s. Podłoga 270 s = półtora kroku postępu (5% z 3600 s),
+margines konieczny, bo porównanie jest `>=`, a bieg mieszczący się w budżecie
+*dokładnie* produkuje ciszę równą jednemu krokowi. Fałszywe ubicie zdrowego biegu
+przestało być reprezentowalnym stanem, a nie „załatanym" bugiem.
+
+**Drugi nietrywialny wniosek:** istnienie pliku TXT **nie dowodzi**, że transkrypt
+jest na dysku — whisper tworzy i obcina plik *przed* zapisem, więc zawis w trakcie
+zapisu zostawia fragment. Dowodem jest `whisper_print_timings` (po zamknięciu
+strumienia). Niepotwierdzony plik jest kasowany w `finally`, bo ścieżka
+odzyskiwania po awarii adoptowała go jako gotową notę i realne nagranie lądowało
+jako „brak rozpoznawalnej mowy".
+
+**Proces:** 8 rund `/code-review`. Trzy z pięciu pierwszych rund znalazły błędy
+**wprowadzone przez poprawki z rund poprzednich** — to był sygnał, który
+doprowadził do refaktoru. Ostatnie rundy nie znalazły już nic w samym detektorze.
+Bateria 35 mutacji (każda naprawa przypięta testem, który czerwienieje po
+odwróceniu naprawy) + e2e na prawdziwym `whisper-cli`. 1614 testów, CI na main
+zielone.
+
+**Nowa reguła w pamięci projektu:** PR powstaje **po** czystej rundzie review, nie
+przed — otwarty PR czyta się jako „gotowe do merge".
 
 ## Core ML nigdy nie działał, a każda nota leciała dwa razy (PR #104, MERGE 2026-08-06)
 
