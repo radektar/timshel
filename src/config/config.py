@@ -81,6 +81,11 @@ class Config:
     # Timeouts and intervals (seconds)
     TRANSCRIPTION_TIMEOUT: int = 3600  # 60 minutes (increased from 30)
     PERIODIC_CHECK_INTERVAL: int = 30  # 30 seconds
+    # How long a staged copy of a recording is kept after its note exists.
+    # The staging dir is what "Retranscribe file…" and recovery-without-the-
+    # recorder work from, so it is a feature, not a temp dir — but it used to
+    # grow without limit (an hour of audio per recording, invisibly).
+    STAGING_RETENTION_DAYS: int = 30
     MOUNT_MONITOR_DELAY: int = 1  # 1 second
 
     # Audio formats

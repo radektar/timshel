@@ -446,6 +446,47 @@ def test_transcribe_file_already_transcribed_txt(transcriber, tmp_path, monkeypa
     transcriber._run_macwhisper.assert_not_called()
 
 
+def test_failed_postprocess_does_not_re_buy_the_summary_every_scan(
+    transcriber, tmp_path, monkeypatch
+):
+    """A persistent post-processing failure must back off for the session.
+
+    The TXT survives the failure, so the next 30-second scan re-enters through
+    the adoption path and pays for another summary — and the AI-hours counter
+    only ticks on success, so the spend is invisible while it happens.
+    """
+    from src import config as config_module
+    from src.fingerprint import compute_fingerprint
+
+    transcriber.whisper_available = True
+    transcriber._run_macwhisper = MagicMock(return_value=None)  # type: ignore[arg-type]
+
+    audio_file = tmp_path / "test.mp3"
+    audio_file.write_bytes(b"audio")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "test.txt").write_text("Test transcript")
+
+    transcriber.config.TRANSCRIBE_DIR = output_dir
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", output_dir)
+    fingerprint = compute_fingerprint(audio_file)
+    transcriber._write_transcript_owner(
+        output_dir / "test.txt", audio_file, fingerprint
+    )
+
+    # The paid tail fails — e.g. the vault is momentarily unwritable.
+    postprocess = MagicMock(return_value=None)
+    transcriber._postprocess_transcript = postprocess  # type: ignore[assignment]
+
+    assert transcriber.transcribe_file(audio_file) is False
+    assert postprocess.call_count == 1
+    assert fingerprint in transcriber._session_failed_fingerprints
+
+    # Second scan: the file is skipped before any paid work happens.
+    pending = transcriber.find_pending_audio_files(audio_file.parent)
+    assert [p for p, _fp in pending if p.name == audio_file.name] == []
+
+
 def test_txt_adoption_rejected_without_ownership(transcriber, tmp_path, monkeypatch):
     """A leftover TXT without a sidecar must NOT be adopted: it is moved aside
     and the audio transcribed fresh (recorders reset numbering — a stem match
@@ -939,6 +980,97 @@ def test_stage_audio_file_success(transcriber, tmp_path, monkeypatch):
     assert staged_path == staging_dir / "test.mp3"
     assert staged_path.exists()
     assert staged_path.read_bytes() == b"fake audio data"
+
+
+def test_stage_leaves_nothing_usable_when_the_copy_is_cut_short(
+    transcriber, tmp_path, monkeypatch
+):
+    """Unplugging the recorder mid-copy must not leave a file that looks ready.
+
+    A truncated staged file used to be transcribed and filed as a complete
+    note, and the full recording then came back as a second, duplicate one.
+    """
+    from src import transcriber as transcriber_module
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
+    recorder_file = tmp_path / "recorder" / "test.mp3"
+    recorder_file.parent.mkdir()
+    recorder_file.write_bytes(b"full recording, many bytes")
+
+    def truncated_copy(src, dst, *a, **k):
+        Path(dst).write_bytes(b"full rec")  # device vanished mid-write
+        return dst
+
+    monkeypatch.setattr(transcriber_module.shutil, "copy2", truncated_copy)
+
+    staged_path = transcriber._stage_audio_file(recorder_file)
+
+    assert staged_path is None
+    assert list(staging_dir.iterdir()) == []
+
+
+def test_staging_retention_keeps_anything_without_a_note(
+    transcriber, tmp_path, monkeypatch
+):
+    """A staged copy is the only original until its note exists — never drop
+    it on age alone, however old it is."""
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
+    old_untranscribed = staging_dir / "old.mp3"
+    old_untranscribed.write_bytes(b"audio that never became a note")
+    ancient = time.time() - 400 * 86400
+    os.utime(old_untranscribed, (ancient, ancient))
+
+    assert transcriber.prune_staging_dir() == 0
+    assert old_untranscribed.exists()
+
+
+def test_staging_retention_drops_old_recordings_that_have_a_note(
+    transcriber, tmp_path, monkeypatch
+):
+    """Once the transcript is in the index, an old copy is just disk use —
+    the staging dir used to grow without limit, invisibly."""
+    from src.fingerprint import compute_fingerprint
+    from src.vault_index import IndexEntry
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
+    old = staging_dir / "done.mp3"
+    old.write_bytes(b"audio with a note")
+    recent = staging_dir / "fresh.mp3"
+    recent.write_bytes(b"audio with a note, but recent")
+    ancient = time.time() - 400 * 86400
+    os.utime(old, (ancient, ancient))
+
+    for path in (old, recent):
+        fp = compute_fingerprint(path)
+        transcriber.vault_index.add(
+            fp,
+            IndexEntry(
+                fingerprint=fp,
+                source_filename=path.name,
+                source_volume="LS-P1",
+                markdown_path=f"{path.stem}.md",
+                versions=[{"version": 1, "markdown_path": f"{path.stem}.md"}],
+            ),
+        )
+
+    assert transcriber.prune_staging_dir() == 1
+    assert not old.exists()
+    assert recent.exists()  # inside the retention window
 
 
 def test_stage_audio_file_not_found(transcriber, tmp_path, monkeypatch):
@@ -3523,6 +3655,7 @@ def test_reconcile_idempotent_when_already_indexed(transcriber, tmp_path, monkey
     assert second == {
         "indexed": 0,
         "orphan_cleaned": 0,
+        "orphan_skipped": 0,
         "txt_cleaned": 0,
         "txt_recovered": 0,
     }
@@ -3554,6 +3687,114 @@ def test_reconcile_removes_orphan_vault_index_entry(transcriber, tmp_path, monke
 
     assert result["orphan_cleaned"] >= 1
     assert transcriber.vault_index.lookup("sha256:orphan") is None
+
+
+def _seed_note(vault_dir, name, fingerprint, source):
+    """Write a transcript note with the frontmatter reconciliation reads."""
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    (vault_dir / name).write_text(
+        "---\n"
+        f'title: "{name}"\n'
+        f"fingerprint: {fingerprint}\n"
+        f"source: {source}\n"
+        "---\n\n## Transcript\n\nX.\n"
+    )
+
+
+def test_reconcile_finds_notes_the_user_filed_into_subfolders(
+    transcriber, tmp_path, monkeypatch
+):
+    """Moving notes into folders is ordinary Obsidian housekeeping.
+
+    A flat scan could not see them, called their index entries orphaned, and
+    the next scan re-transcribed the whole archive — at cost, on every launch.
+    """
+    from src import config as config_module
+    from src.vault_index import IndexEntry
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setattr(transcriber.config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", vault)
+
+    _seed_note(vault / "Spotkania" / "2026", "meeting.md", "sha256:filed", "REC001.MP3")
+    transcriber.vault_index.add(
+        "sha256:filed",
+        IndexEntry(
+            fingerprint="sha256:filed",
+            source_filename="REC001.MP3",
+            source_volume="LS-P1",
+            markdown_path="meeting.md",
+            versions=[{"version": 1, "markdown_path": "meeting.md"}],
+        ),
+    )
+
+    result = transcriber.reconcile_existing_markdowns()
+
+    assert result["orphan_cleaned"] == 0
+    assert transcriber.vault_index.lookup("sha256:filed") is not None
+
+
+def test_reconcile_ignores_the_apps_own_generated_notes(
+    transcriber, tmp_path, monkeypatch
+):
+    """Digests and recall answers are not transcripts, however deep they sit."""
+    from src import config as config_module
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setattr(transcriber.config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", vault)
+
+    _seed_note(
+        vault / transcriber.config.DIGEST_DIR_NAME,
+        "2026-08-08 Synthesis.md",
+        "sha256:digest",
+        "digest.md",
+    )
+    _seed_note(vault / "Timshel Recall", "answer.md", "sha256:recall", "answer.md")
+    _seed_note(vault, "real-note.md", "sha256:real", "REC002.MP3")
+
+    found = {p.name for p in transcriber._vault_transcript_files(vault)}
+
+    assert found == {"real-note.md"}
+
+
+def test_reconcile_refuses_a_suspicious_mass_orphan_cleanup(
+    transcriber, tmp_path, monkeypatch
+):
+    """An unreadable/unsynced vault must not cost the user a re-transcription
+    of everything: when most of the index looks orphaned, keep it."""
+    from src import config as config_module
+    from src.vault_index import IndexEntry
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setattr(transcriber.config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", vault)
+
+    # The ratio is what's under test, so start from a known index — earlier
+    # tests in this file leave entries behind (see the note above).
+    for stale in list(transcriber.vault_index._data.get("entries", {})):
+        transcriber.vault_index.remove(stale)
+
+    for i in range(10):
+        transcriber.vault_index.add(
+            f"sha256:entry{i}",
+            IndexEntry(
+                fingerprint=f"sha256:entry{i}",
+                source_filename=f"REC{i:03d}.MP3",
+                source_volume="LS-P1",
+                markdown_path=f"note{i}.md",
+                versions=[{"version": 1, "markdown_path": f"note{i}.md"}],
+            ),
+        )
+
+    result = transcriber.reconcile_existing_markdowns()
+
+    assert result["orphan_cleaned"] == 0
+    assert result["orphan_skipped"] == 10
+    assert transcriber.vault_index.lookup("sha256:entry0") is not None
 
 
 def test_reconcile_counts_orphan_txt_for_recovery(transcriber, tmp_path, monkeypatch):

@@ -21,6 +21,10 @@ _ALLOWLIST = {
     "bootstrap.py",
     # External license endpoint (beta short-circuits before calling it).
     "config/license.py",
+    # Back-compat: reconciliation must skip a stray pre-rename ``.malinche``
+    # sidecar dir when walking a migrated vault, or its files read as
+    # transcripts.
+    "transcriber.py",
     # Back-compat: still exclude a pre-rename ``malinche-digest`` note and
     # skip the old ``.malinche`` sidecar when walking a migrated vault.
     "connections/candidate_assembly.py",
