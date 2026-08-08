@@ -1,6 +1,7 @@
 """Transcription engine for Timshel."""
 
 import fcntl
+import hashlib
 import json
 import os
 import platform
@@ -250,6 +251,8 @@ class Transcriber:
         self._ai_disabled_reason: Optional[str] = None
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
         self._session_failed_fingerprints: set = set()
+        self._postprocess_attempts: Dict[str, int] = {}
+        self._last_orphan_signature: Optional[str] = None
         # Recordings already lost to a stall once. A stall is treated as
         # transient (a busy CPU, a disk waking up, a backup running) and gets a
         # second chance on the next cycle — but only one, or a genuinely wedged
@@ -687,14 +690,18 @@ class Transcriber:
             )
         return pending_files
 
+    # A .partial older than this is debris from a killed copy, not a copy in
+    # flight: staging a recording takes seconds, not hours.
+    _PARTIAL_SWEEP_SECONDS = 6 * 3600
+
     def prune_staging_dir(self) -> int:
         """Drop staged copies that are old AND already have a note.
 
         The staging dir is a feature (retranscription, recovery without the
-        recorder), so this is retention, not cleanup: a file is only removed
-        once its transcript is safely in the index, and only after the
-        retention window. Anything not yet transcribed is never touched —
-        losing it would lose the recording.
+        recorder), so this is retention, not cleanup: a copy is only removed
+        once its note is verifiably ON DISK, and only after it has SAT HERE
+        for the retention window. Anything else is left alone — the staged
+        copy may be the only surviving original.
 
         Returns the number of files removed.
         """
@@ -711,17 +718,34 @@ class Transcriber:
         freed = 0
         for path in staging_dir.iterdir():
             try:
-                if (
-                    not path.is_file()
-                    or path.suffix.lower() not in self.config.AUDIO_EXTENSIONS
-                ):
+                if not path.is_file():
                     continue
                 stat = path.stat()
-                if stat.st_mtime > cutoff:
+
+                # An interrupted staging copy (SIGKILL, power loss) leaves a
+                # .partial behind; nothing else would ever collect it.
+                if path.suffix == ".partial":
+                    if stat.st_mtime < time.time() - self._PARTIAL_SWEEP_SECONDS:
+                        size = stat.st_size
+                        path.unlink()
+                        removed += 1
+                        freed += size
                     continue
+
+                if path.suffix.lower() not in self.config.AUDIO_EXTENSIONS:
+                    continue
+
+                # st_ctime, NOT st_mtime: copy2 preserves the RECORDING's
+                # timestamp, so a January recording imported in May would be
+                # "older than 30 days" the instant it was staged — deleted in
+                # the same batch that created it. ctime is bumped by the copy
+                # and the rename, so it measures time spent in staging.
+                if stat.st_ctime > cutoff:
+                    continue
+
                 fingerprint = compute_fingerprint(path)
-                if self.vault_index.lookup(fingerprint) is None:
-                    continue  # no note yet — this copy is the only original
+                if not self._note_exists_for(fingerprint):
+                    continue  # no note on disk — this copy may be the original
                 size = stat.st_size
                 path.unlink()
             except OSError as error:
@@ -732,13 +756,33 @@ class Transcriber:
 
         if removed:
             logger.info(
-                "Staging retention: removed %d transcribed recording(s) older than "
-                "%d days, freed %.1f MB",
+                "Staging retention: removed %d file(s) past the %d-day window, "
+                "freed %.1f MB",
                 removed,
                 keep_days,
                 freed / (1024 * 1024),
             )
         return removed
+
+    def _note_exists_for(self, fingerprint: str) -> bool:
+        """True when the index entry for ``fingerprint`` has a note on disk.
+
+        The index alone is not proof: an entry can outlive its note (the user
+        deletes it in Obsidian, or the orphan safety valve deliberately keeps
+        entries it refuses to clean). Trusting it would let retention delete
+        the only remaining copy of a recording whose note is already gone.
+        """
+        entry = self.vault_index.lookup(fingerprint)
+        if entry is None:
+            return False
+        candidates = [entry.markdown_path] + [
+            v.get("markdown_path", "") for v in (entry.versions or [])
+        ]
+        transcribe_dir = self.config.TRANSCRIBE_DIR
+        for rel in candidates:
+            if rel and (transcribe_dir / rel).exists():
+                return True
+        return False
 
     def _stage_audio_file(self, audio_file: Path) -> Optional[Path]:
         """Copy audio file from recorder to local staging directory.
@@ -2704,13 +2748,21 @@ Brak podsumowania AI. Możliwe przyczyny:
                     version = int(fm.get("version", "1") or "1")
                 except ValueError:
                     version = 1
+                # Path RELATIVE to the vault, not the bare name: consumers
+                # resolve it as TRANSCRIBE_DIR / markdown_path, so a note the
+                # user filed into a sub-folder would otherwise be recorded as
+                # a path that does not exist.
+                try:
+                    md_rel = md_path.relative_to(transcribe_dir).as_posix()
+                except ValueError:  # pragma: no cover - defensive
+                    md_rel = md_path.name
                 self.vault_index.add(
                     fingerprint,
                     IndexEntry(
                         fingerprint=fingerprint,
                         source_filename=source,
                         source_volume=fm.get("source_volume", ""),
-                        markdown_path=md_path.name,
+                        markdown_path=md_rel,
                         versions=[
                             {
                                 "version": version,
@@ -2718,7 +2770,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                                 "hostname": fm.get("transcribed_on", ""),
                                 "model": fm.get("model", ""),
                                 "language": fm.get("language", ""),
-                                "markdown_path": md_path.name,
+                                "markdown_path": md_rel,
                             }
                         ],
                     ),
@@ -2761,21 +2813,41 @@ Brak podsumowania AI. Możliwe przyczyny:
         # likely to be a bad read — an unmounted iCloud vault, a permission
         # blip, a folder the user just moved — than a real mass deletion.
         # Refuse it and keep the index; the next run reconciles for real.
-        if (
+        suspicious = (
             entries_snapshot
-            and len(orphans) > self._ORPHAN_CLEANUP_MIN
+            and len(orphans) >= self._ORPHAN_CLEANUP_MIN
             and len(orphans) > len(entries_snapshot) * self._ORPHAN_CLEANUP_MAX_RATIO
-        ):
-            result["orphan_skipped"] = len(orphans)
-            logger.warning(
-                "Reconciliation: %s of %s index entries look orphaned — refusing to "
-                "clean up. The vault at %s may be unreadable or still syncing; "
-                "no recording will be re-transcribed on a false alarm.",
-                len(orphans),
-                len(entries_snapshot),
-                transcribe_dir,
-            )
-            orphans = []
+        )
+        if suspicious:
+            # Confirm before acting, don't refuse forever. A transient bad read
+            # (vault unmounted, iCloud still syncing) looks different on the
+            # next run; a real mass deletion looks identical, and then the
+            # cleanup must go through — otherwise those entries are immortal
+            # and their recordings can never be transcribed again.
+            signature = hashlib.sha256(
+                "\n".join(sorted(orphans)).encode("utf-8")
+            ).hexdigest()
+            if signature != self._last_orphan_signature:
+                self._last_orphan_signature = signature
+                result["orphan_skipped"] = len(orphans)
+                logger.warning(
+                    "Reconciliation: %s of %s index entries look orphaned — holding "
+                    "off. The vault at %s may be unreadable or still syncing; if the "
+                    "next run sees exactly the same picture, the cleanup proceeds.",
+                    len(orphans),
+                    len(entries_snapshot),
+                    transcribe_dir,
+                )
+                orphans = []
+            else:
+                logger.warning(
+                    "Reconciliation: same %s orphaned entries as the previous run — "
+                    "treating the deletion as real and cleaning up.",
+                    len(orphans),
+                )
+                self._last_orphan_signature = None
+        else:
+            self._last_orphan_signature = None
 
         for fp in orphans:
             # Brak MD z matching fingerprint: faktyczny orphan.
@@ -3160,18 +3232,7 @@ Brak podsumowania AI. Możliwe przyczyny:
                     version=1,
                 )
             else:
-                # Back off for the session. Post-processing runs a PAID
-                # summary, and the periodic scan comes round every 30 s: a
-                # failure that persists (a full disk, an unwritable vault)
-                # would otherwise re-buy the same summary twice a minute,
-                # invisibly — the AI-hours counter only ticks on success.
-                self._session_failed_fingerprints.add(fingerprint)
-                logger.warning(
-                    "⚠️  TXT exists but post-processing failed: %s — not retrying "
-                    "this session (fingerprint: %s)",
-                    audio_file.name,
-                    fingerprint,
-                )
+                self._note_postprocess_failure(audio_file, fingerprint)
             return success
 
         # Run whisper transcription. The sidecar written first claims the
@@ -3221,16 +3282,7 @@ Brak podsumowania AI. Możliwe przyczyny:
         if success:
             logger.info(f"✓ Complete: {audio_file.name}")
         else:
-            # Same backoff as the adoption path above: the TXT survives, so
-            # the next scan would re-enter through it and re-buy the summary
-            # every 30 s until the underlying problem is fixed.
-            self._session_failed_fingerprints.add(fingerprint)
-            logger.warning(
-                "⚠️  Transcription complete but post-processing failed: %s — not "
-                "retrying this session (fingerprint: %s)",
-                audio_file.name,
-                fingerprint,
-            )
+            self._note_postprocess_failure(audio_file, fingerprint)
 
         if success and md_path is not None:
             self._index_completed_transcription(
@@ -3244,6 +3296,37 @@ Brak podsumowania AI. Możliwe przyczyny:
             self._post_note_hooks(md_path)
 
         return success
+
+    # Post-processing buys a summary, and the periodic scan comes round every
+    # 30 s: an unattended failure loop is real money, invisibly spent (the
+    # AI-hours counter only ticks on success). But blacklisting on the first
+    # failure trades that for a worse outcome — a two-minute iCloud outage
+    # would cost the recording its note for the rest of a daemon session that
+    # can run for weeks. A few spaced attempts cover the transient case and
+    # still cap the spend.
+    _POSTPROCESS_MAX_ATTEMPTS = 3
+
+    def _note_postprocess_failure(self, audio_file: Path, fingerprint: str) -> None:
+        """Count a failed post-process; give up only after several attempts."""
+        attempts = self._postprocess_attempts.get(fingerprint, 0) + 1
+        self._postprocess_attempts[fingerprint] = attempts
+        if attempts >= self._POSTPROCESS_MAX_ATTEMPTS:
+            self._session_failed_fingerprints.add(fingerprint)
+            logger.warning(
+                "⚠️  Post-processing failed %d times for %s — not retrying this "
+                "session (fingerprint: %s). Use 'Retranscribe file…' once the "
+                "cause is fixed.",
+                attempts,
+                audio_file.name,
+                fingerprint,
+            )
+        else:
+            logger.warning(
+                "⚠️  Post-processing failed for %s (attempt %d of %d) — will retry",
+                audio_file.name,
+                attempts,
+                self._POSTPROCESS_MAX_ATTEMPTS,
+            )
 
     def _post_note_hooks(self, md_path: Path) -> None:
         """Fire the two opportunistic post-note hooks: bump the digest new-note
