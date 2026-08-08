@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 from src import runtime_deps
@@ -62,34 +63,48 @@ def test_ensure_importable_returns_false_when_pip_fails(monkeypatch):
     assert runtime_deps.ensure_importable("anthropic") is False
 
 
+@contextmanager
 def _drift_probe(monkeypatch, runtime_dir_versions):
-    """Arrange the runtime dir to report `runtime_dir_versions` for sqlite-vec."""
-    monkeypatch.setattr(
-        runtime_deps, "_runtime_dir_versions", lambda _dist: list(runtime_dir_versions)
-    )
-    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
-    monkeypatch.setattr(runtime_deps, "_DRIFT_WARNED", set())
-    pip_calls = []
-    monkeypatch.setattr(
-        runtime_deps, "_pip_install", lambda spec, _t: pip_calls.append(spec) or True
-    )
-    warnings = []
-    monkeypatch.setattr(
-        runtime_deps.logger,
-        "warning",
-        lambda msg, *a: warnings.append(msg % a if a else msg),
-    )
-    return pip_calls, warnings
+    """Arrange the runtime dir to report `runtime_dir_versions` for sqlite-vec.
+
+    A context manager on purpose: patching ``builtins.__import__`` for the
+    whole test means pytest is still running under the fake importer when it
+    builds a failure report, which turns any red assertion into an
+    INTERNALERROR that aborts the entire session. Undoing the patch before
+    the assertions keeps a failure readable.
+    """
+    pip_calls: list = []
+    warnings: list = []
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            runtime_deps,
+            "_runtime_dir_versions",
+            lambda _dist: list(runtime_dir_versions),
+        )
+        patch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
+        patch.setattr(runtime_deps, "_DRIFT_WARNED", set())
+        patch.setattr(
+            runtime_deps,
+            "_pip_install",
+            lambda spec, _t: pip_calls.append(spec) or True,
+        )
+        patch.setattr(
+            runtime_deps.logger,
+            "warning",
+            lambda msg, *a: warnings.append(msg % a if a else msg),
+        )
+        yield pip_calls, warnings
 
 
 def test_drift_is_reported_once_and_never_self_repaired(monkeypatch):
     """No pip: repairing in place is unsound (native-extension skew) and
     repairing before import never clears (pip --target leaves the old
     .dist-info), so it would re-run on every launch."""
-    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.6"])
+    with _drift_probe(monkeypatch, ["0.1.6"]) as (pip_calls, warnings):
+        first = runtime_deps.ensure_importable("sqlite_vec")
+        second = runtime_deps.ensure_importable("sqlite_vec")
 
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert first is True and second is True
     assert pip_calls == []
     assert len(warnings) == 1
     assert "0.1.6" in warnings[0] and "0.1.9" in warnings[0]
@@ -99,26 +114,46 @@ def test_drift_is_reported_once_and_never_self_repaired(monkeypatch):
 def test_superseded_dist_info_alongside_the_pin_is_not_a_drift(monkeypatch):
     """`pip --target --upgrade` leaves the old .dist-info behind; as long as
     the pinned version is present the install is fine."""
-    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.6", "0.1.9"])
+    with _drift_probe(monkeypatch, ["0.1.6", "0.1.9"]) as (pip_calls, warnings):
+        result = runtime_deps.ensure_importable("sqlite_vec")
 
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert result is True
     assert pip_calls == [] and warnings == []
 
 
 def test_no_action_when_dep_is_not_in_the_runtime_dir(monkeypatch):
     """A dev venv or bundle copy is not ours to manage."""
-    pip_calls, warnings = _drift_probe(monkeypatch, [])
+    with _drift_probe(monkeypatch, []) as (pip_calls, warnings):
+        result = runtime_deps.ensure_importable("sqlite_vec")
 
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert result is True
     assert pip_calls == [] and warnings == []
 
 
 def test_no_action_when_pin_matches(monkeypatch):
     """A runtime-dir install already at the pinned version is silent."""
-    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.9"])
+    with _drift_probe(monkeypatch, ["0.1.9"]) as (pip_calls, warnings):
+        result = runtime_deps.ensure_importable("sqlite_vec")
 
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert result is True
     assert pip_calls == [] and warnings == []
+
+
+def test_damaged_dist_info_never_breaks_the_probe(monkeypatch, tmp_path):
+    """One interrupted install must not take down ensure_importable — this
+    runs on the startup path, where callers treat it as best-effort."""
+    monkeypatch.setattr(runtime_deps, "RUNTIME_DEPS_DIR", tmp_path)
+
+    garbled = tmp_path / "broken-0.1.6.dist-info"
+    garbled.mkdir()
+    (garbled / "METADATA").write_bytes(b"\x80\x81not utf-8")
+    headerless = tmp_path / "sqlite_vec-0.1.9.dist-info"
+    headerless.mkdir()
+    (headerless / "METADATA").write_text("Metadata-Version: 2.1\nName: sqlite-vec\n")
+
+    # No exception, and the version-less entry is dropped rather than
+    # returned as None (which would blow up formatting the warning).
+    assert runtime_deps._runtime_dir_versions("sqlite-vec") == []
 
 
 def test_runtime_dir_versions_are_scoped_and_collect_every_dist_info(

@@ -8,7 +8,8 @@ no quarantine and silently skips the exact step a tester hits — verify with
 `xattr -p com.apple.quarantine <dmg>`).
 
 Preconditions: `make test` + `make lint` green; `make release-tester` produced
-`dist/Timshel-<ver>-ARM64-UNSIGNED.dmg` + `.sha256`.
+`dist/Timshel-<ver>-ARM64-TESTER-UNSIGNED.dmg` + `.sha256`. The `TESTER`
+in the filename is the check that H1 instrumentation is on.
 
 1. [ ] Quarantine bit present on the DMG; mount; drag to /Applications.
 2. [ ] Double-click → Gatekeeper blocks. **Right-click → Open** works. On

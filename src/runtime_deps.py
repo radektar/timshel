@@ -111,12 +111,21 @@ def _runtime_dir_versions(dist_name: str) -> list[str]:
     """
     found = []
     try:
-        for dist in _importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)]):
-            name = dist.metadata["Name"] or ""
-            if name.replace("_", "-").lower() == dist_name.replace("_", "-").lower():
-                found.append(dist.version)
-    except OSError:  # pragma: no cover - unreadable runtime dir
+        dists = list(_importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)]))
+    except Exception:  # noqa: BLE001 - diagnostics must never break startup
         return []
+    wanted = dist_name.replace("_", "-").lower()
+    for dist in dists:
+        # One damaged package (an interrupted pip, a full disk) must not take
+        # the whole probe down with it — and this runs on the startup path,
+        # where callers treat ensure_importable as best-effort.
+        try:
+            name = (dist.metadata["Name"] or "").replace("_", "-").lower()
+            version = dist.version
+        except Exception:  # noqa: BLE001 - unreadable/garbled METADATA
+            continue
+        if name == wanted and version:
+            found.append(version)
     return found
 
 

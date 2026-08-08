@@ -10,8 +10,11 @@ VERSIONS = {
 
 # SHA256 checksums (verified from deps-v1.0.0 release)
 CHECKSUMS = {
-    # Verified from deps-v1.1.0 release assets.
+    # NOT in the deps-v1.1.0 release (404 as of 2026-08-08) — this describes a
+    # tarball produced locally by build-whisper.yml but never uploaded. See the
+    # note on URLS["whisper_bundled"] below.
     "whisper-bundled-arm64.tar.gz": "0da3355a879260d23c2e31e082e36de1d19d9d25fb8045771b3bc679f6c1dc22",
+    # Verified from deps-v1.1.0 release assets.
     "whisper-cli": "ddb643d77e6d479ee9e1b7beafa2a9f174c58ab048db2f412bf85fc1ff3e5362",
     "ffmpeg-arm64": "b68f795f7fb4528daf697f57a2b6780846a1ae762a71907e994442ad103ee88f",
     "ggml-tiny.bin": "sha1:bd577a113a864445d4c299885e0cb97d4ba92b5f",

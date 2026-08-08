@@ -7,16 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.0-beta.18] - 2026-08-07
+## [2.0.0-beta.18] - 2026-08-08
 
 ### Fixed
 - `make clean` no longer reaches into `dist/` — deleting caches inside a built
   `.app` was silently invalidating the codesign seal, and the broken bundle
   would only surface as a Gatekeeper rejection on the tester's Mac.
 - The DMG build (`create_dmg.sh`) refuses to package a bundle whose signature
-  fails `codesign --verify`; the bundle smoke test verifies the seal both
-  before and after launching the app, so a launch that writes back into the
-  bundle is detected here instead of on a tester's Mac.
+  fails `codesign --verify`, and verifies it once more **inside the finished
+  image** — the copy a tester actually double-clicks. The bundle smoke test
+  verifies the seal both before and after launching the app, so a launch that
+  writes back into the bundle is detected here instead of on a tester's Mac.
+- A tester DMG is now named `…-TESTER-UNSIGNED.dmg`. A tester build and a
+  plain one are different products (verdict pass, four extra channels,
+  metrics, Opus 5) that used to ship under the same filename, so mixing them
+  up would silently invalidate a three-week measurement.
 - Engine download URLs point at the renamed `radektar/timshel` repo directly
   instead of riding a GitHub redirect from the old name; the rename-guard test
   now covers `setup/checksums.py` so the next drift fails the suite.
@@ -33,12 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `sqlite-vec` pinned to 0.1.9 and `fastembed` to 0.8.0 (both pre-1.0) for
-  source-run auto-installs and the dev suite alike. An auto-install that
-  predates the pin is re-installed at the pinned version on next use, before
-  the module is imported — after that point pip would swap the native
-  extension under the running wrapper, so a drift discovered late is only
-  reported (once) with a note to restart. The shipped app has no pip, so it
-  never auto-installs and none of this applies to it.
+  source-run auto-installs and the dev suite alike. The pin governs fresh
+  installs; an older auto-install that sits off it is reported once in the
+  log, with the directory to delete, and never repaired in place — pip over
+  a live import swaps the native extension under the running wrapper, and
+  pip beforehand leaves the superseded `.dist-info` behind so the drift
+  would never clear. The shipped app has no pip, so none of this applies to
+  it.
 - Tester onboarding privacy note now lists everything the feedback zip carries
   (digest quotes, the triage log, per-digest cost, hostname in the manifest),
   instead of claiming digest text and titles and "nothing else".
