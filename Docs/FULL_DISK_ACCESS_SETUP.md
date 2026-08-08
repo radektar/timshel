@@ -1,4 +1,4 @@
-# Full Disk Access setup for Malinche
+# Full Disk Access setup for Timshel
 
 > **Version:** v2.0.0-beta.18 (development)
 >

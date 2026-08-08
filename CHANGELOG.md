@@ -23,14 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The deps-building CI workflow (`build-whisper.yml`) strips any
   runner-workspace rpath instead of a hardcoded pre-rename path that could
   never match again.
+- The dormant "bundled" whisper distribution asks for its own asset instead
+  of falling back to the bare `whisper-cli` URL and checking a 3 MB binary
+  against a 1.2 MB tarball's checksum. (The asset itself is still missing
+  from the deps release — see the note in `checksums.py`.)
+- Doc headers that state the app version are pinned by a test; they had
+  drifted ten releases behind, so a tester reading README saw a version that
+  never existed on their machine.
 
 ### Changed
 - `sqlite-vec` pinned to 0.1.9 and `fastembed` to 0.8.0 (both pre-1.0) for
-  source-run auto-installs and the dev suite alike. An older auto-install that
-  drifted off the pin is reported in the log with the directory to delete, not
-  silently re-installed — pip-ing over a package that is already imported would
-  swap the native extension under the running wrapper. The shipped app ships
-  without pip, so it never auto-installs and this affects source runs only.
+  source-run auto-installs and the dev suite alike. An auto-install that
+  predates the pin is re-installed at the pinned version on next use, before
+  the module is imported — after that point pip would swap the native
+  extension under the running wrapper, so a drift discovered late is only
+  reported (once) with a note to restart. The shipped app has no pip, so it
+  never auto-installs and none of this applies to it.
 - Tester onboarding privacy note now lists everything the feedback zip carries
   (digest quotes, the triage log, per-digest cost, hostname in the manifest),
   instead of claiming digest text and titles and "nothing else".

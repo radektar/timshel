@@ -8,9 +8,11 @@ beyond reading the vault and writing the zip.
 
 Privacy — what actually leaves the tester's Mac: digest text (including the
 short quotes a digest cites as evidence), note titles, the vocabulary, the
-triage log (kept/dismissed/handoff with timestamps and target tool), per-digest
-cost/coverage metrics, and a manifest carrying the app version, tester-mode
-flag and the machine's hostname. Recordings, transcripts and full note bodies
+triage log (kept/dismissed/handoff with timestamps and target tool), the
+dismissal/digest history and the latest digest in structured form — those two
+carry ABSOLUTE PATHS, i.e. the macOS account name and vault layout —
+per-digest cost/coverage metrics, and a manifest carrying the app version,
+tester-mode flag and the machine's hostname. Recordings, transcripts and full note bodies
 never do; app logs are deliberately excluded. Keep
 ``Docs/TESTER-ONBOARDING.md`` in step with this list — it is the promise the
 tester reads before agreeing to send the zip.
@@ -97,9 +99,7 @@ def build_feedback_zip(vault: Path, dest_dir: Path, *, timestamp: str) -> Path:
     zip_path = dest_dir / f"Timshel-feedback-{timestamp}.zip"
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(
-            "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)
-        )
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         for arcname, path in members:
             zf.write(path, arcname)
 

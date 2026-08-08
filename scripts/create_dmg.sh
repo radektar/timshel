@@ -84,14 +84,22 @@ MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/timshel-dmg-verify.XXXXXX")"
 # Conflating the last two would delete a good image just because the machine
 # could not mount it (already attached, no mount rights in CI, …).
 DMG_VERIFY_STATUS=2
+# No -quiet on attach: when this fails, its message IS the diagnosis.
 if hdiutil attach "${DIST_DIR}/${DMG_FILENAME}" -mountpoint "${MOUNT_POINT}" \
-    -nobrowse -readonly -quiet; then
+    -nobrowse -readonly; then
     if codesign --verify --strict --deep "${MOUNT_POINT}/${APP_NAME}.app"; then
         DMG_VERIFY_STATUS=0
     else
         DMG_VERIFY_STATUS=1
     fi
-    hdiutil detach "${MOUNT_POINT}" -quiet || hdiutil detach "${MOUNT_POINT}" -force -quiet || true
+    if ! hdiutil detach "${MOUNT_POINT}" -quiet; then
+        if ! hdiutil detach "${MOUNT_POINT}" -force -quiet; then
+            # Leaking a mount is not fatal to the artifact, but it must be
+            # said out loud — the next build's attach would fail on it.
+            echo "⚠️  Warning: could not unmount ${MOUNT_POINT} — detach it by hand:"
+            echo "    hdiutil detach '${MOUNT_POINT}' -force"
+        fi
+    fi
 fi
 rmdir "${MOUNT_POINT}" 2>/dev/null || true
 
@@ -101,9 +109,13 @@ case "${DMG_VERIFY_STATUS}" in
      echo "   Do not ship this image — rebuild and repackage."
      rm -f "${DIST_DIR}/${DMG_FILENAME}"
      exit 1 ;;
-  *) echo "❌ Error: could not mount ${DMG_FILENAME} to verify it."
-     echo "   The image is KEPT at ${DIST_DIR}/${DMG_FILENAME} — verify it by"
-     echo "   hand before shipping: open it, then"
+  *) echo "❌ Error: could not mount ${DMG_FILENAME} to verify it (see above)."
+     # The image is intact as far as we know, so leave it usable: write the
+     # checksum the release step would have produced, since aborting here
+     # skips that step entirely.
+     shasum -a 256 "${DIST_DIR}/${DMG_FILENAME}" > "${DIST_DIR}/${DMG_FILENAME}.sha256" || true
+     echo "   The image is KEPT at ${DIST_DIR}/${DMG_FILENAME} (checksum written)."
+     echo "   Verify it by hand before shipping: open it, then"
      echo "   codesign --verify --strict --deep /Volumes/*/${APP_NAME}.app"
      exit 1 ;;
 esac

@@ -35,10 +35,15 @@ DEPS_REPO_BASE = "https://github.com/radektar/timshel/releases/download/deps-v1.
 URLS = {
     "whisper": f"{DEPS_REPO_BASE}/whisper-cli",
     # The "bundled" distribution's tarball. Dormant while
-    # VERSIONS["whisper_distribution"] is "static", but it must be listed:
-    # without it the bundled path fell back to the bare whisper-cli URL and
-    # verified a 3 MB binary against the 1.2 MB tarball's checksum, so
-    # flipping that one constant could never install.
+    # VERSIONS["whisper_distribution"] is "static", and listed here so the
+    # path at least asks for the right asset: without it the bundled download
+    # fell back to the bare whisper-cli URL and verified a 3 MB binary against
+    # the 1.2 MB tarball's checksum.
+    # NOT SHIPPABLE YET — verified 2026-08-08: the deps-v1.1.0 release carries
+    # only whisper-cli and ffmpeg-arm64, so this URL 404s. Publish the tarball
+    # (workflow: .github/workflows/build-whisper.yml) BEFORE flipping
+    # whisper_distribution to "bundled"; the CHECKSUMS/SIZES entries below
+    # describe an asset that is not uploaded.
     "whisper_bundled": f"{DEPS_REPO_BASE}/whisper-bundled-arm64.tar.gz",
     "ffmpeg": f"{DEPS_REPO_BASE}/ffmpeg-arm64",
     "model_tiny": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",

@@ -101,54 +101,54 @@ def importable(module_name: str) -> bool:
         return False
 
 
-def _runtime_dir_version(dist_name: str) -> str | None:
-    """Version of ``dist_name`` as installed in RUNTIME_DEPS_DIR, if any.
+def _runtime_dir_versions(dist_name: str) -> list[str]:
+    """All versions of ``dist_name`` recorded in RUNTIME_DEPS_DIR.
 
     Scoped to that directory on purpose: a bare ``metadata.version`` resolves
-    against the whole sys.path and would report a dev venv's copy.
+    against the whole sys.path and would report a dev venv's copy. Returns a
+    list because ``pip install --target --upgrade`` leaves the previous
+    ``.dist-info`` behind, so one directory can claim several versions.
     """
+    found = []
     try:
-        dists = _importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)])
-        for dist in dists:
+        for dist in _importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)]):
             name = dist.metadata["Name"] or ""
             if name.replace("_", "-").lower() == dist_name.replace("_", "-").lower():
-                return dist.version
+                found.append(dist.version)
     except OSError:  # pragma: no cover - unreadable runtime dir
-        return None
-    return None
+        return []
+    return found
 
 
-def _repin_if_drifted(module_name: str, spec: str) -> None:
-    """Reinstall an auto-installed dep that drifted off its ``==`` pin.
+def _warn_if_pin_drifted(module_name: str, spec: str) -> None:
+    """Report — once — an auto-installed dep that is off its ``==`` pin.
 
-    Called BEFORE the module is imported — that is the only safe moment.
-    Re-installing over a live import would swap the native extension under
-    the running Python wrapper (a 0.1.6 sqlite-vec wrapper calling a 0.1.9
-    ``vec0`` — the very skew the pin exists to prevent), so once something is
-    in ``sys.modules`` this backs off to a warning instead.
+    Deliberately does not self-repair. Two attempts proved the automation
+    cannot be made honest here: pip over a live import swaps the native
+    extension under the running wrapper, and pip *before* the import leaves
+    the superseded ``.dist-info`` in place, so the drift never clears and the
+    repair re-runs (blocking, up to 180 s) on every single launch. A stale
+    runtime dir is rare and the manual fix is one command, so we say it
+    plainly instead of pretending to fix it.
     """
     if "==" not in spec:
         return
     dist_name, pinned = spec.split("==", 1)
-    installed = _runtime_dir_version(dist_name)
-    if installed is None or installed == pinned:
-        return  # not ours to manage, or already at the pin
+    versions = _runtime_dir_versions(dist_name)
+    if not versions or pinned in versions:
+        return  # not ours to manage, or the pin is present
 
-    if module_name in sys.modules:
-        if module_name not in _DRIFT_WARNED:
-            _DRIFT_WARNED.add(module_name)
-            logger.warning(
-                "%s is loaded at %s, pinned at %s — restart the app to re-pin",
-                module_name,
-                installed,
-                pinned,
-            )
+    if module_name in _DRIFT_WARNED:
         return
-
-    logger.info(
-        "Re-pinning %s: %s installed, %s pinned", module_name, installed, pinned
+    _DRIFT_WARNED.add(module_name)
+    logger.warning(
+        "%s in runtime deps is %s, pinned at %s — delete %s and relaunch to "
+        "reinstall at the pinned version",
+        module_name,
+        ", ".join(sorted(versions)),
+        pinned,
+        RUNTIME_DEPS_DIR,
     )
-    _pip_install(spec, RUNTIME_DEPS_DIR)
 
 
 def ensure_importable(module_name: str) -> bool:
@@ -157,15 +157,13 @@ def ensure_importable(module_name: str) -> bool:
 
     spec = SAFEGUARDED_PACKAGES.get(module_name)
 
-    # Repair a pre-pin auto-install while nothing of it is loaded yet.
-    if spec and not _is_bundled_app():
-        _repin_if_drifted(module_name, spec)
-
     try:
         __import__(module_name)
     except ImportError:
         pass
     else:
+        if spec and not _is_bundled_app():
+            _warn_if_pin_drifted(module_name, spec)
         return True
 
     if not spec:

@@ -62,16 +62,12 @@ def test_ensure_importable_returns_false_when_pip_fails(monkeypatch):
     assert runtime_deps.ensure_importable("anthropic") is False
 
 
-def _drift_probe(monkeypatch, runtime_dir_version, *, already_loaded=False):
-    """Arrange a runtime-dir install at `runtime_dir_version` (None = absent)."""
+def _drift_probe(monkeypatch, runtime_dir_versions):
+    """Arrange the runtime dir to report `runtime_dir_versions` for sqlite-vec."""
     monkeypatch.setattr(
-        runtime_deps, "_runtime_dir_version", lambda _dist: runtime_dir_version
+        runtime_deps, "_runtime_dir_versions", lambda _dist: list(runtime_dir_versions)
     )
     monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: MagicMock())
-    if already_loaded:
-        monkeypatch.setitem(runtime_deps.sys.modules, "sqlite_vec", MagicMock())
-    else:
-        monkeypatch.delitem(runtime_deps.sys.modules, "sqlite_vec", raising=False)
     monkeypatch.setattr(runtime_deps, "_DRIFT_WARNED", set())
     pip_calls = []
     monkeypatch.setattr(
@@ -86,29 +82,32 @@ def _drift_probe(monkeypatch, runtime_dir_version, *, already_loaded=False):
     return pip_calls, warnings
 
 
-def test_drifted_install_is_repinned_before_import(monkeypatch):
-    """A pre-pin auto-install is repaired while nothing of it is loaded."""
-    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.6")
-
-    assert runtime_deps.ensure_importable("sqlite_vec") is True
-    assert pip_calls == [runtime_deps.SAFEGUARDED_PACKAGES["sqlite_vec"]]
-    assert warnings == []
-
-
-def test_loaded_module_is_never_repinned_in_place(monkeypatch):
-    """Once imported, pip would swap the native extension under the live
-    wrapper — so the drift is only reported, once."""
-    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.6", already_loaded=True)
+def test_drift_is_reported_once_and_never_self_repaired(monkeypatch):
+    """No pip: repairing in place is unsound (native-extension skew) and
+    repairing before import never clears (pip --target leaves the old
+    .dist-info), so it would re-run on every launch."""
+    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.6"])
 
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == []
-    assert len(warnings) == 1 and "0.1.6" in warnings[0] and "0.1.9" in warnings[0]
+    assert len(warnings) == 1
+    assert "0.1.6" in warnings[0] and "0.1.9" in warnings[0]
+    assert str(runtime_deps.RUNTIME_DEPS_DIR) in warnings[0]
+
+
+def test_superseded_dist_info_alongside_the_pin_is_not_a_drift(monkeypatch):
+    """`pip --target --upgrade` leaves the old .dist-info behind; as long as
+    the pinned version is present the install is fine."""
+    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.6", "0.1.9"])
+
+    assert runtime_deps.ensure_importable("sqlite_vec") is True
+    assert pip_calls == [] and warnings == []
 
 
 def test_no_action_when_dep_is_not_in_the_runtime_dir(monkeypatch):
     """A dev venv or bundle copy is not ours to manage."""
-    pip_calls, warnings = _drift_probe(monkeypatch, None)
+    pip_calls, warnings = _drift_probe(monkeypatch, [])
 
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == [] and warnings == []
@@ -116,23 +115,29 @@ def test_no_action_when_dep_is_not_in_the_runtime_dir(monkeypatch):
 
 def test_no_action_when_pin_matches(monkeypatch):
     """A runtime-dir install already at the pinned version is silent."""
-    pip_calls, warnings = _drift_probe(monkeypatch, "0.1.9")
+    pip_calls, warnings = _drift_probe(monkeypatch, ["0.1.9"])
 
     assert runtime_deps.ensure_importable("sqlite_vec") is True
     assert pip_calls == [] and warnings == []
 
 
-def test_runtime_dir_version_ignores_other_paths(monkeypatch, tmp_path):
-    """The version probe is scoped to the runtime dir, not the whole path."""
+def test_runtime_dir_versions_are_scoped_and_collect_every_dist_info(
+    monkeypatch, tmp_path
+):
+    """The probe reads only the runtime dir — and sees ALL its dist-infos."""
     monkeypatch.setattr(runtime_deps, "RUNTIME_DEPS_DIR", tmp_path)
-    assert runtime_deps._runtime_dir_version("sqlite-vec") is None
+    assert runtime_deps._runtime_dir_versions("sqlite-vec") == []
 
-    dist_info = tmp_path / "sqlite_vec-0.1.6.dist-info"
-    dist_info.mkdir()
-    (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: sqlite-vec\nVersion: 0.1.6\n"
-    )
-    assert runtime_deps._runtime_dir_version("sqlite-vec") == "0.1.6"
+    for version in ("0.1.6", "0.1.9"):
+        dist_info = tmp_path / f"sqlite_vec-{version}.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: sqlite-vec\nVersion: {version}\n"
+        )
+    assert sorted(runtime_deps._runtime_dir_versions("sqlite-vec")) == [
+        "0.1.6",
+        "0.1.9",
+    ]
 
 
 def test_runtime_dir_added_to_sys_path_once(monkeypatch):

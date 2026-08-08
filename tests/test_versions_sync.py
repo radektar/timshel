@@ -42,7 +42,25 @@ _VERSIONED_DOCS = (
 # Whole version tokens only. A substring check would pass `v2.0.0` against a
 # header still saying `v2.0.0-beta.18` — going blind at the GA bump, the one
 # release it most needs to catch.
-_VERSION_TOKEN = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
+# The pre-release suffix must not swallow sentence punctuation: a greedy
+# `[0-9A-Za-z.]+` turns "v2.0.0-beta.18." into a token with a trailing dot.
+_VERSION_TOKEN = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?")
+
+# The line that states what the doc describes ("> **Version:** …" /
+# "- Current version: …"). Checking a whole 15-line head is not enough:
+# README and CLAUDE also name the GA target on that same line ("→ v2.0.0 (in
+# preparation)"), so at the GA bump the target token would satisfy an
+# any-token check while the stated version stayed on beta.18.
+_VERSION_LINE = re.compile(r"^\W*(?:\*\*)?(?:Current version|Version)(?:\*\*)?:", re.I)
+
+
+def _stated_version(head_lines: list[str]) -> str | None:
+    """First version token on the doc's version line — what it claims to be."""
+    for line in head_lines:
+        if _VERSION_LINE.match(line.strip()):
+            match = _VERSION_TOKEN.search(line)
+            return match.group(0) if match else None
+    return None
 
 
 def test_docs_headers_state_the_current_version() -> None:
@@ -52,10 +70,8 @@ def test_docs_headers_state_the_current_version() -> None:
     stale = {}
     for rel in _VERSIONED_DOCS:
         # The header is in the first few lines; later mentions are history.
-        head = "\n".join((repo / rel).read_text(encoding="utf-8").splitlines()[:15])
-        tokens = set(_VERSION_TOKEN.findall(head))
-        # README/CLAUDE headers also name the GA target ("→ v2.0.0 (in prep)"),
-        # so the current version must be present, not merely some version.
-        if f"v{version}" not in tokens:
-            stale[rel] = sorted(tokens) or ["<no version token>"]
+        head = (repo / rel).read_text(encoding="utf-8").splitlines()[:15]
+        stated = _stated_version(head)
+        if stated != f"v{version}":
+            stale[rel] = stated or "<no version line>"
     assert not stale, f"doc headers not on v{version}: {stale}"
