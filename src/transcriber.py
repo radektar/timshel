@@ -1,7 +1,6 @@
 """Transcription engine for Timshel."""
 
 import fcntl
-import hashlib
 import json
 import os
 import platform
@@ -252,7 +251,6 @@ class Transcriber:
         self.ai_billing_callback: Optional[Callable[[Exception], None]] = None
         self._session_failed_fingerprints: set = set()
         self._postprocess_attempts: Dict[str, int] = {}
-        self._last_orphan_signature: Optional[str] = None
         # Recordings already lost to a stall once. A stall is treated as
         # transient (a busy CPU, a disk waking up, a backup running) and gets a
         # second chance on the next cycle — but only one, or a genuinely wedged
@@ -743,8 +741,15 @@ class Transcriber:
                 if stat.st_ctime > cutoff:
                     continue
 
-                fingerprint = compute_fingerprint(path)
-                if not self._note_exists_for(fingerprint):
+                # Match on filename+size, not a recomputed fingerprint: a
+                # Voice Memo is indexed with its filename-derived recording
+                # time (its mtime lies), so re-hashing here would produce a
+                # different fingerprint, find nothing, and keep every imported
+                # memo forever. This lookup also skips a 1 MB read per file.
+                entry = self.vault_index.lookup_by_filename_size(
+                    path.name, stat.st_size
+                )
+                if entry is None or not self._entry_note_on_disk(entry):
                     continue  # no note on disk — this copy may be the original
                 size = stat.st_size
                 path.unlink()
@@ -764,15 +769,14 @@ class Transcriber:
             )
         return removed
 
-    def _note_exists_for(self, fingerprint: str) -> bool:
-        """True when the index entry for ``fingerprint`` has a note on disk.
+    def _entry_note_on_disk(self, entry) -> bool:
+        """True when an index entry's note actually exists in the vault.
 
         The index alone is not proof: an entry can outlive its note (the user
         deletes it in Obsidian, or the orphan safety valve deliberately keeps
         entries it refuses to clean). Trusting it would let retention delete
         the only remaining copy of a recording whose note is already gone.
         """
-        entry = self.vault_index.lookup(fingerprint)
         if entry is None:
             return False
         candidates = [entry.markdown_path] + [
@@ -825,26 +829,8 @@ class Transcriber:
                     # (might be a race condition with unmounting)
                     pass
 
-            # Copy to a temp name and rename only once the copy is complete.
-            # Copying straight onto the final name meant that unplugging the
-            # recorder mid-copy left a truncated file that looked ready: it got
-            # transcribed and filed as a complete note, and the full recording
-            # later came back as a second, duplicate one.
-            tmp_path = staged_path.with_name(staged_path.name + ".partial")
             logger.debug(f"📋 Staging file: {audio_file.name}")
-            try:
-                shutil.copy2(audio_file, tmp_path)
-                source_size = audio_file.stat().st_size
-                staged_size = tmp_path.stat().st_size
-                if staged_size != source_size:
-                    raise OSError(
-                        f"short copy: {staged_size} of {source_size} bytes "
-                        f"(recorder unplugged?)"
-                    )
-                tmp_path.replace(staged_path)
-            except BaseException:
-                tmp_path.unlink(missing_ok=True)
-                raise
+            self._copy_atomically(audio_file, staged_path)
             logger.debug(f"✓ Staged: {audio_file.name} -> {staged_path}")
 
             return staged_path
@@ -2644,13 +2630,11 @@ Brak podsumowania AI. Możliwe przyczyny:
 
         return None
 
-    # An index entry dropped here sends its recording back through whisper AND
-    # a paid summary, so mass cleanup must clear both bars before it runs: more
-    # than a handful of entries AND most of the index. Either alone is normal
-    # (a small vault legitimately loses its only note; a big vault legitimately
-    # loses a few).
+    # Below this many index entries, an empty vault is just a small vault the
+    # user emptied — cleaning up is correct and lets those recordings be
+    # transcribed again. Above it, an empty vault means something is wrong
+    # with the READ, not with the user's intent.
     _ORPHAN_CLEANUP_MIN = 5
-    _ORPHAN_CLEANUP_MAX_RATIO = 0.5
 
     def _vault_transcript_files(self, transcribe_dir: Path) -> List[Path]:
         """Every transcript note in the vault, including sub-folders.
@@ -2672,6 +2656,12 @@ Brak podsumowania AI. Możliwe przyczyny:
             self.config.SIDECAR_DIR_NAME,
             RECALL_DIR_NAME,
             ".malinche",  # pre-rename sidecar, may survive a migration
+            # Obsidian's own dirs. .trash matters for correctness, not just
+            # noise: "Move to Obsidian trash" is the default delete, and a
+            # note found there would keep its index entry alive — silently
+            # breaking delete-then-replug as a way to redo a bad transcript.
+            ".trash",
+            ".obsidian",
         }
         files: List[Path] = []
         for path in transcribe_dir.rglob("*.md"):
@@ -2813,41 +2803,25 @@ Brak podsumowania AI. Możliwe przyczyny:
         # likely to be a bad read — an unmounted iCloud vault, a permission
         # blip, a folder the user just moved — than a real mass deletion.
         # Refuse it and keep the index; the next run reconciles for real.
-        suspicious = (
-            entries_snapshot
-            and len(orphans) >= self._ORPHAN_CLEANUP_MIN
-            and len(orphans) > len(entries_snapshot) * self._ORPHAN_CLEANUP_MAX_RATIO
-        )
-        if suspicious:
-            # Confirm before acting, don't refuse forever. A transient bad read
-            # (vault unmounted, iCloud still syncing) looks different on the
-            # next run; a real mass deletion looks identical, and then the
-            # cleanup must go through — otherwise those entries are immortal
-            # and their recordings can never be transcribed again.
-            signature = hashlib.sha256(
-                "\n".join(sorted(orphans)).encode("utf-8")
-            ).hexdigest()
-            if signature != self._last_orphan_signature:
-                self._last_orphan_signature = signature
-                result["orphan_skipped"] = len(orphans)
-                logger.warning(
-                    "Reconciliation: %s of %s index entries look orphaned — holding "
-                    "off. The vault at %s may be unreadable or still syncing; if the "
-                    "next run sees exactly the same picture, the cleanup proceeds.",
-                    len(orphans),
-                    len(entries_snapshot),
-                    transcribe_dir,
-                )
-                orphans = []
-            else:
-                logger.warning(
-                    "Reconciliation: same %s orphaned entries as the previous run — "
-                    "treating the deletion as real and cleaning up.",
-                    len(orphans),
-                )
-                self._last_orphan_signature = None
-        else:
-            self._last_orphan_signature = None
+        # Distinguish the two cases by asking directly, not by remembering.
+        # "The vault is unreadable" and "the user deleted their notes" differ
+        # in one observable: a deletion leaves the OTHER notes in place, an
+        # unreadable vault shows nothing at all. So refuse only when the scan
+        # found no notes whatsoever while the index still holds entries —
+        # a state no ordinary deletion produces. (An earlier version tried to
+        # confirm across two runs; reconciliation only runs once per process,
+        # so the confirming run never came and the entries were immortal.)
+        if not md_files and len(entries_snapshot) >= self._ORPHAN_CLEANUP_MIN:
+            result["orphan_skipped"] = len(orphans)
+            logger.warning(
+                "Reconciliation: the vault at %s holds no notes at all while the "
+                "index has %s entries — refusing to clean up. The vault is most "
+                "likely unmounted or still syncing; nothing will be re-transcribed "
+                "on a false alarm.",
+                transcribe_dir,
+                len(entries_snapshot),
+            )
+            orphans = []
 
         for fp in orphans:
             # Brak MD z matching fingerprint: faktyczny orphan.
@@ -3042,6 +3016,10 @@ Brak podsumowania AI. Możliwe przyczyny:
                 # Ten sam fingerprint co dwie linijki wyżej — liczenie
                 # własnego dawałoby inny klucz (i drugi odczyt 1 MB).
                 self._stalled_once.discard(self._stall_key(audio_file, fingerprint))
+                # …i licznik nieudanych postprocessów: user właśnie naprawił
+                # przyczynę (np. wrócił vault) i prosi o ponowną próbę, więc
+                # nagranie ma dostać pełną pulę prób, nie zostatnią.
+                self._postprocess_attempts.pop(fingerprint, None)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not clean vault_index entry before retranscribe: %s",
@@ -3381,9 +3359,34 @@ Brak podsumowania AI. Możliwe przyczyny:
         staging_dir.mkdir(parents=True, exist_ok=True)
 
         destination = self._unique_staging_path(staging_dir, source.name)
-        shutil.copy2(source, destination)
+        self._copy_atomically(source, destination)
         logger.info("📥 Imported %s → %s", source.name, destination)
         return destination
+
+    @staticmethod
+    def _copy_atomically(source: Path, destination: Path) -> None:
+        """Copy via a temp name and rename only once the copy is whole.
+
+        Landing directly on the final name means an interrupted copy (device
+        unplugged, app quit, an iCloud-evicted source going away mid-read)
+        leaves a truncated file that looks ready — it gets transcribed and
+        filed as a complete note, and the full recording later comes back as
+        a duplicate.
+        """
+        tmp_path = destination.with_name(destination.name + ".partial")
+        try:
+            shutil.copy2(source, tmp_path)
+            source_size = source.stat().st_size
+            staged_size = tmp_path.stat().st_size
+            if staged_size != source_size:
+                raise OSError(
+                    f"short copy: {staged_size} of {source_size} bytes "
+                    f"(source went away mid-copy?)"
+                )
+            tmp_path.replace(destination)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _unique_staging_path(staging_dir: Path, filename: str) -> Path:
@@ -3457,6 +3460,16 @@ Brak podsumowania AI. Możliwe przyczyny:
                 staged, recorded_at=recorded_at, provenance=provenance
             )
         finally:
+            # Retention runs at the very end of a workflow, never during: the
+            # staged copy is the only original while a recording is still
+            # being processed. It lives in `finally` so it also runs on the
+            # paths that never see a recorder — a user importing audio or
+            # syncing Voice Memos accumulates staged files just the same, and
+            # every early return above would otherwise skip the sweep.
+            try:
+                self.prune_staging_dir()
+            except Exception as exc:  # noqa: BLE001 - must never block a batch
+                logger.debug("Staging retention skipped: %s", exc)
             lock.release()
             self._workflow_lock.release()
             if not self.transcription_in_progress:
@@ -3794,13 +3807,6 @@ Brak podsumowania AI. Możliwe przyczyny:
             else:
                 logger.info("ℹ️  No pending files to transcribe")
 
-            # Retention runs after a batch, never during: the staging copy is
-            # the only original while a recording is still being processed.
-            try:
-                self.prune_staging_dir()
-            except Exception as exc:  # noqa: BLE001 - must never block a batch
-                logger.debug("Staging retention skipped: %s", exc)
-
             # Only advance sync time if ALL files were successfully processed
             # This prevents losing files that failed due to unmounting or other errors
             if processed_failed == 0 and processed_success > 0:
@@ -3843,5 +3849,15 @@ Brak podsumowania AI. Możliwe przyczyny:
                     AppStatus.IDLE, recorder_name=None, pending_count=None
                 )
         finally:
+            # Retention runs at the very end of a workflow, never during: the
+            # staged copy is the only original while a recording is still
+            # being processed. It lives in `finally` so it also runs on the
+            # paths that never see a recorder — a user importing audio or
+            # syncing Voice Memos accumulates staged files just the same, and
+            # every early return above would otherwise skip the sweep.
+            try:
+                self.prune_staging_dir()
+            except Exception as exc:  # noqa: BLE001 - must never block a batch
+                logger.debug("Staging retention skipped: %s", exc)
             lock.release()
             self._workflow_lock.release()

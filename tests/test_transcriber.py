@@ -1024,6 +1024,76 @@ def test_stage_leaves_nothing_usable_when_the_copy_is_cut_short(
     assert list(staging_dir.iterdir()) == []
 
 
+def test_manual_import_also_refuses_a_truncated_copy(
+    transcriber, tmp_path, monkeypatch
+):
+    """ "Import audio…" and the Voice Memos connector stage through a second
+    path — an interrupted copy there must fail the same way, not leave a
+    half file the pending scan would transcribe as a whole recording."""
+    from src import transcriber as transcriber_module
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    update_transcriber_config(
+        transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
+    )
+
+    source = tmp_path / "voice-memo.m4a"
+    source.write_bytes(b"a complete recording, many bytes")
+
+    def truncated_copy(src, dst, *a, **k):
+        Path(dst).write_bytes(b"a compl")  # source evicted mid-read
+        return dst
+
+    monkeypatch.setattr(transcriber_module.shutil, "copy2", truncated_copy)
+
+    with pytest.raises(OSError):
+        transcriber.stage_audio_file(source)
+    assert list(staging_dir.iterdir()) == []
+
+
+def test_retranscribe_gives_a_recording_its_full_quota_of_attempts_again(
+    transcriber, tmp_path, monkeypatch
+):
+    """The user fixed the cause and asked for another go: the post-process
+    attempt counter must start over, or the first hiccup re-blacklists it."""
+    from src.fingerprint import compute_fingerprint
+
+    audio_file = tmp_path / "rec.mp3"
+    audio_file.write_bytes(b"audio")
+    fingerprint = compute_fingerprint(audio_file)
+
+    transcriber._postprocess_attempts[fingerprint] = (
+        transcriber._POSTPROCESS_MAX_ATTEMPTS
+    )
+    transcriber._session_failed_fingerprints.add(fingerprint)
+
+    monkeypatch.setattr(transcriber, "transcribe_file", lambda *a, **k: True)
+    transcriber.force_retranscribe(audio_file)
+
+    assert fingerprint not in transcriber._postprocess_attempts
+    assert fingerprint not in transcriber._session_failed_fingerprints
+
+
+def test_reconcile_ignores_notes_in_obsidian_trash(transcriber, tmp_path, monkeypatch):
+    """ "Move to Obsidian trash" is the default delete. A note found there
+    would keep its index entry alive, silently breaking delete-then-replug as
+    the way to redo a bad transcript."""
+    from src import config as config_module
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setattr(transcriber.config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(config_module.config, "TRANSCRIBE_DIR", vault)
+
+    _seed_note(vault / ".trash", "deleted.md", "sha256:trashed", "REC010.MP3")
+    _seed_note(vault, "kept.md", "sha256:kept2", "REC011.MP3")
+
+    found = {p.name for p in transcriber._vault_transcript_files(vault)}
+
+    assert found == {"kept.md"}
+
+
 def test_staging_retention_keeps_anything_without_a_note(
     transcriber, tmp_path, monkeypatch
 ):
@@ -1047,8 +1117,8 @@ def test_staging_retention_keeps_anything_without_a_note(
 def test_staging_retention_drops_old_recordings_that_have_a_note(
     transcriber, tmp_path, monkeypatch
 ):
-    """Once the transcript is in the index, an old copy is just disk use —
-    the staging dir used to grow without limit, invisibly."""
+    """Once the transcript is on disk, an old copy is just disk use — the
+    staging dir used to grow without limit, invisibly."""
     from src import transcriber as transcriber_module
     from src.fingerprint import compute_fingerprint
     from src.vault_index import IndexEntry
@@ -1058,58 +1128,39 @@ def test_staging_retention_drops_old_recordings_that_have_a_note(
     update_transcriber_config(
         transcriber, monkeypatch, LOCAL_RECORDINGS_DIR=staging_dir
     )
-
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setattr(transcriber.config, "TRANSCRIBE_DIR", vault)
+    monkeypatch.setattr(transcriber.config, "STAGING_RETENTION_DAYS", 30)
 
-    old = staging_dir / "done.mp3"
-    old.write_bytes(b"audio with a note")
-    recent = staging_dir / "fresh.mp3"
-    recent.write_bytes(b"audio with a note, but recent")
+    staged = staging_dir / "done.mp3"
+    staged.write_bytes(b"audio with a note")
+    (vault / "done.md").write_text("note")
+    fp = compute_fingerprint(staged)
+    transcriber.vault_index.add(
+        fp,
+        IndexEntry(
+            fingerprint=fp,
+            source_filename=staged.name,
+            source_volume="LS-P1",
+            markdown_path="done.md",
+            source_size=staged.stat().st_size,
+            versions=[{"version": 1, "markdown_path": "done.md"}],
+        ),
+    )
 
-    for path in (old, recent):
-        (vault / f"{path.stem}.md").write_text("note")
-        fp = compute_fingerprint(path)
-        transcriber.vault_index.add(
-            fp,
-            IndexEntry(
-                fingerprint=fp,
-                source_filename=path.name,
-                source_volume="LS-P1",
-                markdown_path=f"{path.stem}.md",
-                versions=[{"version": 1, "markdown_path": f"{path.stem}.md"}],
-            ),
-        )
+    # Inside the window: kept, however finished it is.
+    assert transcriber.prune_staging_dir() == 0
+    assert staged.exists()
 
-    # Age is measured by ctime (time spent in staging), which cannot be set
-    # from userspace — so move "now" forward instead, and re-stage `recent`
-    # afterwards so only `old` falls outside the window.
+    # Past it: dropped. (st_ctime cannot be set from userspace, so move "now"
+    # forward instead of ageing the file.)
     real_time = time.time
     monkeypatch.setattr(
         transcriber_module.time, "time", lambda: real_time() + 400 * 86400
     )
-    recent.touch()
-    monkeypatch.setattr(
-        transcriber_module.time,
-        "time",
-        lambda: real_time() + 400 * 86400 + 1,
-    )
-    old_ctime = old.stat().st_ctime
-    recent_ctime = recent.stat().st_ctime
-    assert recent_ctime >= old_ctime  # sanity: staged later
-
-    monkeypatch.setattr(transcriber.config, "STAGING_RETENTION_DAYS", 30)
-    # Cut-off sits between the two staging times.
-    monkeypatch.setattr(
-        transcriber_module.time,
-        "time",
-        lambda: old_ctime + 31 * 86400,
-    )
-
     assert transcriber.prune_staging_dir() == 1
-    assert not old.exists()
-    assert recent.exists()  # inside the retention window
+    assert not staged.exists()
 
 
 def test_staging_retention_measures_time_in_staging_not_recording_age(
@@ -1155,6 +1206,7 @@ def test_staging_retention_measures_time_in_staging_not_recording_age(
             source_filename=staged.name,
             source_volume="LS-P1",
             markdown_path="note.md",
+            source_size=staged.stat().st_size,
             versions=[{"version": 1, "markdown_path": "note.md"}],
         ),
     )
@@ -1195,6 +1247,7 @@ def test_staging_retention_keeps_a_copy_whose_note_was_deleted(
             source_filename=staged.name,
             source_volume="LS-P1",
             markdown_path="deleted-in-obsidian.md",  # never written to disk
+            source_size=staged.stat().st_size,
             versions=[{"version": 1, "markdown_path": "deleted-in-obsidian.md"}],
         ),
     )
@@ -4020,10 +4073,15 @@ def test_orphan_safety_valve_lets_a_confirmed_deletion_through(
             ),
         )
 
+    # Nothing readable in the vault at all → hold off, this reads as a bad
+    # read (unmounted / still syncing), not as intent.
     first = transcriber.reconcile_existing_markdowns()
     assert first["orphan_skipped"] == 10 and first["orphan_cleaned"] == 0
 
-    # Same picture again → the deletion is real.
+    # The user kept one note: now the deletion is legible as a deletion, and
+    # the stale entries must go — otherwise those recordings are immortal and
+    # can never be transcribed again.
+    _seed_note(vault, "kept.md", "sha256:kept", "REC999.MP3")
     second = transcriber.reconcile_existing_markdowns()
     assert second["orphan_cleaned"] == 10
     assert transcriber.vault_index.lookup("sha256:gone0") is None
