@@ -15,9 +15,15 @@ notatek Markdown w Twoim vaultcie, a płatna warstwa **Insights** czyta
 archiwum i wyciąga nieoczywiste połączenia oraz sprzeczności między
 notatkami. Testujesz, czy ta warstwa Insights jest coś warta.
 
-**Prywatność:** cotygodniowy plik z feedbackiem, który odsyłasz, zawiera
-wyłącznie tekst digestów, tytuły notatek i Twój słownik osobisty — nic
-więcej. Nagrania i treść notatek nigdy nie opuszczają Twojego Maca.
+**Prywatność:** cotygodniowy plik z feedbackiem, który odsyłasz, zawiera:
+tekst digestów (w tym krótkie cytaty z notatek, które digest przywołuje jako
+dowód połączenia), tytuły notatek, Twój słownik osobisty, log Twoich decyzji
+(co zachowane / odrzucone / przekazane dalej, z czasem i nazwą narzędzia),
+historię odrzuceń i ostatni digest w formie strukturalnej (z pełnymi ścieżkami
+plików, czyli nazwą Twojego konta i układem folderów), koszt i pokrycie
+każdego digestu oraz manifest z wersją apki i nazwą Twojego Maca. **Nagrania, transkrypty i pełna treść notatek nigdy nie opuszczają
+Twojego komputera**, logi aplikacji też nie. Zanim wyślesz zip, możesz go
+otworzyć i przejrzeć każdy plik — nic w nim nie jest zaszyfrowane ani ukryte.
 
 ## Wymagania
 

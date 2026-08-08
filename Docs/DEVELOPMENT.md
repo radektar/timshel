@@ -1,6 +1,6 @@
 # Development Guide
 
-> **Version:** v2.0.0-beta.8 (development)
+> **Version:** v2.0.0-beta.18 (development)
 >
 > **Related documents:**
 > - [README.md](../README.md) — project overview

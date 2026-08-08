@@ -1,13 +1,61 @@
 # Changelog
 
-All notable changes to Malinche will be documented in this file.
+All notable changes to Timshel (formerly Malinche) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+## [2.0.0-beta.18] - 2026-08-08
+
+### Fixed
+- `make clean` no longer reaches into `dist/` — deleting caches inside a built
+  `.app` was silently invalidating the codesign seal, and the broken bundle
+  would only surface as a Gatekeeper rejection on the tester's Mac.
+- The DMG build (`create_dmg.sh`) refuses to package a bundle whose signature
+  fails `codesign --verify`, and verifies it once more **inside the finished
+  image** — the copy a tester actually double-clicks. The bundle smoke test
+  verifies the seal both before and after launching the app, so a launch that
+  writes back into the bundle is detected here instead of on a tester's Mac.
+- A tester DMG is now named `…-TESTER-UNSIGNED.dmg`. A tester build and a
+  plain one are different products (verdict pass, four extra channels,
+  metrics, Opus 5) that used to ship under the same filename, so mixing them
+  up would silently invalidate a three-week measurement.
+- Engine download URLs point at the renamed `radektar/timshel` repo directly
+  instead of riding a GitHub redirect from the old name; the rename-guard test
+  now covers `setup/checksums.py` so the next drift fails the suite.
+- The deps-building CI workflow (`build-whisper.yml`) strips any
+  runner-workspace rpath instead of a hardcoded pre-rename path that could
+  never match again.
+- The dormant "bundled" whisper distribution asks for its own asset instead
+  of falling back to the bare `whisper-cli` URL and checking a 3 MB binary
+  against a 1.2 MB tarball's checksum. (The asset itself is still missing
+  from the deps release — see the note in `checksums.py`.)
+- Doc headers that state the app version are pinned by a test; they had
+  drifted ten releases behind, so a tester reading README saw a version that
+  never existed on their machine.
+
+### Changed
+- `sqlite-vec` pinned to 0.1.9 and `fastembed` to 0.8.0 (both pre-1.0) for
+  source-run auto-installs and the dev suite alike. The pin governs fresh
+  installs; an older auto-install that sits off it is reported once in the
+  log, with the directory to delete, and never repaired in place — pip over
+  a live import swaps the native extension under the running wrapper, and
+  pip beforehand leaves the superseded `.dist-info` behind so the drift
+  would never clear. The shipped app has no pip, so none of this applies to
+  it.
+- Tester onboarding privacy note now lists everything the feedback zip carries
+  (digest quotes, the triage log, per-digest cost, hostname in the manifest),
+  instead of claiming digest text and titles and "nothing else".
+
+---
+
+Everything below accumulated in [Unreleased] across the beta.8–beta.17 series
+(May–August 2026) and ships for the first time in the beta.18 tester DMG. The
+sections are kept as originally written, so heading types repeat below.
+
+### Added (beta.8–beta.17)
 - **In-app markdown reader (Konstelacja).** Clicking a connection's source
   chip or a row in the Notatki section now renders the note inside the window
   (summary on top, "Przejdź do transkrypcji" jump, GFM tables), instead of
@@ -22,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window states (incl. the reader) to `dist/preview/` PNGs for pixel review
   before any UI change is shown.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Insights window — pixel-perfect port of the Claude Design component redesign.**
   Implements `design-system/pages/insights-window-components-redesign.html` 1:1:
   one **radius family** (controls 6px, checkbox 5px, rows/cards 12px); the triage
@@ -36,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Zachowaj (now with a bookmark glyph) against a ghost Odrzuć; palette aligned to
   the on-dark design tokens (`--terra #D9542A`, `--terra-deep #C24010`).
 
-### Fixed
+### Fixed (beta.8–beta.17)
 - **A hung transcription died after an hour instead of being rescued.** The
   previous fix covers GPU failures that announce themselves; a GPU that simply
   wedges says nothing, so the recording sat there until the 60-minute timeout
@@ -79,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing (false) verdicts are invalidated automatically, so every install
   re-probes the GPU once.
 
-### Added
+### Added (beta.8–beta.17)
 - **Triage navigation — Nowe / Zachowane / Odrzucone.** The rail now has a
   segmented control (count over label) to switch among the three triage views,
   so Zachowaj and Odrzuć finally lead somewhere: kept connections have a home to
@@ -93,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has its own empty state. (This model is a deliberate extension; it is not in
   the current Claude Design reference, which only specs per-insight triage.)
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Insights buttons now read as interactive — hover, pressed, cursor.** Per the
   Claude Design system (which specs `cursor:pointer`, a hover brighten + lift,
   and a pressed state), the action bar and footer were inert borderless buttons
@@ -120,14 +168,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comfortable. The direction **checkbox** is now vertically centred on the first
   text line instead of sitting low on multi-line rows.
 
-### Removed
+### Removed (beta.8–beta.17)
 - **Gemini dropped as a handoff LLM.** It exposes no public prompt-prefill URL,
   so its handoff silently degraded to copy-and-paste while looking identical to
   the one-click Claude / ChatGPT flow. The connected-LLM switcher now cycles only
   the prefill-capable tools (Claude ↔ ChatGPT); a stale `gemini` in saved config
   falls back to Claude. The clipboard fallback still covers over-long payloads.
 
-### Added
+### Added (beta.8–beta.17)
 - **The action-rate KPI is now measurable — `make signal-report`.** The
   action-engine writes `action_taken` events; this is the read side that closes
   the loop. It folds `signal.jsonl` into **action-rate** — the share of *engaged*
@@ -168,7 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared rare token) so the synthesis sees combinations pure similarity retrieval
   cannot surface — the source of surprising, cross-time/cross-domain connections.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **Menu-bar menu cleaned up to Docker-level.** Trailing "…" now follows the
   macOS HIG — it stays only on commands that need more input in a dialog
   ("Import audio…", "Settings…") and is dropped from items that act immediately
@@ -193,7 +241,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rationale. `SYNTHESIS_MAX_TOKENS` raised 2048 → 4096 (the old verbose prompt
   truncated mid tool-call at 2048 and returned zero connections).
 
-### Removed
+### Removed (beta.8–beta.17)
 - **Retired status-panel popover surface.** `src/ui/status_panel.py` and
   `src/ui/status_panel_model.py` (plus their tests) backed the old left-click
   `NSPopover`, replaced by the native menu + Insights window. They were dead at
@@ -203,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`_row_buttons` accumulator, the ignored `_label(weight=)` parameter) and the
   now-orphaned `license_manager` / `FeatureTier` imports.
 
-### Fixed
+### Fixed (beta.8–beta.17)
 - **Dependency download/repair updated the menu bar off the main thread.** The
   `done`/`error` callbacks correctly hopped to the main thread via
   `_run_on_main_thread`, but the `progress` callbacks set `status_item.title`
@@ -256,7 +304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Crash (SIGSEGV) when closing the Settings window.** The native settings `NSWindow` was released by both AppKit (on close) and Python; the deferred close animation (`-[_NSWindowTransformAnimation dealloc]`) then dereferenced freed memory (`EXC_BAD_ACCESS`). Fixed with `setReleasedWhenClosed_(False)`, dismissing via `orderOut_` instead of the animated `close()`, and retaining the window/delegate past the runloop turn that tears them down.
 - **m4a / wma / aac recordings silently failed to transcribe.** whisper-cli only decodes 16 kHz WAV (plus mp3/flac/ogg in this build); the pipeline fed it the raw file and never converted, so common recorder formats — notably m4a/aac from iPhone Voice Memos — failed with `failed to read audio data as wav` and no clear error. `Transcriber._convert_to_wav` now normalises every input to 16 kHz mono WAV via ffmpeg before whisper (also fixing non-16 kHz / stereo sources). Surfaced and guarded by the new L2 scenario tests — see `Docs/TESTING-E2E-STRATEGY.md` §F1.
 
-### Added
+### Added (beta.8–beta.17)
 - **Connection synthesis — the "Zestawianie" digest (local-first, BYO-Claude).** Malinche now reads the whole transcript corpus together and, on a calm weekly cadence (pulled forward when enough new material lands), writes a digest note into the vault (`Malinche Digests/`) surfacing *emergent connections* across recordings — shared threads, **contradictions in your stance over time**, and latent ideas — each with `[[wikilinks]]` back to the sources and 2–4 non-prescriptive directions. This is the differentiating value above transcription/recall (Whisper/MacWhisper/NotebookLM are commodity): a system that *composes something of its own* from notes that otherwise lie dead. 100% local — candidates are assembled with **no embeddings** (recency window + shared-tag bridges + a small in-process BM25 over summaries, bounded to a token budget; `bm25s` is the documented drop-in at scale), and a single forced-tool-use Claude pass returns a strict, Pydantic-validated result (note ids are normalized so any model's `[[..]]` framing maps cleanly to the known notes / dismiss signatures / wikilinks). Model-agnostic per stage (`LLM_MODEL_SYNTHESIS`, default Haiku) with a model-comparison harness (`make eval-synthesis`) that scores Opus 4.8 vs Sonnet 4.6 vs Haiku on six discriminating gold cases. Dismiss anything that misses by adding its number to the digest's `dismissed:` frontmatter list — the next run respects it (Obsidian-native, no UI needed). Gated behind PRO or a BYOK key; reuses the existing summarizer/tagger client + session circuit breaker so a billing trip degrades through the same menu-bar alert. Menu: "Generate digest now…" / "Open latest digest…". New `src/connections/` package + `src/llm/model_router.py`; hooks at the post-index seam in `transcriber.py` and the periodic tick in `app_core.py`. See `Docs/POSITIONING.md` (the value ladder).
 - **New app icon — a terracotta waveform on a cream squircle.** The old skeuomorphic "M" monogram (heavy terracotta→black gradient, fret corners, jade dots — illegible and off-brand at 32 px) is replaced by a mark that extends the menu-bar `waveform` SF Symbol into the bundle icon: eleven flat-topped bars in a lively, dipping rhythm that reads as both an equalizer and a stepped *talud-tablero* pyramid, so the Aztec reference lives in the form rather than as glued-on ornament. Generated programmatically (vector-precise, reproducible) by `assets/gen_icon.py` (`make icon`); the greca step-fret now lives only on packaging surfaces (DMG background). The retired monogram generator (`scripts/gen_aztec_icon.py`), its `malinche.iconset/`, and the placeholder `assets/create_icon.sh` were removed. See `Docs/VISUAL-IDENTITY.md`.
 - **Native macOS UI redesign (L4).** A real design system (`src/ui/style.py`: 8pt spacing grid, type scale, restrained palette — system colours + one terracotta accent, jade for "ready", system red for errors) drives every surface. Menu-bar status icons are now rendered from **SF Symbols** (guaranteed on macOS 12+) instead of shipped PNGs that could go missing and fall back to emoji. The menu-bar item opens an **`NSPopover` status panel** (vibrant material, status + current file + recent transcripts, hover states) on left-click and keeps the native menu on right-click. See `Docs/UI-REDESIGN-L4-PLAN.md`.
@@ -265,7 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Manual "Import audio…" — a fallback when auto-detection misses a file.** A new menu-bar action opens a file picker (filtered to the supported audio formats); the chosen file is copied into the local staging area (collision-safe — the original is never touched) and run through the full single-file pipeline (`Transcriber.stage_audio_file` / `import_audio_file`). Lets you transcribe anything the recorder/SD watcher didn't pick up, without waiting for a remount.
 - **End-to-end / scenario test layers (L1–L3)** under `tests/e2e/` and `tests/fixtures/`: a deterministic audio sample factory (macOS `say` + ffmpeg, all 7 formats + edge cases), real-whisper pipeline tests (per-format, multilingual, WER-scored), and real-Claude summary-quality tests (structural + LLM-as-judge), with `make test-pipeline` / `make test-e2e` / `make test-ui` targets. See `Docs/TESTING-E2E-STRATEGY.md`. L3 is now live-validated against the real API, with added guards for output-language fidelity and non-fabrication.
 
-### Changed
+### Changed (beta.8–beta.17)
 - **The app no longer appears in the Dock** — it is menu-bar only (see the accessory-policy fix above).
 - **Licensing defaults to PRO during the beta.** With no licensing backend yet, every install is granted the full PRO feature set; `LicenseManager._verify_license` returns PRO unless a still-valid local cache says otherwise. At GA this flips back to FREE with real verification. (The misleading "always FREE" docstring and a dead code branch were removed.)
 - **Retired the shipped `assets/menu_bar/*.png` status icons** — icons are rendered at runtime from SF Symbols, so the static PNG set (and its Pillow-based test) was dead weight and has been removed.
@@ -274,7 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration flag `transrec_migrated` renamed to `legacy_migrated` in `src/config/settings.py`. `UserSettings.load()` reads the old key name as a backward-compat alias and rewrites it on next save, so existing alpha users are unaffected.
 - Active English documentation rewrite: `README.md`, `QUICKSTART.md`, `BACKLOG.md`, and `Docs/*.md` (architecture, development, API, plans, guides) translated from Polish to English. Historical archives in `Docs/archive/`, `Docs/testing-archive/`, `Docs/test-reports/`, and pre-Unreleased entries below remain in Polish.
 
-### Notes
+### Notes (beta.8–beta.17)
 - Per-version notes from v2.0.0-alpha.x onward remain in Polish for historical fidelity. New release entries from this point forward will be written in English.
 
 ## [2.0.0-alpha.18] - 2026-04-24

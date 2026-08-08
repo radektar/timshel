@@ -31,10 +31,29 @@ fi
 
 [[ -x "$BIN" ]] || { echo "SMOKE FAIL: no bundle binary at $BIN"; exit 1; }
 
+# The seal must be intact BEFORE we bother launching: a `make clean` between
+# build and smoke strips __pycache__ out of the bundle and silently breaks
+# the ad-hoc signature (Gatekeeper then rejects the DMG on the tester's Mac).
+echo "--- Verifying code signature ---"
+if codesign --verify --strict --deep "$APP" 2>&1; then
+    echo "OK   codesign seal intact"
+else
+    echo "SMOKE FAIL: codesign verification failed (did make clean touch dist/?)"
+    exit 1
+fi
+
 SMOKE_HOME="$(mktemp -d /tmp/timshel-smoke.XXXXXX)"
 LOG="$SMOKE_HOME/Library/Application Support/Timshel/logs/timshel.log"
 
 echo "--- Launching bundle under fresh HOME=$SMOKE_HOME (${WAIT}s) ---"
+# Timestamp reference for "written by this run". It lives OUTSIDE $SMOKE_HOME
+# on purpose: the app creates Library/ directly inside that dir, which bumps
+# its mtime forward and would hide files written before that moment.
+LAUNCH_MARKER="$(mktemp /tmp/timshel-smoke-marker.XXXXXX)"
+# Launched with NO bytecode suppression on purpose: if a dynamically imported
+# module ever starts writing fresh .pyc into the bundle, that breaks the seal
+# on a tester's Mac — so the run must be able to reproduce it (verified again
+# after the run, below).
 HOME="$SMOKE_HOME" "$BIN" &
 PID=$!
 sleep "$WAIT"
@@ -76,18 +95,40 @@ else
     fi
 fi
 
-# 4. No crash report written for this run.
-CRASHES="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'Timshel-*.ips' -newer "$SMOKE_HOME" 2>/dev/null)"
+# 4. The seal must ALSO survive the run: a launch that writes .pyc back into
+# the bundle breaks it silently here, and the tester meets it as a Gatekeeper
+# rejection on second launch. Verified empirically today (nothing is written),
+# so this asserts the property rather than papering over it.
+SEAL_BROKEN_BY_RUN=0
+if codesign --verify --strict --deep "$APP" 2>&1; then
+    echo "OK   codesign seal intact after run"
+else
+    SEAL_BROKEN_BY_RUN=1
+    note_fail "codesign seal broken BY THE RUN (bundle wrote into itself?)"
+    find "$APP" -newer "$LAUNCH_MARKER" -type f 2>/dev/null | head -10
+fi
+
+# 5. No crash report written for this run.
+CRASHES="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'Timshel-*.ips' -newer "$LAUNCH_MARKER" 2>/dev/null)"
 if [[ -n "$CRASHES" ]]; then
     note_fail "crash report(s) written: $CRASHES"
 else
     echo "OK   no new crash reports"
 fi
 
+rm -f "$LAUNCH_MARKER"
+
 if [[ "$FAIL" == "0" ]]; then
     rm -rf "$SMOKE_HOME"
     echo "🎉 SMOKE PASS"
 else
     echo "Kept smoke HOME for inspection: $SMOKE_HOME"
+    if [[ "$SEAL_BROKEN_BY_RUN" == "1" ]]; then
+        # The evidence is the bundle, not the fake HOME — and the next
+        # `make smoke-bundle` rebuilds dist/ and destroys it.
+        EVIDENCE="$SMOKE_HOME/broken-seal-bundle"
+        cp -R "$APP" "$EVIDENCE" 2>/dev/null \
+            && echo "Copied the broken bundle for inspection: $EVIDENCE"
+    fi
     exit 1
 fi

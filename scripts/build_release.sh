@@ -31,7 +31,9 @@ case "${PLATFORM}" in
         # name from a version string read by the *system* python3 (which lacks
         # this project's deps, so the import failed, fell back to a wrong name,
         # and the checksum was silently skipped).
-        DMG_FILE="$(ls -t dist/${APP_NAME}-*-ARM64-UNSIGNED.dmg 2>/dev/null | head -1)"
+        # The pattern must also match the tester variant
+        # (…-ARM64-TESTER-UNSIGNED.dmg), or a tester build ships unchecksummed.
+        DMG_FILE="$(ls -t dist/${APP_NAME}-*UNSIGNED.dmg 2>/dev/null | head -1)"
 
         if [ -n "${DMG_FILE}" ] && [ -f "${DMG_FILE}" ]; then
             shasum -a 256 "${DMG_FILE}" > "${DMG_FILE}.sha256"

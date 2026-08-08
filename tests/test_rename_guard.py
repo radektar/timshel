@@ -21,9 +21,6 @@ _ALLOWLIST = {
     "bootstrap.py",
     # External license endpoint (beta short-circuits before calling it).
     "config/license.py",
-    # Dependency release assets — repo rename is a separate manual step;
-    # GitHub redirects the old URLs, and the SHA pins protect integrity.
-    "setup/checksums.py",
     # Back-compat: still exclude a pre-rename ``malinche-digest`` note and
     # skip the old ``.malinche`` sidecar when walking a migrated vault.
     "connections/candidate_assembly.py",

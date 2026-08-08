@@ -66,7 +66,9 @@ Track per-tester weekly in a simple sheet; decide after week 3.
 - **Anthropic console:** one named key per tester in a "Timshel testers"
   workspace, each with a spend limit (Opus synthesis+verdict per digest is the
   cost driver — set the limit before handing keys out).
-- **Build:** `make release-tester` → `dist/Timshel-<ver>-ARM64-UNSIGNED.dmg`
+- **Build:** `make release-tester` → `dist/Timshel-<ver>-ARM64-TESTER-UNSIGNED.dmg`
+  (`TESTER` in the name means H1 instrumentation is on — a plain
+  `make release` DMG lacks it and would measure nothing)
   (+ sha256). The tester DMG bakes `TimshelTesterBuild` so instrumentation is on
   from first launch (no manual config).
 - **Verify before sending:** run the full checklist in `TESTER-BUILD-VERIFY.md`

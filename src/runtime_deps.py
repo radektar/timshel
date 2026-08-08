@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from importlib import metadata as _importlib_metadata
 from pathlib import Path
 
 from src.logger import logger
@@ -20,11 +21,17 @@ RUNTIME_DEPS_DIR = (
 SAFEGUARDED_PACKAGES = {
     "anthropic": "anthropic==0.75.0",
     # Local recall engine — auto-installed on first use (like whisper.cpp/ffmpeg),
-    # NOT a hard requirement, so the base install stays light. Pin sqlite-vec
-    # before shipping — it is pre-1.0.
-    "fastembed": "fastembed",
-    "sqlite_vec": "sqlite-vec",
+    # NOT a hard requirement, so the base install stays light. Both are pre-1.0,
+    # so they are pinned to the versions the suite runs against
+    # (requirements-dev.txt carries the same pins).
+    "fastembed": "fastembed==0.8.0",
+    "sqlite_vec": "sqlite-vec==0.1.9",
 }
+
+# Modules already loaded at a drifted version — warned about once per process,
+# because the callers construct stores and providers repeatedly and this log
+# is the one a tester is asked to read.
+_DRIFT_WARNED: set[str] = set()
 
 
 def _ensure_runtime_dir_on_path() -> None:
@@ -94,17 +101,80 @@ def importable(module_name: str) -> bool:
         return False
 
 
+def _runtime_dir_versions(dist_name: str) -> list[str]:
+    """All versions of ``dist_name`` recorded in RUNTIME_DEPS_DIR.
+
+    Scoped to that directory on purpose: a bare ``metadata.version`` resolves
+    against the whole sys.path and would report a dev venv's copy. Returns a
+    list because ``pip install --target --upgrade`` leaves the previous
+    ``.dist-info`` behind, so one directory can claim several versions.
+    """
+    found = []
+    try:
+        dists = list(_importlib_metadata.distributions(path=[str(RUNTIME_DEPS_DIR)]))
+    except Exception:  # noqa: BLE001 - diagnostics must never break startup
+        return []
+    wanted = dist_name.replace("_", "-").lower()
+    for dist in dists:
+        # One damaged package (an interrupted pip, a full disk) must not take
+        # the whole probe down with it — and this runs on the startup path,
+        # where callers treat ensure_importable as best-effort.
+        try:
+            name = (dist.metadata["Name"] or "").replace("_", "-").lower()
+            version = dist.version
+        except Exception:  # noqa: BLE001 - unreadable/garbled METADATA
+            continue
+        if name == wanted and version:
+            found.append(version)
+    return found
+
+
+def _warn_if_pin_drifted(module_name: str, spec: str) -> None:
+    """Report — once — an auto-installed dep that is off its ``==`` pin.
+
+    Deliberately does not self-repair. Two attempts proved the automation
+    cannot be made honest here: pip over a live import swaps the native
+    extension under the running wrapper, and pip *before* the import leaves
+    the superseded ``.dist-info`` in place, so the drift never clears and the
+    repair re-runs (blocking, up to 180 s) on every single launch. A stale
+    runtime dir is rare and the manual fix is one command, so we say it
+    plainly instead of pretending to fix it.
+    """
+    if "==" not in spec:
+        return
+    dist_name, pinned = spec.split("==", 1)
+    versions = _runtime_dir_versions(dist_name)
+    if not versions or pinned in versions:
+        return  # not ours to manage, or the pin is present
+
+    if module_name in _DRIFT_WARNED:
+        return
+    _DRIFT_WARNED.add(module_name)
+    logger.warning(
+        "%s in runtime deps is %s, pinned at %s — delete %s and relaunch to "
+        "reinstall at the pinned version",
+        module_name,
+        ", ".join(sorted(versions)),
+        pinned,
+        RUNTIME_DEPS_DIR,
+    )
+
+
 def ensure_importable(module_name: str) -> bool:
     """Ensure module can be imported, installing best-effort if needed."""
     _ensure_runtime_dir_on_path()
 
+    spec = SAFEGUARDED_PACKAGES.get(module_name)
+
     try:
         __import__(module_name)
-        return True
     except ImportError:
         pass
+    else:
+        if spec and not _is_bundled_app():
+            _warn_if_pin_drifted(module_name, spec)
+        return True
 
-    spec = SAFEGUARDED_PACKAGES.get(module_name)
     if not spec:
         logger.warning("No install spec registered for %s", module_name)
         return False
@@ -113,9 +183,7 @@ def ensure_importable(module_name: str) -> bool:
         # The bundled interpreter ships without pip — `python -m pip` can only
         # fail (and used to log an ERROR on every launch). Optional deps stay
         # unavailable in the bundle until they ship inside it.
-        logger.debug(
-            "Skipping pip auto-install for %s — bundled app has no pip", spec
-        )
+        logger.debug("Skipping pip auto-install for %s — bundled app has no pip", spec)
         return False
 
     if not _pip_install(spec, RUNTIME_DEPS_DIR):

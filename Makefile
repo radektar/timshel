@@ -133,16 +133,13 @@ status:
 	@echo "Daemon status:"
 	@launchctl list | grep olympus-transcriber || echo "Not running"
 
+# dist/ is pruned from BOTH finds below: deleting caches inside a built .app
+# rips files out from under the codesign seal and silently invalidates the
+# signature (py2app copies package trees wholesale, caches included).
 clean:
 	@echo "Cleaning build artifacts..."
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	find . -type f -name "*.pyo" -delete
-	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name ".coverage" -delete
+	find . -path ./dist -prune -o -type d \( -name "__pycache__" -o -name "*.egg-info" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name "htmlcov" \) -exec rm -rf {} + 2>/dev/null || true
+	find . -path ./dist -prune -o -type f \( -name "*.pyc" -o -name "*.pyo" -o -name ".coverage" \) -exec rm -f {} + 2>/dev/null || true
 	@echo "Cleaned!"
 
 dev-setup:
